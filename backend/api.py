@@ -61,6 +61,19 @@ _enrichment_state: Dict = {
 }
 _enrichment_lock = threading.Lock()  # Protects _enrichment_state
 
+# Background refresh state
+_refresh_state: Dict = {
+    "running": False,
+    "phase": None,  # "fetching", "normalizing", "aggregating", "scoring", "persisting"
+    "buildings_fetched": 0,
+    "total_buildings": 0,
+    "leads_created": 0,
+    "started_at": None,
+    "finished_at": None,
+    "error": None,
+}
+_refresh_lock = threading.Lock()  # Protects _refresh_state
+
 
 @app.on_event("startup")
 async def startup_load():
@@ -324,42 +337,54 @@ async def get_stats():
     }
 
 
-@app.post("/api/refresh")
-async def refresh_pipeline(
-    limit: Optional[int] = Query(None, description="Max buildings to fetch (None = ALL ~200k)"),
-    full: bool = Query(False, description="Fetch ALL buildings (overrides limit)")
-):
-    """
-    Refresh the pipeline: fetch from HPD, normalize, aggregate, score.
+def _run_background_refresh(limit: Optional[int]):
+    """Background task to refresh pipeline data."""
+    global _leads_cache, _last_refresh, _refresh_state
     
-    By default fetches 10,000 buildings for speed. Set full=true to fetch ALL ~200k.
-    This is an expensive operation - call sparingly.
-    """
-    global _leads_cache, _last_refresh
-    
-    # If full=true, remove limit to get everything
-    if full:
-        limit = None
-    elif limit is None:
-        limit = 2000  # Default for quick refresh (Render free tier has 30s timeout)
-    
-    logger.info(f"Starting pipeline refresh with limit={limit or 'ALL'}")
+    with _refresh_lock:
+        _refresh_state["running"] = True
+        _refresh_state["phase"] = "fetching"
+        _refresh_state["buildings_fetched"] = 0
+        _refresh_state["total_buildings"] = limit or 0  # 0 means all
+        _refresh_state["leads_created"] = 0
+        _refresh_state["started_at"] = datetime.now().isoformat()
+        _refresh_state["finished_at"] = None
+        _refresh_state["error"] = None
     
     try:
+        logger.info(f"Background refresh started with limit={limit or 'ALL'}")
+        
         # Ingest
+        with _refresh_lock:
+            _refresh_state["phase"] = "fetching"
+        
         client = HPDClient()
         raw_buildings = client.get_combined_data(building_limit=limit)
+        
+        with _refresh_lock:
+            _refresh_state["buildings_fetched"] = len(raw_buildings)
+            _refresh_state["phase"] = "normalizing"
+        
         logger.info(f"Fetched {len(raw_buildings)} buildings from HPD")
         
         # Normalize
         buildings = [normalize_building(b) for b in raw_buildings]
         
+        with _refresh_lock:
+            _refresh_state["phase"] = "aggregating"
+        
         # Aggregate
         leads = aggregate_to_leads(buildings)
         logger.info(f"Aggregated into {len(leads)} leads")
         
+        with _refresh_lock:
+            _refresh_state["phase"] = "scoring"
+        
         # Score
         leads = score_leads(leads)
+        
+        with _refresh_lock:
+            _refresh_state["phase"] = "persisting"
         
         # Apply persisted user data (notes, status, enrichment)
         db = get_database()
@@ -369,20 +394,138 @@ async def refresh_pipeline(
         db.save_leads(leads)
         logger.info(f"Persisted {len(leads)} leads to database")
         
-        # Update cache
-        _leads_cache = leads
+        # Update cache with lock
+        with _leads_lock:
+            _leads_cache = leads
+        
         _last_refresh = datetime.now()
         
-        return {
-            "status": "success",
-            "buildings_fetched": len(raw_buildings),
-            "leads_created": len(leads),
-            "timestamp": _last_refresh.isoformat(),
-        }
+        with _refresh_lock:
+            _refresh_state["leads_created"] = len(leads)
+        
+        logger.info(f"Background refresh complete: {len(raw_buildings)} buildings -> {len(leads)} leads")
         
     except Exception as e:
-        logger.error(f"Pipeline refresh failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Background refresh failed: {e}")
+        with _refresh_lock:
+            _refresh_state["error"] = str(e)
+    finally:
+        with _refresh_lock:
+            _refresh_state["running"] = False
+            _refresh_state["finished_at"] = datetime.now().isoformat()
+
+
+@app.post("/api/refresh")
+async def refresh_pipeline(
+    background_tasks: BackgroundTasks,
+    limit: Optional[int] = Query(None, description="Max buildings to fetch (None = ALL ~200k)"),
+    full: bool = Query(False, description="Fetch ALL buildings (overrides limit)"),
+    background: bool = Query(True, description="Run in background (recommended for large datasets)"),
+):
+    """
+    Refresh the pipeline: fetch from HPD, normalize, aggregate, score.
+    
+    By default fetches 10,000 buildings for speed. Set full=true to fetch ALL ~200k.
+    For full refresh, background=true is REQUIRED (default) due to worker timeouts.
+    
+    Check progress at GET /api/refresh/status
+    """
+    global _leads_cache, _last_refresh, _refresh_state
+    
+    # If full=true, remove limit to get everything
+    if full:
+        limit = None
+    elif limit is None:
+        limit = 10000  # Default for quick refresh
+    
+    # Check if already running
+    with _refresh_lock:
+        if _refresh_state["running"]:
+            return {
+                "status": "already_running",
+                "message": "Background refresh is already in progress",
+                "phase": _refresh_state["phase"],
+                "buildings_fetched": _refresh_state["buildings_fetched"],
+                "check_progress": "/api/refresh/status",
+            }
+    
+    # For large datasets or full refresh, require background mode
+    if (limit is None or limit > 15000) and not background:
+        return {
+            "status": "error",
+            "message": "For datasets > 15,000 buildings, background=true is required to avoid timeouts",
+        }
+    
+    logger.info(f"Starting pipeline refresh with limit={limit or 'ALL'}, background={background}")
+    
+    if background:
+        # Run in background
+        background_tasks.add_task(_run_background_refresh, limit)
+        return {
+            "status": "started",
+            "message": f"Background refresh started for {limit or 'ALL'} buildings",
+            "check_progress": "/api/refresh/status",
+        }
+    else:
+        # Run synchronously (only for small datasets)
+        try:
+            # Ingest
+            client = HPDClient()
+            raw_buildings = client.get_combined_data(building_limit=limit)
+            logger.info(f"Fetched {len(raw_buildings)} buildings from HPD")
+            
+            # Normalize
+            buildings = [normalize_building(b) for b in raw_buildings]
+            
+            # Aggregate
+            leads = aggregate_to_leads(buildings)
+            logger.info(f"Aggregated into {len(leads)} leads")
+            
+            # Score
+            leads = score_leads(leads)
+            
+            # Apply persisted user data (notes, status, enrichment)
+            db = get_database()
+            leads = db.apply_persisted_data_to_leads(leads)
+            
+            # Persist all leads to SQLite (survives server restarts)
+            db.save_leads(leads)
+            logger.info(f"Persisted {len(leads)} leads to database")
+            
+            # Update cache
+            _leads_cache = leads
+            _last_refresh = datetime.now()
+            
+            return {
+                "status": "success",
+                "buildings_fetched": len(raw_buildings),
+                "leads_created": len(leads),
+                "timestamp": _last_refresh.isoformat(),
+            }
+            
+        except Exception as e:
+            logger.error(f"Pipeline refresh failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/refresh/status")
+async def get_refresh_status():
+    """
+    Get the status of background refresh.
+    
+    Returns progress, current phase, and completion stats.
+    """
+    with _refresh_lock:
+        return {
+            "running": _refresh_state["running"],
+            "phase": _refresh_state["phase"],
+            "buildings_fetched": _refresh_state["buildings_fetched"],
+            "total_buildings": _refresh_state["total_buildings"],
+            "leads_created": _refresh_state["leads_created"],
+            "started_at": _refresh_state["started_at"],
+            "finished_at": _refresh_state["finished_at"],
+            "error": _refresh_state["error"],
+        }
 
 
 @app.post("/api/enrich")
