@@ -2,6 +2,7 @@
 SQLite database for persisting leads data.
 
 Stores:
+- Full lead data (survives server restarts)
 - Lead metadata (notes, outreach_status)
 - Enrichment results (phone, email, website, etc.)
 - User-added data that shouldn't be lost on refresh
@@ -9,10 +10,13 @@ Stores:
 import json
 import sqlite3
 import logging
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, TYPE_CHECKING
 from contextlib import contextmanager
+
+if TYPE_CHECKING:
+    from src.transform.aggregate import Lead
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +46,43 @@ class LeadsDatabase:
         """Initialize database tables."""
         with self._get_connection() as conn:
             conn.executescript("""
-                -- Lead user data (notes, status, etc.)
+                -- Full lead data (survives server restarts)
+                CREATE TABLE IF NOT EXISTS leads (
+                    lead_id TEXT PRIMARY KEY,
+                    agent_name TEXT,
+                    owner_name TEXT,
+                    owner_type TEXT,
+                    portfolio_size INTEGER,
+                    total_units INTEGER,
+                    buildings TEXT,  -- JSON array of addresses
+                    building_ids TEXT,  -- JSON array of building IDs
+                    contacts TEXT,  -- JSON array of contact objects
+                    address TEXT,
+                    boro TEXT,
+                    boros TEXT,  -- JSON array
+                    reg_status TEXT,
+                    last_registration TEXT,
+                    dos_id TEXT,
+                    dos_status TEXT,
+                    phone TEXT,
+                    email TEXT,
+                    website TEXT,
+                    business_summary TEXT,
+                    owner_principal TEXT,
+                    enrichment_status TEXT DEFAULT 'none',
+                    enrichment_sources TEXT,  -- JSON array
+                    last_enriched TIMESTAMP,
+                    score REAL DEFAULT 0.0,
+                    score_breakdown TEXT,  -- JSON object
+                    tags TEXT,  -- JSON array
+                    opportunity_note TEXT,
+                    outreach_status TEXT DEFAULT 'new',
+                    notes TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                -- Lead user data (notes, status, etc.) - kept for backward compatibility
                 CREATE TABLE IF NOT EXISTS lead_user_data (
                     lead_id TEXT PRIMARY KEY,
                     outreach_status TEXT DEFAULT 'new',
@@ -76,9 +116,12 @@ class LeadsDatabase:
                     FOREIGN KEY (lead_id) REFERENCES lead_user_data(lead_id)
                 );
                 
-                -- Index for faster lookups
+                -- Indexes for faster lookups
                 CREATE INDEX IF NOT EXISTS idx_lead_status ON lead_user_data(outreach_status);
                 CREATE INDEX IF NOT EXISTS idx_outreach_lead ON outreach_attempts(lead_id);
+                CREATE INDEX IF NOT EXISTS idx_leads_score ON leads(score DESC);
+                CREATE INDEX IF NOT EXISTS idx_leads_boro ON leads(boro);
+                CREATE INDEX IF NOT EXISTS idx_leads_enrichment ON leads(enrichment_status);
             """)
             conn.commit()
             logger.info(f"Database initialized at {self.db_path}")
@@ -232,6 +275,187 @@ class LeadsDatabase:
                     lead.enrichment_sources = enr['enrichment_sources']
         
         return leads
+    
+    # === Full Lead Persistence ===
+    
+    def save_leads(self, leads: List["Lead"]) -> int:
+        """
+        Save all leads to the database (bulk upsert).
+        
+        This persists the complete lead data so it survives server restarts.
+        Returns the number of leads saved.
+        """
+        if not leads:
+            return 0
+        
+        with self._get_connection() as conn:
+            # Use INSERT OR REPLACE for upsert behavior
+            for lead in leads:
+                conn.execute(
+                    """INSERT OR REPLACE INTO leads (
+                        lead_id, agent_name, owner_name, owner_type,
+                        portfolio_size, total_units, buildings, building_ids,
+                        contacts, address, boro, boros, reg_status,
+                        last_registration, dos_id, dos_status, phone, email,
+                        website, business_summary, owner_principal, enrichment_status,
+                        enrichment_sources, last_enriched, score, score_breakdown,
+                        tags, opportunity_note, outreach_status, notes, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        lead.lead_id,
+                        lead.agent_name,
+                        lead.owner_name,
+                        lead.owner_type,
+                        lead.portfolio_size,
+                        lead.total_units,
+                        json.dumps(lead.buildings),
+                        json.dumps(lead.building_ids),
+                        json.dumps(lead.contacts),
+                        lead.address,
+                        lead.boro,
+                        json.dumps(lead.boros),
+                        lead.reg_status,
+                        lead.last_registration.isoformat() if lead.last_registration else None,
+                        lead.dos_id,
+                        lead.dos_status,
+                        lead.phone,
+                        lead.email,
+                        lead.website,
+                        lead.business_summary,
+                        lead.owner_principal,
+                        lead.enrichment_status,
+                        json.dumps(lead.enrichment_sources),
+                        lead.last_enriched.isoformat() if lead.last_enriched else None,
+                        lead.score,
+                        json.dumps(lead.score_breakdown),
+                        json.dumps(lead.tags),
+                        lead.opportunity_note,
+                        lead.outreach_status,
+                        lead.notes,
+                        datetime.now().isoformat(),
+                    )
+                )
+            conn.commit()
+            logger.info(f"Saved {len(leads)} leads to database")
+            return len(leads)
+    
+    def load_all_leads(self) -> List["Lead"]:
+        """
+        Load all leads from the database.
+        
+        Returns an empty list if no leads are stored.
+        """
+        # Import here to avoid circular imports
+        from src.transform.aggregate import Lead
+        
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM leads ORDER BY score DESC"""
+            ).fetchall()
+            
+            if not rows:
+                logger.info("No leads found in database")
+                return []
+            
+            leads = []
+            for row in rows:
+                row_dict = dict(row)
+                
+                # Parse JSON fields
+                buildings = json.loads(row_dict.get('buildings') or '[]')
+                building_ids = json.loads(row_dict.get('building_ids') or '[]')
+                contacts = json.loads(row_dict.get('contacts') or '[]')
+                boros = json.loads(row_dict.get('boros') or '[]')
+                enrichment_sources = json.loads(row_dict.get('enrichment_sources') or '[]')
+                score_breakdown = json.loads(row_dict.get('score_breakdown') or '{}')
+                tags = json.loads(row_dict.get('tags') or '[]')
+                
+                # Parse dates
+                last_registration = None
+                if row_dict.get('last_registration'):
+                    try:
+                        last_registration = date.fromisoformat(row_dict['last_registration'][:10])
+                    except (ValueError, TypeError):
+                        pass
+                
+                last_enriched = None
+                if row_dict.get('last_enriched'):
+                    try:
+                        last_enriched = datetime.fromisoformat(row_dict['last_enriched'])
+                    except (ValueError, TypeError):
+                        pass
+                
+                created_at = datetime.now()
+                if row_dict.get('created_at'):
+                    try:
+                        created_at = datetime.fromisoformat(row_dict['created_at'])
+                    except (ValueError, TypeError):
+                        pass
+                
+                updated_at = datetime.now()
+                if row_dict.get('updated_at'):
+                    try:
+                        updated_at = datetime.fromisoformat(row_dict['updated_at'])
+                    except (ValueError, TypeError):
+                        pass
+                
+                lead = Lead(
+                    lead_id=row_dict['lead_id'],
+                    agent_name=row_dict.get('agent_name') or '',
+                    owner_name=row_dict.get('owner_name') or '',
+                    owner_type=row_dict.get('owner_type') or '',
+                    portfolio_size=row_dict.get('portfolio_size') or 0,
+                    total_units=row_dict.get('total_units') or 0,
+                    buildings=buildings,
+                    building_ids=building_ids,
+                    contacts=contacts,
+                    address=row_dict.get('address'),
+                    boro=row_dict.get('boro') or '',
+                    boros=boros,
+                    reg_status=row_dict.get('reg_status') or '',
+                    last_registration=last_registration,
+                    dos_id=row_dict.get('dos_id'),
+                    dos_status=row_dict.get('dos_status'),
+                    phone=row_dict.get('phone'),
+                    email=row_dict.get('email'),
+                    website=row_dict.get('website'),
+                    business_summary=row_dict.get('business_summary'),
+                    owner_principal=row_dict.get('owner_principal'),
+                    enrichment_status=row_dict.get('enrichment_status') or 'none',
+                    enrichment_sources=enrichment_sources,
+                    last_enriched=last_enriched,
+                    score=row_dict.get('score') or 0.0,
+                    score_breakdown=score_breakdown,
+                    tags=tags,
+                    opportunity_note=row_dict.get('opportunity_note'),
+                    outreach_status=row_dict.get('outreach_status') or 'new',
+                    notes=row_dict.get('notes'),
+                    created_at=created_at,
+                    updated_at=updated_at,
+                )
+                leads.append(lead)
+            
+            logger.info(f"Loaded {len(leads)} leads from database")
+            return leads
+    
+    def get_leads_count(self) -> int:
+        """Get the number of leads stored in the database."""
+        with self._get_connection() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
+            return count
+    
+    def get_last_refresh_time(self) -> Optional[datetime]:
+        """Get the most recent updated_at timestamp from leads."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT MAX(updated_at) as last_update FROM leads"
+            ).fetchone()
+            if row and row['last_update']:
+                try:
+                    return datetime.fromisoformat(row['last_update'])
+                except (ValueError, TypeError):
+                    pass
+            return None
     
     def get_stats(self) -> Dict:
         """Get database statistics."""

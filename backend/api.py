@@ -42,9 +42,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global state (in production, use a database)
+# Global state - loaded from SQLite on startup
 _leads_cache: List[Lead] = []
 _last_refresh: Optional[datetime] = None
+
+
+@app.on_event("startup")
+async def startup_load():
+    """Load leads from SQLite database on startup."""
+    global _leads_cache, _last_refresh
+    
+    db = get_database()
+    loaded = db.load_all_leads()
+    
+    if loaded:
+        _leads_cache = loaded
+        _last_refresh = db.get_last_refresh_time()
+        logger.info(f"Startup: Loaded {len(loaded)} leads from database")
+    else:
+        logger.info("Startup: No leads in database, run /api/refresh to populate")
 
 
 class LeadResponse(BaseModel):
@@ -178,13 +194,15 @@ async def update_lead(lead_id: str, request: UpdateLeadRequest):
             lead.updated_at = datetime.now()
             _leads_cache[i] = lead
             
-            # Persist to database
+            # Persist to database (both user_data table for backward compat and leads table)
             db = get_database()
             db.save_lead_user_data(
                 lead_id=lead_id,
                 outreach_status=request.outreach_status,
                 notes=request.notes
             )
+            # Also update the main leads table
+            db.save_leads([lead])
             
             return {
                 "status": "success",
@@ -322,6 +340,10 @@ async def refresh_pipeline(
         db = get_database()
         leads = db.apply_persisted_data_to_leads(leads)
         
+        # Persist all leads to SQLite (survives server restarts)
+        db.save_leads(leads)
+        logger.info(f"Persisted {len(leads)} leads to database")
+        
         # Update cache
         _leads_cache = leads
         _last_refresh = datetime.now()
@@ -367,10 +389,12 @@ async def enrich_leads(request: EnrichmentRequest):
     
     # Update cache and persist enrichment to database
     db = get_database()
+    updated_leads = []
     for lead in enriched:
         if lead.lead_id in lead_index:
             _leads_cache[lead_index[lead.lead_id]] = lead
-            # Save to database
+            updated_leads.append(lead)
+            # Save to enrichment cache (backward compatibility)
             db.save_enrichment(
                 lead_id=lead.lead_id,
                 phone=lead.phone,
@@ -381,6 +405,10 @@ async def enrich_leads(request: EnrichmentRequest):
                 enrichment_status=lead.enrichment_status,
                 enrichment_sources=lead.enrichment_sources,
             )
+    
+    # Also save updated leads to main leads table
+    if updated_leads:
+        db.save_leads(updated_leads)
     
     return {
         "status": "success",
@@ -419,11 +447,20 @@ async def enrich_batch(
         min_score=min_score,
     )
     
-    # Update cache
+    # Update cache and persist to database
     lead_index = {l.lead_id: i for i, l in enumerate(_leads_cache)}
+    updated_leads = []
+    db = get_database()
+    
     for lead in enriched:
         if lead.lead_id in lead_index:
             _leads_cache[lead_index[lead.lead_id]] = lead
+            updated_leads.append(lead)
+    
+    # Persist enriched leads to SQLite
+    if updated_leads:
+        db.save_leads(updated_leads)
+        logger.info(f"Persisted {len(updated_leads)} enriched leads to database")
     
     return {
         "status": "success",
