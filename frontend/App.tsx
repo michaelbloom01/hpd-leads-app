@@ -69,7 +69,7 @@ const App: React.FC = () => {
                         : 'text-slate-500 hover:text-slate-300'
                     }`}
                   >
-                    Quick (10k)
+                    Quick (2k)
                   </button>
                   <button
                     onClick={() => setRefreshMode('full')}
@@ -78,6 +78,7 @@ const App: React.FC = () => {
                         ? 'bg-amber-600 text-white' 
                         : 'text-slate-500 hover:text-slate-300'
                     }`}
+                    title="Full refresh may timeout on free hosting"
                   >
                     Full (200k+)
                   </button>

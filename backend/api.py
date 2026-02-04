@@ -298,7 +298,7 @@ async def refresh_pipeline(
     if full:
         limit = None
     elif limit is None:
-        limit = 10000  # Default for quick refresh
+        limit = 2000  # Default for quick refresh (Render free tier has 30s timeout)
     
     logger.info(f"Starting pipeline refresh with limit={limit or 'ALL'}")
     
