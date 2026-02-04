@@ -16,7 +16,8 @@ import requests
 logger = logging.getLogger(__name__)
 
 # NY State Open Data endpoint for Active Corporations
-NY_DOS_ENDPOINT = "https://data.ny.gov/resource/7tqb-y2d4.json"
+# Updated endpoint as of Feb 2026 (old endpoint 7tqb-y2d4 is no longer available)
+NY_DOS_ENDPOINT = "https://data.ny.gov/resource/n9v6-gdp6.json"
 
 
 @dataclass
@@ -87,14 +88,13 @@ class NYDOSClient:
         try:
             # Search using SoQL (Socrata Query Language)
             # Use LIKE for partial matching
+            # Note: New endpoint (n9v6-gdp6) only contains active corporations,
+            # so no need to filter by status
             params = {
                 "$where": f"upper(current_entity_name) LIKE '%{normalized}%'",
                 "$limit": 20,
-                "$order": "dos_file_date DESC"  # Most recent first
+                "$order": "initial_dos_filing_date DESC"  # Most recent first
             }
-            
-            if not include_inactive:
-                params["$where"] += " AND current_entity_status = 'ACTIVE'"
             
             response = self.session.get(NY_DOS_ENDPOINT, params=params, timeout=15)
             response.raise_for_status()
@@ -103,8 +103,6 @@ class NYDOSClient:
             if not results:
                 # Try exact match with original name
                 params["$where"] = f"upper(current_entity_name) = '{name.upper()}'"
-                if not include_inactive:
-                    params["$where"] += " AND current_entity_status = 'ACTIVE'"
                 
                 response = self.session.get(NY_DOS_ENDPOINT, params=params, timeout=15)
                 response.raise_for_status()
@@ -139,18 +137,19 @@ class NYDOSClient:
     def _parse_entity(self, record: Dict) -> DOSEntity:
         """Parse API response into DOSEntity."""
         # Build process address from components
+        # Note: New API uses dos_process_address_1 instead of dos_process_addr1
         process_addr_parts = []
-        for field in ['dos_process_addr1', 'dos_process_addr2', 'dos_process_city', 'dos_process_state', 'dos_process_zip']:
+        for field in ['dos_process_address_1', 'dos_process_address_2', 'dos_process_city', 'dos_process_state', 'dos_process_zip']:
             if record.get(field):
                 process_addr_parts.append(record[field])
         
         return DOSEntity(
             dos_id=record.get('dos_id', ''),
             name=record.get('current_entity_name', ''),
-            entity_type=record.get('current_entity_type', ''),
-            status=record.get('current_entity_status', ''),
+            entity_type=record.get('entity_type', ''),  # Changed from current_entity_type
+            status='ACTIVE',  # New endpoint only has active corporations
             jurisdiction=record.get('jurisdiction', ''),
-            formation_date=record.get('dos_file_date'),
+            formation_date=record.get('initial_dos_filing_date'),  # Changed from dos_file_date
             county=record.get('county'),
             process_name=record.get('dos_process_name'),
             process_address=', '.join(process_addr_parts) if process_addr_parts else None
@@ -173,9 +172,9 @@ class NYDOSClient:
         
         try:
             params = {
-                "$where": f"upper(current_entity_name) LIKE '%{normalized}%' AND current_entity_status = 'ACTIVE'",
+                "$where": f"upper(current_entity_name) LIKE '%{normalized}%'",
                 "$limit": limit,
-                "$order": "dos_file_date DESC"
+                "$order": "initial_dos_filing_date DESC"
             }
             
             response = self.session.get(NY_DOS_ENDPOINT, params=params, timeout=15)
