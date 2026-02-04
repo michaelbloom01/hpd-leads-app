@@ -48,16 +48,22 @@ _leads_cache: List[Lead] = []
 _last_refresh: Optional[datetime] = None
 _leads_lock = threading.Lock()  # Protects _leads_cache modifications
 
-# Background enrichment state
+# Background enrichment state (enhanced for batch processing)
 _enrichment_state: Dict = {
     "running": False,
+    "phase": "",  # "dos_lookup", "web_crawl", "complete"
     "progress": 0,
     "total": 0,
     "completed": 0,
     "failed": 0,
+    "dos_completed": 0,
+    "dos_found": 0,
+    "web_completed": 0,
+    "web_found": 0,
     "current_lead": None,
     "started_at": None,
     "finished_at": None,
+    "error": None,
 }
 _enrichment_lock = threading.Lock()  # Protects _enrichment_state
 
@@ -636,17 +642,19 @@ async def enrich_leads(request: EnrichmentRequest):
 
 
 def _run_background_enrichment(limit: int, min_score: Optional[float] = None):
-    """Background task to enrich leads."""
+    """Background task to enrich leads (legacy sequential method)."""
     global _leads_cache, _enrichment_state
     
     with _enrichment_lock:
         _enrichment_state["running"] = True
+        _enrichment_state["phase"] = "sequential"
         _enrichment_state["progress"] = 0
         _enrichment_state["total"] = limit
         _enrichment_state["completed"] = 0
         _enrichment_state["failed"] = 0
         _enrichment_state["started_at"] = datetime.now().isoformat()
         _enrichment_state["finished_at"] = None
+        _enrichment_state["error"] = None
     
     try:
         enricher = Enricher(use_cache=True)
@@ -703,9 +711,122 @@ def _run_background_enrichment(limit: int, min_score: Optional[float] = None):
         
         logger.info(f"Background enrichment complete: {_enrichment_state['completed']} successful, {_enrichment_state['failed']} failed")
         
+    except Exception as e:
+        logger.error(f"Background enrichment failed: {e}")
+        with _enrichment_lock:
+            _enrichment_state["error"] = str(e)
     finally:
         with _enrichment_lock:
             _enrichment_state["running"] = False
+            _enrichment_state["phase"] = "complete"
+            _enrichment_state["current_lead"] = None
+            _enrichment_state["finished_at"] = datetime.now().isoformat()
+
+
+def _run_batch_enrichment(
+    dos_enabled: bool = True,
+    web_enabled: bool = True,
+    max_leads: Optional[int] = None,
+    max_web_crawl: int = 500,
+    min_portfolio: int = 5,
+    min_score: float = 0.0,
+):
+    """
+    High-performance batch enrichment using parallel processing.
+    
+    Phase 1: NY DOS lookups (fast, parallel)
+    Phase 2: Web crawling (rate-limited, for high-priority leads)
+    """
+    global _leads_cache, _enrichment_state
+    
+    from src.enrich.batch_enricher import BatchEnricher, EnrichmentConfig
+    
+    with _enrichment_lock:
+        _enrichment_state["running"] = True
+        _enrichment_state["phase"] = "initializing"
+        _enrichment_state["progress"] = 0
+        _enrichment_state["total"] = len(_leads_cache)
+        _enrichment_state["completed"] = 0
+        _enrichment_state["failed"] = 0
+        _enrichment_state["dos_completed"] = 0
+        _enrichment_state["dos_found"] = 0
+        _enrichment_state["web_completed"] = 0
+        _enrichment_state["web_found"] = 0
+        _enrichment_state["started_at"] = datetime.now().isoformat()
+        _enrichment_state["finished_at"] = None
+        _enrichment_state["error"] = None
+    
+    try:
+        db = get_database()
+        lead_index = {l.lead_id: i for i, l in enumerate(_leads_cache)}
+        
+        # Configure batch enricher
+        config = EnrichmentConfig(
+            dos_enabled=dos_enabled,
+            dos_batch_size=100,
+            dos_workers=5,
+            web_enabled=web_enabled,
+            web_batch_size=50,
+            web_workers=3,
+            min_portfolio_for_web=min_portfolio,
+            min_score_for_web=min_score,
+            skip_already_enriched=True,
+            save_interval=50,
+            max_leads=max_leads,
+            max_web_crawl=max_web_crawl,
+        )
+        
+        enricher = BatchEnricher(config)
+        
+        def on_progress(progress):
+            """Update global state from enricher progress."""
+            with _enrichment_lock:
+                _enrichment_state["phase"] = progress.phase
+                _enrichment_state["progress"] = progress.processed
+                _enrichment_state["total"] = progress.total_leads
+                _enrichment_state["dos_completed"] = progress.dos_completed
+                _enrichment_state["dos_found"] = progress.dos_found
+                _enrichment_state["web_completed"] = progress.web_completed
+                _enrichment_state["web_found"] = progress.web_found
+                _enrichment_state["failed"] = progress.failed
+                _enrichment_state["current_lead"] = progress.current_lead
+        
+        def on_batch_complete(enriched_leads):
+            """Save batch and update cache."""
+            # Update cache
+            with _leads_lock:
+                for lead in enriched_leads:
+                    if lead.lead_id in lead_index:
+                        _leads_cache[lead_index[lead.lead_id]] = lead
+            
+            # Persist to database
+            db.save_leads(enriched_leads)
+            logger.info(f"Saved batch of {len(enriched_leads)} enriched leads")
+        
+        # Run batch enrichment
+        logger.info(f"Starting batch enrichment: DOS={dos_enabled}, Web={web_enabled}, MaxLeads={max_leads}, MaxWeb={max_web_crawl}")
+        enriched = enricher.enrich_all(
+            list(_leads_cache),
+            on_progress=on_progress,
+            on_batch_complete=on_batch_complete,
+        )
+        
+        # Final stats
+        with _enrichment_lock:
+            _enrichment_state["completed"] = _enrichment_state["dos_found"] + _enrichment_state["web_found"]
+        
+        logger.info(f"Batch enrichment complete: DOS found {_enrichment_state['dos_found']}, Web found {_enrichment_state['web_found']}")
+        
+    except Exception as e:
+        logger.error(f"Batch enrichment failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        with _enrichment_lock:
+            _enrichment_state["error"] = str(e)
+    finally:
+        with _enrichment_lock:
+            _enrichment_state["running"] = False
+            _enrichment_state["phase"] = "complete"
             _enrichment_state["current_lead"] = None
             _enrichment_state["finished_at"] = datetime.now().isoformat()
 
@@ -778,23 +899,95 @@ async def enrich_batch(
         }
 
 
+@app.post("/api/enrich/all")
+async def enrich_all_leads(
+    background_tasks: BackgroundTasks,
+    dos_enabled: bool = Query(True, description="Run NY DOS lookups (fast, parallel)"),
+    web_enabled: bool = Query(True, description="Run web crawling (rate-limited)"),
+    max_leads: Optional[int] = Query(None, description="Max leads to process (None = all)"),
+    max_web_crawl: int = Query(500, description="Max leads to web crawl"),
+    min_portfolio: int = Query(5, description="Min portfolio size for web crawl"),
+    min_score: float = Query(0.0, description="Min score for web crawl"),
+):
+    """
+    High-performance batch enrichment for all leads.
+    
+    Two-phase process:
+    1. NY DOS lookups (parallel, fast) - all corporation-like leads
+    2. Web crawling (rate-limited) - high-priority leads only
+    
+    This is the recommended way to enrich large datasets (100k+ leads).
+    DOS lookups typically complete in minutes, web crawling takes longer.
+    
+    Check progress at GET /api/enrich/status
+    """
+    global _leads_cache, _enrichment_state
+    
+    # Check if already running
+    with _enrichment_lock:
+        if _enrichment_state["running"]:
+            return {
+                "status": "already_running",
+                "message": "Background enrichment is already in progress",
+                "phase": _enrichment_state["phase"],
+                "progress": _enrichment_state["progress"],
+                "total": _enrichment_state["total"],
+                "check_progress": "/api/enrich/status",
+            }
+    
+    if not _leads_cache:
+        raise HTTPException(status_code=400, detail="No leads loaded. Run /api/refresh first.")
+    
+    # Run in background
+    background_tasks.add_task(
+        _run_batch_enrichment,
+        dos_enabled=dos_enabled,
+        web_enabled=web_enabled,
+        max_leads=max_leads,
+        max_web_crawl=max_web_crawl,
+        min_portfolio=min_portfolio,
+        min_score=min_score,
+    )
+    
+    return {
+        "status": "started",
+        "message": f"Batch enrichment started for {len(_leads_cache)} leads",
+        "config": {
+            "dos_enabled": dos_enabled,
+            "web_enabled": web_enabled,
+            "max_leads": max_leads,
+            "max_web_crawl": max_web_crawl,
+            "min_portfolio_for_web": min_portfolio,
+            "min_score_for_web": min_score,
+        },
+        "check_progress": "/api/enrich/status",
+    }
+
+
 @app.get("/api/enrich/status")
 async def get_enrichment_status():
     """
     Get the status of background enrichment.
     
     Returns progress, current lead being processed, and completion stats.
+    Enhanced for batch enrichment with DOS/web phase tracking.
     """
     with _enrichment_lock:
         return {
             "running": _enrichment_state["running"],
+            "phase": _enrichment_state.get("phase", ""),
             "progress": _enrichment_state["progress"],
             "total": _enrichment_state["total"],
             "completed": _enrichment_state["completed"],
             "failed": _enrichment_state["failed"],
+            "dos_completed": _enrichment_state.get("dos_completed", 0),
+            "dos_found": _enrichment_state.get("dos_found", 0),
+            "web_completed": _enrichment_state.get("web_completed", 0),
+            "web_found": _enrichment_state.get("web_found", 0),
             "current_lead": _enrichment_state["current_lead"],
             "started_at": _enrichment_state["started_at"],
             "finished_at": _enrichment_state["finished_at"],
+            "error": _enrichment_state.get("error"),
             "percent_complete": round(_enrichment_state["progress"] / _enrichment_state["total"] * 100, 1) if _enrichment_state["total"] > 0 else 0,
         }
 
