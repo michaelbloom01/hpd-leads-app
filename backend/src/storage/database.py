@@ -20,8 +20,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Default database path
-DEFAULT_DB_PATH = Path(__file__).parent.parent.parent / "data" / "leads.db"
+import os
+
+# Database path - use environment variable if set (for Railway volume), otherwise local
+_db_path_env = os.environ.get("DATABASE_PATH")
+if _db_path_env:
+    DEFAULT_DB_PATH = Path(_db_path_env)
+else:
+    DEFAULT_DB_PATH = Path(__file__).parent.parent.parent / "data" / "leads.db"
 
 
 class LeadsDatabase:
