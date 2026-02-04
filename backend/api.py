@@ -1086,9 +1086,10 @@ async def enrich_lead_contacts(lead_id: str):
     Enrich a single lead's contact info using multiple sources.
     
     Sources (in priority order):
-    1. Google Places API - Business phone numbers (if configured)
-    2. Web Crawl - Scrape company website
-    3. Hunter.io - Email finder (if configured and website found)
+    1. Google Places API - Business phone numbers (free $200/mo credit)
+    2. NY DOS Registry - Corporation info, registered agent (free)
+    3. Web Crawl - Scrape company website (free)
+    4. Hunter.io - Email finder (optional, 25 free/month)
     
     Returns all found contacts with source attribution and confidence scores.
     """
@@ -1184,6 +1185,16 @@ async def enrich_lead_contacts(lead_id: str):
             "emails": [e.to_dict() for e in result.emails],
             "website": result.website,
             "website_source": result.website_source,
+            # NY DOS data
+            "dos_info": {
+                "dos_id": result.dos_id,
+                "entity_name": result.dos_entity_name,
+                "entity_type": result.dos_entity_type,
+                "formation_date": result.dos_formation_date,
+                "registered_agent": result.dos_registered_agent,
+                "registered_address": result.dos_registered_address,
+                "lookup_url": result.dos_lookup_url,
+            } if result.dos_id else None,
             "sources_tried": result.sources_tried,
             "sources_succeeded": result.sources_succeeded,
             "errors": result.errors,

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ApiLead, enrichLeads, updateLead, researchLead, addOutreachAttempt, enrichLeadContacts, CompanyResearch, OutreachAttempt, ContactWithSource } from '../services/api';
+import { ApiLead, enrichLeads, updateLead, researchLead, addOutreachAttempt, enrichLeadContacts, CompanyResearch, OutreachAttempt, ContactWithSource, DOSInfo } from '../services/api';
 
 interface Props {
   lead: ApiLead;
@@ -25,6 +25,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
   const [notes, setNotes] = useState(lead.notes || '');
   const [outreachStatus, setOutreachStatus] = useState(lead.outreach_status || 'new');
   const [companyResearch, setCompanyResearch] = useState<CompanyResearch | null>(null);
+  const [dosInfo, setDosInfo] = useState<DOSInfo | null>(null);
   const [outreachAttempts, setOutreachAttempts] = useState<OutreachAttempt[]>(lead.outreach_attempts || []);
   const [showAddOutreach, setShowAddOutreach] = useState(false);
   const [newOutreach, setNewOutreach] = useState({ method: 'phone', outcome: 'no_answer', notes: '' });
@@ -384,6 +385,10 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                       website_source: result.website_source,
                       enrichment_status: (result.phones.length || result.emails.length) ? 'complete' : 'partial',
                     });
+                    // Save DOS info if found
+                    if (result.dos_info) {
+                      setDosInfo(result.dos_info);
+                    }
                   } catch (err) {
                     console.error('Contact enrichment failed:', err);
                   } finally {
@@ -554,6 +559,58 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               </span>
             </div>
           </div>
+
+          {/* NY DOS Corporation Info */}
+          {dosInfo && (
+            <div className="bg-indigo-900/20 border border-indigo-500/30 rounded-xl p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold text-indigo-400 uppercase tracking-wider">NY Corporation Registry</h3>
+                <a 
+                  href={dosInfo.lookup_url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="px-3 py-1 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-500 transition-colors flex items-center gap-1"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+                  </svg>
+                  Verify on NY DOS
+                </a>
+              </div>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-slate-500 block text-xs uppercase tracking-wider mb-1">Entity Name</span>
+                  <span className="text-white font-medium">{dosInfo.entity_name}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block text-xs uppercase tracking-wider mb-1">Entity Type</span>
+                  <span className="text-slate-300">{dosInfo.entity_type}</span>
+                </div>
+                {dosInfo.formation_date && (
+                  <div>
+                    <span className="text-slate-500 block text-xs uppercase tracking-wider mb-1">Formation Date</span>
+                    <span className="text-slate-300">{new Date(dosInfo.formation_date).toLocaleDateString()}</span>
+                  </div>
+                )}
+                <div>
+                  <span className="text-slate-500 block text-xs uppercase tracking-wider mb-1">DOS ID</span>
+                  <span className="text-slate-400 font-mono text-xs">{dosInfo.dos_id}</span>
+                </div>
+                {dosInfo.registered_agent && (
+                  <div className="col-span-2">
+                    <span className="text-slate-500 block text-xs uppercase tracking-wider mb-1">Registered Agent</span>
+                    <span className="text-emerald-400">{dosInfo.registered_agent}</span>
+                  </div>
+                )}
+                {dosInfo.registered_address && (
+                  <div className="col-span-2">
+                    <span className="text-slate-500 block text-xs uppercase tracking-wider mb-1">Registered Address</span>
+                    <span className="text-slate-300 text-xs">{dosInfo.registered_address}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Outreach Status */}
           <div className="bg-slate-800/30 rounded-xl p-5">

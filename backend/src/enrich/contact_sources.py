@@ -2,14 +2,14 @@
 Multi-source contact enrichment with source attribution.
 
 Sources (in priority order):
-1. Google Places API - Business phone numbers (free tier: $200/month credit)
-2. Hunter.io - Email finder (free tier: 50 credits/month)
-3. Web Crawl - Scrape company websites
-4. Apollo.io - B2B contact data (free tier: 50 credits)
+1. Google Places API - Business phone numbers (free tier: $200/month credit, no charge under that)
+2. NY DOS Registry - Corporation info, registered agent (completely free, public data)
+3. Web Crawl - Scrape company websites (completely free)
+4. Hunter.io - Email finder (optional, free tier: 25 credits/month)
 
 Each contact found includes:
 - The actual data (phone/email)
-- Source name (e.g., "google_places", "hunter", "web_crawl")
+- Source name (e.g., "google_places", "ny_dos", "web_crawl")
 - Source URL (clickable link to verify)
 - Confidence score (0-100)
 - Timestamp
@@ -56,6 +56,15 @@ class EnrichmentResult:
     website: Optional[str] = None
     website_source: Optional[str] = None
     google_place_id: Optional[str] = None
+    # NY DOS data
+    dos_id: Optional[str] = None
+    dos_entity_name: Optional[str] = None
+    dos_entity_type: Optional[str] = None
+    dos_formation_date: Optional[str] = None
+    dos_registered_agent: Optional[str] = None
+    dos_registered_address: Optional[str] = None
+    dos_lookup_url: Optional[str] = None
+    # Tracking
     sources_tried: List[str] = field(default_factory=list)
     sources_succeeded: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
@@ -82,6 +91,13 @@ class EnrichmentResult:
             "website": self.website,
             "website_source": self.website_source,
             "google_place_id": self.google_place_id,
+            "dos_id": self.dos_id,
+            "dos_entity_name": self.dos_entity_name,
+            "dos_entity_type": self.dos_entity_type,
+            "dos_formation_date": self.dos_formation_date,
+            "dos_registered_agent": self.dos_registered_agent,
+            "dos_registered_address": self.dos_registered_address,
+            "dos_lookup_url": self.dos_lookup_url,
             "sources_tried": self.sources_tried,
             "sources_succeeded": self.sources_succeeded,
             "errors": self.errors,
@@ -293,13 +309,16 @@ class MultiSourceEnricher:
         self.google_places = GooglePlacesEnricher()
         self.hunter = HunterEnricher()
         
-        # Import web crawler
+        # Import web crawler and NY DOS client
         from .web_crawl import WebCrawler
+        from .ny_dos import NYDOSClient
         self.web_crawler = WebCrawler(use_cache=True)
+        self.ny_dos = NYDOSClient()
         
         # Track API usage
         self._api_calls = {
             "google_places": 0,
+            "ny_dos": 0,
             "hunter": 0,
             "web_crawl": 0,
         }
@@ -310,27 +329,37 @@ class MultiSourceEnricher:
             "google_places": {
                 "configured": self.google_places.is_configured(),
                 "calls": self._api_calls["google_places"],
+                "description": "Business phone numbers (free $200/month credit)",
+            },
+            "ny_dos": {
+                "configured": True,  # Always available - public data
+                "calls": self._api_calls["ny_dos"],
+                "description": "NY corporation registry (free, public data)",
             },
             "hunter": {
                 "configured": self.hunter.is_configured(),
                 "calls": self._api_calls["hunter"],
+                "description": "Email finder (25 free/month)",
             },
             "web_crawl": {
                 "configured": True,  # Always available
                 "calls": self._api_calls["web_crawl"],
+                "description": "Website scraping (free, unlimited)",
             },
         }
     
     def enrich(self, lead_id: str, company_name: str, website: Optional[str] = None,
                location: str = "New York, NY", use_google: bool = True,
-               use_hunter: bool = True, use_web: bool = True) -> EnrichmentResult:
+               use_ny_dos: bool = True, use_hunter: bool = True, 
+               use_web: bool = True) -> EnrichmentResult:
         """
         Enrich a lead using multiple sources.
         
         Priority order:
-        1. Google Places (most reliable for phone)
-        2. Hunter.io (most reliable for email if we have domain)
-        3. Web Crawl (fallback, finds both)
+        1. Google Places (most reliable for phone) - requires API key
+        2. NY DOS Registry (corporation info) - always free
+        3. Web Crawl (phone, email, website) - always free
+        4. Hunter.io (email) - requires API key
         
         Args:
             lead_id: Lead identifier
@@ -338,6 +367,7 @@ class MultiSourceEnricher:
             website: Known website (optional, improves Hunter results)
             location: Location context for Google search
             use_google: Whether to use Google Places
+            use_ny_dos: Whether to use NY DOS registry
             use_hunter: Whether to use Hunter.io
             use_web: Whether to use web crawling
             
@@ -349,7 +379,7 @@ class MultiSourceEnricher:
         # Track which website we find
         found_website = website
         
-        # 1. Google Places - Best for phone numbers
+        # 1. Google Places - Best for phone numbers (if configured)
         if use_google and self.google_places.is_configured():
             result.sources_tried.append("google_places")
             self._api_calls["google_places"] += 1
@@ -385,7 +415,34 @@ class MultiSourceEnricher:
                 result.errors.append(f"google_places: {str(e)}")
                 logger.warning(f"Google Places failed for {company_name}: {e}")
         
-        # 2. Web Crawl - Find website and scrape contacts
+        # 2. NY DOS Registry - Corporation info and registered agent (always free)
+        if use_ny_dos:
+            result.sources_tried.append("ny_dos")
+            self._api_calls["ny_dos"] += 1
+            
+            try:
+                dos_entity = self.ny_dos.lookup_entity(company_name)
+                
+                if dos_entity:
+                    result.sources_succeeded.append("ny_dos")
+                    result.dos_id = dos_entity.dos_id
+                    result.dos_entity_name = dos_entity.name
+                    result.dos_entity_type = dos_entity.entity_type
+                    result.dos_formation_date = dos_entity.formation_date
+                    result.dos_registered_agent = dos_entity.process_name
+                    result.dos_registered_address = dos_entity.process_address
+                    # Link to NY DOS website for verification
+                    result.dos_lookup_url = f"https://appext20.dos.ny.gov/corp_public/CORPSEARCH.ENTITY_INFORMATION?p_token=&p_nameid={dos_entity.dos_id}"
+                    
+                    logger.info(f"NY DOS found: {dos_entity.name} (ID: {dos_entity.dos_id})")
+                else:
+                    logger.debug(f"No NY DOS record found for: {company_name}")
+                    
+            except Exception as e:
+                result.errors.append(f"ny_dos: {str(e)}")
+                logger.warning(f"NY DOS lookup failed for {company_name}: {e}")
+        
+        # 3. Web Crawl - Find website and scrape contacts (always free)
         if use_web:
             result.sources_tried.append("web_crawl")
             self._api_calls["web_crawl"] += 1
@@ -431,7 +488,7 @@ class MultiSourceEnricher:
                 result.errors.append(f"web_crawl: {str(e)}")
                 logger.warning(f"Web crawl failed for {company_name}: {e}")
         
-        # 3. Hunter.io - Best for emails if we have a domain
+        # 4. Hunter.io - Best for emails if we have a domain (requires API key)
         if use_hunter and self.hunter.is_configured() and found_website:
             result.sources_tried.append("hunter")
             self._api_calls["hunter"] += 1

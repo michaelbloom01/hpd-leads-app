@@ -295,6 +295,19 @@ export async function researchLead(leadId: string): Promise<CompanyResearch> {
 }
 
 /**
+ * NY DOS Corporation info
+ */
+export interface DOSInfo {
+  dos_id: string;
+  entity_name: string;
+  entity_type: string;
+  formation_date: string | null;
+  registered_agent: string | null;
+  registered_address: string | null;
+  lookup_url: string;  // Link to verify on NY DOS website
+}
+
+/**
  * Multi-source contact enrichment result
  */
 export interface ContactEnrichmentResult {
@@ -305,13 +318,15 @@ export interface ContactEnrichmentResult {
   emails: ContactWithSource[];
   website: string | null;
   website_source: string | null;
+  dos_info: DOSInfo | null;  // NY DOS corporation data
   sources_tried: string[];
   sources_succeeded: string[];
   errors: string[];
   api_status: {
-    google_places: { configured: boolean; calls: number };
-    hunter: { configured: boolean; calls: number };
-    web_crawl: { configured: boolean; calls: number };
+    google_places: { configured: boolean; calls: number; description?: string };
+    ny_dos: { configured: boolean; calls: number; description?: string };
+    hunter: { configured: boolean; calls: number; description?: string };
+    web_crawl: { configured: boolean; calls: number; description?: string };
   };
 }
 
