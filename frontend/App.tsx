@@ -96,7 +96,7 @@ const App: React.FC = () => {
 
             <div className="transition-all duration-500 ease-out" key={refreshKey}>
               {activeTab === 'dashboard' ? (
-                <Dashboard />
+                <Dashboard onSelectLead={setSelectedLead} />
               ) : (
                 <LeadTable onSelectLead={setSelectedLead} />
               )}

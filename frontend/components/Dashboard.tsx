@@ -3,11 +3,17 @@ import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { COLORS } from '../constants';
 import { fetchLeads, fetchStatus, ApiLead, PipelineStatus } from '../services/api';
+import PropertyMap from './PropertyMap';
 
-const Dashboard: React.FC = () => {
+interface DashboardProps {
+  onSelectLead?: (lead: ApiLead) => void;
+}
+
+const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
   const [leads, setLeads] = useState<ApiLead[]>([]);
   const [status, setStatus] = useState<PipelineStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showMap, setShowMap] = useState(false);
 
   useEffect(() => {
     async function loadData() {
@@ -97,7 +103,11 @@ const Dashboard: React.FC = () => {
           <h4 className="text-[12px] font-black text-slate-600 uppercase tracking-[0.5em] mb-10">Top Leads by Score</h4>
           <div className="space-y-6">
             {leads.sort((a,b) => b.score - a.score).slice(0, 5).map((lead) => (
-              <div key={lead.lead_id} className="flex items-center justify-between p-6 bg-slate-950/40 border border-white/5 rounded-3xl hover:border-blue-500/40 hover:bg-slate-900 transition-all group cursor-pointer shadow-lg">
+              <div 
+                key={lead.lead_id} 
+                onClick={() => onSelectLead?.(lead)}
+                className="flex items-center justify-between p-6 bg-slate-950/40 border border-white/5 rounded-3xl hover:border-blue-500/40 hover:bg-slate-900 transition-all group cursor-pointer shadow-lg"
+              >
                 <div className="flex flex-col">
                   <span className="text-base font-black text-slate-100 group-hover:text-blue-500 transition-colors tracking-tighter">{lead.agent_name || lead.owner_name}</span>
                   <span className="text-[10px] font-mono text-slate-600 tracking-[0.1em] uppercase font-bold mt-1.5">{lead.portfolio_size} buildings • {lead.boro}</span>
@@ -112,11 +122,57 @@ const Dashboard: React.FC = () => {
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
                     </div>
                   )}
+                  <div className="p-3 bg-slate-800/50 rounded-xl text-slate-400 group-hover:text-blue-400 transition-colors">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"/>
+                    </svg>
+                  </div>
                 </div>
               </div>
             ))}
           </div>
         </div>
+      </div>
+
+      {/* Map Section */}
+      <div className="glass p-12 rounded-[3.5rem] border border-white/5 shadow-2xl">
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h4 className="text-[12px] font-black text-slate-600 uppercase tracking-[0.5em]">Property Locations</h4>
+            <p className="text-[10px] text-slate-700 mt-1">Click markers to view lead details</p>
+          </div>
+          <button
+            onClick={() => setShowMap(!showMap)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all ${
+              showMap 
+                ? 'bg-blue-600 text-white' 
+                : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+            </svg>
+            {showMap ? 'Hide Map' : 'Show Map'}
+          </button>
+        </div>
+        
+        {showMap && (
+          <PropertyMap 
+            leads={leads.slice(0, 20)} 
+            onSelectLead={onSelectLead}
+          />
+        )}
+        
+        {!showMap && (
+          <div className="h-48 bg-slate-900/50 rounded-2xl flex items-center justify-center border border-white/5">
+            <div className="text-center">
+              <svg className="w-12 h-12 text-slate-700 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+              </svg>
+              <p className="text-slate-600 text-sm">Click "Show Map" to visualize property locations</p>
+            </div>
+          </div>
+        )}
       </div>
       </>
       )}
