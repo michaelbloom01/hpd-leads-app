@@ -163,6 +163,119 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
             </div>
           </div>
 
+          {/* Score Breakdown */}
+          {enrichedLead.score_breakdown && (
+            <div className="bg-slate-800/30 rounded-xl p-5">
+              <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-4">Score Breakdown</h3>
+              <div className="space-y-3">
+                {/* Portfolio Score */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 text-sm">Portfolio Size</span>
+                    <span className="text-xs text-slate-600">(50% weight)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-24 h-2 bg-slate-700 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-blue-500 rounded-full" 
+                        style={{ width: `${enrichedLead.score_breakdown.portfolio}%` }}
+                      />
+                    </div>
+                    <span className="text-sm font-mono text-blue-400 w-8 text-right">
+                      {enrichedLead.score_breakdown.portfolio.toFixed(0)}
+                    </span>
+                  </div>
+                </div>
+                
+                {/* Units Score */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 text-sm">Total Units</span>
+                    <span className="text-xs text-slate-600">(20% weight)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-24 h-2 bg-slate-700 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-purple-500 rounded-full" 
+                        style={{ width: `${enrichedLead.score_breakdown.units}%` }}
+                      />
+                    </div>
+                    <span className="text-sm font-mono text-purple-400 w-8 text-right">
+                      {enrichedLead.score_breakdown.units.toFixed(0)}
+                    </span>
+                  </div>
+                </div>
+                
+                {/* Professional Score */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 text-sm">Professional Indicators</span>
+                    <span className="text-xs text-slate-600">(15% weight)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-24 h-2 bg-slate-700 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-amber-500 rounded-full" 
+                        style={{ width: `${enrichedLead.score_breakdown.professional}%` }}
+                      />
+                    </div>
+                    <span className="text-sm font-mono text-amber-400 w-8 text-right">
+                      {enrichedLead.score_breakdown.professional.toFixed(0)}
+                    </span>
+                  </div>
+                </div>
+                
+                {/* Contact Score */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 text-sm">Contact Info</span>
+                    <span className="text-xs text-slate-600">(15% weight)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-24 h-2 bg-slate-700 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-emerald-500 rounded-full" 
+                        style={{ width: `${enrichedLead.score_breakdown.contact}%` }}
+                      />
+                    </div>
+                    <span className="text-sm font-mono text-emerald-400 w-8 text-right">
+                      {enrichedLead.score_breakdown.contact.toFixed(0)}
+                    </span>
+                  </div>
+                </div>
+                
+                {/* Concentration Score (Bonus) */}
+                <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 text-sm">Geographic Focus</span>
+                    <span className="text-xs text-slate-600">(+10% bonus)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-24 h-2 bg-slate-700 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-cyan-500 rounded-full" 
+                        style={{ width: `${enrichedLead.score_breakdown.concentration}%` }}
+                      />
+                    </div>
+                    <span className="text-sm font-mono text-cyan-400 w-8 text-right">
+                      {enrichedLead.score_breakdown.concentration.toFixed(0)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Explanation */}
+              <div className="mt-4 pt-3 border-t border-white/5">
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  <strong className="text-slate-400">How scoring works:</strong> Portfolio size and total units measure scale. 
+                  Professional indicators check for LLC/Corp structure and management keywords. 
+                  Contact info rewards having phone, email, and website. 
+                  Geographic focus gives a bonus for operators concentrated in fewer boroughs (easier to integrate).
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Quick Actions */}
           <div className="flex gap-2">
             <button

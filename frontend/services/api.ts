@@ -6,6 +6,17 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 /**
+ * Score breakdown showing component scores
+ */
+export interface ScoreBreakdown {
+  portfolio: number;
+  units: number;
+  professional: number;
+  contact: number;
+  concentration: number;
+}
+
+/**
  * Lead data from the backend API
  */
 export interface ApiLead {
@@ -24,6 +35,7 @@ export interface ApiLead {
   boro: string;
   boros: string[];
   score: number;
+  score_breakdown: ScoreBreakdown | null;
   tags: string[];
   enrichment_status: string;
   outreach_status: string;

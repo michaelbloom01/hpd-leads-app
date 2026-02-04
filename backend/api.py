@@ -106,6 +106,15 @@ class OutreachAttemptResponse(BaseModel):
     timestamp: str
 
 
+class ScoreBreakdown(BaseModel):
+    """Score breakdown showing component scores."""
+    portfolio: float = 0.0
+    units: float = 0.0
+    professional: float = 0.0
+    contact: float = 0.0
+    concentration: float = 0.0
+
+
 class LeadResponse(BaseModel):
     """Lead data for API response."""
     lead_id: str
@@ -123,6 +132,7 @@ class LeadResponse(BaseModel):
     boro: str
     boros: List[str]
     score: float
+    score_breakdown: Optional[ScoreBreakdown] = None
     tags: List[str]
     enrichment_status: str
     outreach_status: str
@@ -1193,6 +1203,17 @@ async def get_outreach_attempts(lead_id: str):
 
 def _lead_to_response(lead: Lead) -> LeadResponse:
     """Convert Lead dataclass to API response."""
+    # Convert score breakdown if available
+    breakdown = None
+    if lead.score_breakdown:
+        breakdown = ScoreBreakdown(
+            portfolio=lead.score_breakdown.get("portfolio", 0.0),
+            units=lead.score_breakdown.get("units", 0.0),
+            professional=lead.score_breakdown.get("professional", 0.0),
+            contact=lead.score_breakdown.get("contact", 0.0),
+            concentration=lead.score_breakdown.get("concentration", 0.0),
+        )
+    
     return LeadResponse(
         lead_id=lead.lead_id,
         agent_name=lead.agent_name,
@@ -1209,6 +1230,7 @@ def _lead_to_response(lead: Lead) -> LeadResponse:
         boro=lead.boro,
         boros=lead.boros,
         score=lead.score,
+        score_breakdown=breakdown,
         tags=lead.tags,
         enrichment_status=lead.enrichment_status,
         outreach_status=lead.outreach_status,
