@@ -2,6 +2,8 @@
 
 NYC property management lead generation pipeline with web interface. Identifies **management companies** responsible for each building in the HPD database.
 
+**Live App:** https://frontend-nine-psi-58.vercel.app  
+**Backend API:** https://hpd-leads-api.onrender.com  
 **GitHub:** https://github.com/michaelbloom01/hpd-leads-app
 
 ## What It Does
@@ -100,17 +102,21 @@ npm run dev
 
 ## Deployment
 
-### Backend → Railway
+The app is deployed and live:
+- **Frontend:** Vercel at https://frontend-nine-psi-58.vercel.app
+- **Backend:** Render at https://hpd-leads-api.onrender.com
 
-1. Connect Railway to this repo
-2. Set root directory to `backend`
-3. Railway auto-detects Python and runs `uvicorn api:app --host 0.0.0.0 --port $PORT`
+### Backend → Render (Free Tier)
+
+1. Connect Render to this repo (uses `render.yaml` Blueprint)
+2. Or manually: New Web Service → root directory `backend` → Python detected
+3. Start command: `gunicorn api:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT`
 
 ### Frontend → Vercel
 
 1. Connect Vercel to this repo
 2. Set root directory to `frontend`
-3. Set environment variable `VITE_API_URL` to your Railway backend URL
+3. Set environment variable `VITE_API_URL` to your backend URL
 
 ## Environment Variables
 

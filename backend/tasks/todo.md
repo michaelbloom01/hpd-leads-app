@@ -5,7 +5,9 @@
 - [ ] Build NY DOS registry lookup
 - [ ] Add Apollo API integration
 - [ ] Set up Google Sheets output (needs credentials)
-- [ ] Deploy to Railway (backend) + Vercel (frontend)
+- [x] **Deploy to Render (backend) + Vercel (frontend)** — DONE Feb 4, 2026
+  - Frontend: https://frontend-nine-psi-58.vercel.app
+  - Backend: https://hpd-leads-api.onrender.com
 
 ## Backlog
 
