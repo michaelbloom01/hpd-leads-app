@@ -44,18 +44,13 @@ const App: React.FC = () => {
           <div className="max-w-[1600px] mx-auto space-y-12">
             <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
               <div className="space-y-2">
-                <div className="flex items-center gap-3">
-                   <span className="px-2 py-0.5 bg-blue-600/20 text-blue-400 text-[9px] font-bold uppercase tracking-[0.2em] rounded">System v2.4</span>
-                   <span className="text-slate-700">•</span>
-                   <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Real-time Stream: Active</span>
-                </div>
                 <h1 className="text-4xl font-black text-white tracking-tighter uppercase">
-                  {activeTab === 'dashboard' ? 'Market Overview' : 'Asset Inventory'}
+                  {activeTab === 'dashboard' ? 'Lead Dashboard' : 'All Leads'}
                 </h1>
                 <p className="text-slate-500 text-sm max-w-xl leading-relaxed">
                   {activeTab === 'dashboard' 
-                    ? 'Global risk assessment of the NYC residential landscape. Data aggregated from HPD, ACRIS, and building department feeds.' 
-                    : 'Target acquisition pipeline. Advanced cleaned records with owner intelligence and high-resolution contact data.'}
+                    ? 'Property management companies in NYC ranked by portfolio size and acquisition potential.' 
+                    : 'Browse and filter leads by score, borough, portfolio size, and outreach status.'}
                 </p>
               </div>
               <div className="flex gap-3 items-center">

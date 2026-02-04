@@ -1,4 +1,8 @@
-
+/**
+ * DEPRECATED: This component is not currently used.
+ * The app uses LeadDetail.tsx instead for the lead modal.
+ * If revived, needs content rewrite - terminology misaligned with PM acquisition use case.
+ */
 import React, { useState, useEffect } from 'react';
 import { analyzeBuildingData } from '../services/geminiService';
 import { BuildingLead, AIAnalysis } from '../types';
@@ -41,7 +45,7 @@ const PropertyAnalysis: React.FC<Props> = ({ lead, onClose }) => {
           <div className="flex items-center gap-12">
             <div className={`w-32 h-32 rounded-[3rem] bg-slate-950 border-[6px] flex flex-col items-center justify-center font-mono shadow-inner ${lead.score > 80 ? 'text-rose-500 border-rose-500/10' : 'text-blue-500 border-blue-500/10'}`}>
               <span className="text-5xl font-black tracking-tighter">{lead.score}</span>
-              <span className="text-[11px] font-black uppercase tracking-[0.4em] text-slate-700 mt-2">Risk Index</span>
+              <span className="text-[11px] font-black uppercase tracking-[0.4em] text-slate-700 mt-2">Lead Score</span>
             </div>
             <div>
               <div className="flex items-center gap-6 mb-4">
@@ -77,8 +81,8 @@ const PropertyAnalysis: React.FC<Props> = ({ lead, onClose }) => {
                 </div>
               </div>
               <div className="text-center space-y-6">
-                <p className="text-blue-500 font-black text-xl uppercase tracking-[0.8em] animate-pulse">Running Neural Appraisal</p>
-                <p className="text-slate-800 text-[12px] font-mono uppercase tracking-[0.3em] font-black">Decrypting HPD Historical Violation Sequence...</p>
+                <p className="text-blue-500 font-black text-xl uppercase tracking-[0.8em] animate-pulse">Loading Lead Details</p>
+                <p className="text-slate-800 text-[12px] font-mono uppercase tracking-[0.3em] font-black">Fetching property data...</p>
               </div>
             </div>
           ) : analysis ? (
@@ -131,21 +135,21 @@ const PropertyAnalysis: React.FC<Props> = ({ lead, onClose }) => {
                               <svg className="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
                               <span className="font-mono tracking-widest font-black uppercase text-xs">{contact.phone}</span>
                             </div>
-                            <span className="text-[10px] font-black text-blue-500 uppercase opacity-0 group-hover/btn:opacity-100 transition-all tracking-[0.2em]">Initialize Dial</span>
+                            <span className="text-[10px] font-black text-blue-500 uppercase opacity-0 group-hover/btn:opacity-100 transition-all tracking-[0.2em]">Call</span>
                           </button>
                           <button className="w-full flex items-center justify-between p-6 bg-slate-950 rounded-2xl text-base text-slate-500 border border-white/5 hover:border-emerald-500/50 hover:bg-slate-900 transition-all group/btn">
                             <div className="flex items-center gap-6">
                               <svg className="w-6 h-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
                               <span className="font-mono tracking-widest font-black uppercase text-xs">{contact.email}</span>
                             </div>
-                            <span className="text-[10px] font-black text-emerald-500 uppercase opacity-0 group-hover/btn:opacity-100 transition-all tracking-[0.2em]">Transmit Comms</span>
+                            <span className="text-[10px] font-black text-emerald-500 uppercase opacity-0 group-hover/btn:opacity-100 transition-all tracking-[0.2em]">Email</span>
                           </button>
                         </div>
                       </div>
                     ))}
                     <div className="bg-slate-950/20 border-4 border-dashed border-white/5 rounded-[4rem] p-12 flex flex-col items-center justify-center text-slate-800 hover:text-slate-400 hover:border-blue-500/30 transition-all cursor-pointer group active:scale-95 shadow-inner">
                        <svg className="w-20 h-20 mb-6 group-hover:scale-110 group-hover:text-blue-500 transition-all duration-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
-                       <p className="text-[14px] font-black uppercase tracking-[0.5em]">Append Intelligence</p>
+                          <p className="text-[14px] font-black uppercase tracking-[0.5em]">Add Contact</p>
                     </div>
                   </div>
                 </section>
@@ -170,7 +174,7 @@ const PropertyAnalysis: React.FC<Props> = ({ lead, onClose }) => {
                     ></iframe>
                     <div className="absolute top-10 left-10 bg-slate-950/90 backdrop-blur-3xl px-10 py-4.5 rounded-[2rem] border border-white/10 text-[12px] font-black text-white uppercase tracking-[0.4em] shadow-2xl flex items-center gap-4">
                       <div className="w-3 h-3 bg-rose-500 rounded-full animate-pulse shadow-[0_0_20px_#f43f5e]"></div>
-                      Satellite Matrix Feed
+                      Location
                     </div>
                     <div className="absolute top-10 right-10 p-6 bg-blue-600 rounded-[2.5rem] shadow-[0_20px_50px_rgba(37,99,235,0.6)] opacity-0 group-hover:opacity-100 transition-all cursor-pointer hover:scale-110 active:scale-90">
                        <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
@@ -179,10 +183,10 @@ const PropertyAnalysis: React.FC<Props> = ({ lead, onClose }) => {
                 </section>
 
                 <div className="bg-slate-950 p-16 rounded-[5rem] border border-white/5 shadow-2xl">
-                  <p className="text-[14px] font-black text-slate-700 uppercase tracking-[0.6em] mb-14 text-center">Quant Risk Profile</p>
+                  <p className="text-[14px] font-black text-slate-700 uppercase tracking-[0.6em] mb-14 text-center">Lead Profile</p>
                   <div className="grid grid-cols-2 gap-20 mb-14">
                     <div className="text-center">
-                      <p className="text-[12px] font-bold text-slate-600 uppercase tracking-widest mb-6">Severity Tier</p>
+                      <p className="text-[12px] font-bold text-slate-600 uppercase tracking-widest mb-6">Opportunity Level</p>
                       <p className={`text-5xl font-black italic tracking-tighter ${
                         analysis.riskLevel === 'Extreme' ? 'text-rose-500' : 
                         analysis.riskLevel === 'High' ? 'text-orange-500' : 'text-emerald-500'
@@ -201,14 +205,14 @@ const PropertyAnalysis: React.FC<Props> = ({ lead, onClose }) => {
                         <span className="text-[12px] font-mono text-emerald-500 font-black tracking-widest bg-emerald-500/10 px-4 py-1.5 rounded-full border border-emerald-500/20">VALIDATED</span>
                      </div>
                      <div className="flex justify-between items-center px-4">
-                        <span className="text-[11px] text-slate-600 font-black uppercase tracking-[0.2em]">Asset Volatility</span>
+                        <span className="text-[11px] text-slate-600 font-black uppercase tracking-[0.2em]">Portfolio Trend</span>
                         <span className="text-[12px] font-mono text-rose-500 font-black tracking-widest">+18.4% YoY</span>
                      </div>
                   </div>
                 </div>
 
                 <section>
-                  <h4 className="text-[16px] font-black text-slate-500 uppercase tracking-[0.6em] mb-12">Violation Telemetry</h4>
+                  <h4 className="text-[16px] font-black text-slate-500 uppercase tracking-[0.6em] mb-12">Property Details</h4>
                   <div className="space-y-8 max-h-[650px] overflow-y-auto pr-10 custom-scrollbar">
                     {MOCK_VIOLATIONS.map(v => (
                       <div key={v.violationId} className="p-10 bg-slate-950/60 rounded-[3rem] border border-white/5 hover:border-rose-500/40 transition-all group shadow-2xl">
@@ -232,7 +236,7 @@ const PropertyAnalysis: React.FC<Props> = ({ lead, onClose }) => {
             Export Prospectus
           </button>
           <button className="px-20 py-7 bg-blue-600 text-white font-black rounded-[2.5rem] text-[12px] uppercase tracking-[0.5em] hover:bg-blue-500 transition-all shadow-[0_20px_80px_rgba(37,99,235,0.6)] transform hover:translate-y-[-4px] active:scale-90">
-            Initialize Acquisition Protocol
+            Start Outreach
           </button>
         </div>
       </div>

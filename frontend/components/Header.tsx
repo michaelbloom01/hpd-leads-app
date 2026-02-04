@@ -15,7 +15,7 @@ const Header: React.FC = () => {
         <div className="relative w-full group">
           <input 
             type="text" 
-            placeholder="Search Intelligence Database..."
+            placeholder="Search leads by name or address..."
             className="w-full pl-12 pr-4 py-3 bg-slate-900 border border-white/5 rounded-2xl text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500/50 transition-all placeholder:text-slate-600"
           />
           <svg className="w-4 h-4 text-slate-600 absolute left-4 top-3.5 group-focus-within:text-blue-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
@@ -39,8 +39,7 @@ const Header: React.FC = () => {
           
           <div className="flex items-center gap-4 pl-4 border-l border-white/5">
             <div className="text-right">
-              <p className="text-xs font-bold text-white leading-none">M. BLOOM</p>
-              <p className="text-[9px] text-blue-500 font-bold uppercase tracking-widest mt-1">QUANT TRADER</p>
+              <p className="text-xs font-bold text-white leading-none">Michael Bloom</p>
             </div>
             <div className="relative">
                <img 

@@ -29,7 +29,7 @@ const Dashboard: React.FC = () => {
 
   const chartData = leads.slice(0, 10).map(lead => ({
     name: (lead.agent_name || lead.owner_name || 'Unknown').split(' ')[0].slice(0, 8),
-    violations: lead.portfolio_size,
+    buildings: lead.portfolio_size,
     score: lead.score
   }));
 
@@ -63,7 +63,7 @@ const Dashboard: React.FC = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
         <div className="glass p-12 rounded-[3.5rem] border border-white/5 shadow-2xl">
-          <h4 className="text-[12px] font-black text-slate-600 uppercase tracking-[0.5em] mb-12">Asset Severity Distribution</h4>
+          <h4 className="text-[12px] font-black text-slate-600 uppercase tracking-[0.5em] mb-12">Top Leads by Portfolio Size</h4>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData}>
@@ -83,9 +83,9 @@ const Dashboard: React.FC = () => {
                     textTransform: 'uppercase'
                   }}
                 />
-                <Bar dataKey="violations" radius={[12, 12, 0, 0]} barSize={50}>
+                <Bar dataKey="buildings" radius={[12, 12, 0, 0]} barSize={50}>
                   {chartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.violations > 50 ? COLORS.danger : COLORS.accent} fillOpacity={0.7} className="hover:fill-opacity-100 transition-all duration-300" />
+                    <Cell key={`cell-${index}`} fill={entry.buildings > 50 ? COLORS.accent : COLORS.accent} fillOpacity={0.7} className="hover:fill-opacity-100 transition-all duration-300" />
                   ))}
                 </Bar>
               </BarChart>

@@ -8,10 +8,10 @@ interface Props {
 
 const Sidebar: React.FC<Props> = ({ activeTab, onTabChange }) => {
   const navItems = [
-    { id: 'dashboard' as const, label: 'Terminal', icon: (
+    { id: 'dashboard' as const, label: 'Dashboard', icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
     )},
-    { id: 'leads' as const, label: 'Database', icon: (
+    { id: 'leads' as const, label: 'Leads', icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
     )},
     { id: 'settings' as const, label: 'Settings', icon: (
@@ -27,7 +27,7 @@ const Sidebar: React.FC<Props> = ({ activeTab, onTabChange }) => {
         </div>
         <div className="flex flex-col">
           <span className="text-lg font-black text-white tracking-tighter uppercase leading-none">HPD Leads</span>
-          <span className="text-[9px] font-bold text-blue-500 tracking-[0.3em] mt-1">PRO ANALYTICS</span>
+          <span className="text-[9px] font-bold text-slate-500 tracking-[0.2em] mt-1">PM Acquisition</span>
         </div>
       </div>
 
@@ -49,21 +49,9 @@ const Sidebar: React.FC<Props> = ({ activeTab, onTabChange }) => {
       </nav>
 
       <div className="space-y-6">
-        <div className="bg-slate-900 border border-white/5 rounded-2xl p-6">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">System Health</p>
-          <div className="space-y-3">
-             <div className="flex justify-between text-[10px] font-mono">
-               <span className="text-slate-500 uppercase">AI Load</span>
-               <span className="text-blue-400">68%</span>
-             </div>
-             <div className="h-1 w-full bg-slate-800 rounded-full">
-               <div className="h-full w-[68%] bg-blue-500 rounded-full shadow-[0_0_8px_rgba(59,130,246,0.5)]"></div>
-             </div>
-          </div>
-        </div>
         <div className="flex items-center gap-3 px-2">
            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-           <span className="text-[9px] font-bold text-slate-600 uppercase tracking-widest">Global Data Feed Active</span>
+           <span className="text-[9px] font-bold text-slate-600 uppercase tracking-widest">Connected to HPD</span>
         </div>
       </div>
     </div>
