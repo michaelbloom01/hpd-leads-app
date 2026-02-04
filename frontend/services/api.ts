@@ -106,19 +106,44 @@ export async function fetchStatus(): Promise<PipelineStatus> {
 
 /**
  * Refresh the pipeline - fetch fresh data from HPD
+ * @param full - If true, fetches ALL ~200k buildings (slow). Otherwise fetches 10k.
  */
-export async function refreshPipeline(limit: number = 5000): Promise<{
+export async function refreshPipeline(full: boolean = false): Promise<{
   status: string;
   buildings_fetched: number;
   leads_created: number;
   timestamp: string;
 }> {
-  const response = await fetch(`${API_BASE_URL}/api/refresh?limit=${limit}`, {
+  const params = full ? '?full=true' : '';
+  const response = await fetch(`${API_BASE_URL}/api/refresh${params}`, {
     method: 'POST',
   });
   
   if (!response.ok) {
     throw new Error(`Failed to refresh pipeline: ${response.statusText}`);
+  }
+  
+  return response.json();
+}
+
+/**
+ * Get detailed statistics
+ */
+export async function fetchStats(): Promise<{
+  total_leads: number;
+  total_buildings: number;
+  by_borough: Record<string, number>;
+  by_enrichment_status: Record<string, number>;
+  score_distribution: Record<string, number>;
+  portfolio_distribution: Record<string, number>;
+  with_phone: number;
+  with_email: number;
+  with_website: number;
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/stats`);
+  
+  if (!response.ok) {
+    throw new Error(`Failed to fetch stats: ${response.statusText}`);
   }
   
   return response.json();

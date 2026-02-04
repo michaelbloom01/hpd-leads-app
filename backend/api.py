@@ -156,21 +156,102 @@ async def get_status():
     )
 
 
+@app.get("/api/stats")
+async def get_stats():
+    """Get detailed statistics about the loaded leads."""
+    if not _leads_cache:
+        return {
+            "total_leads": 0,
+            "total_buildings": 0,
+            "by_borough": {},
+            "by_enrichment_status": {},
+            "score_distribution": {},
+            "portfolio_distribution": {},
+            "with_phone": 0,
+            "with_email": 0,
+            "with_website": 0,
+        }
+    
+    # Count by borough
+    by_borough = {}
+    for lead in _leads_cache:
+        boro = lead.boro or "Unknown"
+        by_borough[boro] = by_borough.get(boro, 0) + 1
+    
+    # Count by enrichment status
+    by_status = {}
+    for lead in _leads_cache:
+        status = lead.enrichment_status
+        by_status[status] = by_status.get(status, 0) + 1
+    
+    # Score distribution
+    score_dist = {"0-20": 0, "20-40": 0, "40-60": 0, "60-80": 0, "80-100": 0}
+    for lead in _leads_cache:
+        if lead.score < 20:
+            score_dist["0-20"] += 1
+        elif lead.score < 40:
+            score_dist["20-40"] += 1
+        elif lead.score < 60:
+            score_dist["40-60"] += 1
+        elif lead.score < 80:
+            score_dist["60-80"] += 1
+        else:
+            score_dist["80-100"] += 1
+    
+    # Portfolio size distribution
+    portfolio_dist = {"1-5": 0, "6-10": 0, "11-25": 0, "26-50": 0, "51-100": 0, "100+": 0}
+    for lead in _leads_cache:
+        if lead.portfolio_size <= 5:
+            portfolio_dist["1-5"] += 1
+        elif lead.portfolio_size <= 10:
+            portfolio_dist["6-10"] += 1
+        elif lead.portfolio_size <= 25:
+            portfolio_dist["11-25"] += 1
+        elif lead.portfolio_size <= 50:
+            portfolio_dist["26-50"] += 1
+        elif lead.portfolio_size <= 100:
+            portfolio_dist["51-100"] += 1
+        else:
+            portfolio_dist["100+"] += 1
+    
+    return {
+        "total_leads": len(_leads_cache),
+        "total_buildings": sum(l.portfolio_size for l in _leads_cache),
+        "by_borough": by_borough,
+        "by_enrichment_status": by_status,
+        "score_distribution": score_dist,
+        "portfolio_distribution": portfolio_dist,
+        "with_phone": len([l for l in _leads_cache if l.phone]),
+        "with_email": len([l for l in _leads_cache if l.email]),
+        "with_website": len([l for l in _leads_cache if l.website]),
+    }
+
+
 @app.post("/api/refresh")
-async def refresh_pipeline(limit: int = Query(5000, le=50000, description="Max buildings to fetch")):
+async def refresh_pipeline(
+    limit: Optional[int] = Query(None, description="Max buildings to fetch (None = ALL ~200k)"),
+    full: bool = Query(False, description="Fetch ALL buildings (overrides limit)")
+):
     """
     Refresh the pipeline: fetch from HPD, normalize, aggregate, score.
     
+    By default fetches 10,000 buildings for speed. Set full=true to fetch ALL ~200k.
     This is an expensive operation - call sparingly.
     """
     global _leads_cache, _last_refresh
     
-    logger.info(f"Starting pipeline refresh with limit={limit}")
+    # If full=true, remove limit to get everything
+    if full:
+        limit = None
+    elif limit is None:
+        limit = 10000  # Default for quick refresh
+    
+    logger.info(f"Starting pipeline refresh with limit={limit or 'ALL'}")
     
     try:
         # Ingest
         client = HPDClient()
-        raw_buildings = client.fetch_buildings(limit=limit)
+        raw_buildings = client.get_combined_data(building_limit=limit)
         logger.info(f"Fetched {len(raw_buildings)} buildings from HPD")
         
         # Normalize

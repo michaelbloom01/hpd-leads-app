@@ -1,184 +1,456 @@
 
-import React, { useState, useEffect } from 'react';
-import { fetchLeads, ApiLead } from '../services/api';
-import { BuildingLead, Borough } from '../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { fetchLeads, ApiLead, enrichLeads } from '../services/api';
 
 interface Props {
-  onSelectLead: (lead: BuildingLead) => void;
+  onSelectLead: (lead: ApiLead) => void;
 }
 
-// Convert API lead to frontend BuildingLead format
-function apiLeadToBuildingLead(lead: ApiLead): BuildingLead {
-  return {
-    buildingId: lead.lead_id,
-    bbl: lead.lead_id, // Using lead_id as BBL placeholder
-    address: lead.buildings[0] || lead.address || 'Unknown Address',
-    borough: (lead.boro?.toUpperCase() as Borough) || Borough.MANHATTAN,
-    zip: lead.address?.match(/\d{5}/)?.[0] || '10001',
-    totalViolations: lead.portfolio_size, // Using portfolio size as a proxy
-    criticalViolations: Math.floor(lead.portfolio_size * 0.1),
-    lastInspection: new Date().toISOString().split('T')[0],
-    score: Math.round(lead.score),
-    ownerName: lead.agent_name || lead.owner_name || 'Unknown Owner',
-    contacts: [{
-      name: lead.agent_name || lead.owner_name || 'Unknown',
-      role: lead.owner_type || 'Principal',
-      phone: lead.phone || 'N/A',
-      email: lead.email || 'N/A',
-      mailingAddress: lead.address || 'N/A',
-    }],
-  };
-}
+type SortField = 'agent_name' | 'portfolio_size' | 'score' | 'boro' | 'enrichment_status';
+type SortDir = 'asc' | 'desc';
 
 const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterBorough, setFilterBorough] = useState('ALL');
-  const [leads, setLeads] = useState<BuildingLead[]>([]);
+  const [leads, setLeads] = useState<ApiLead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // Filters
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterBorough, setFilterBorough] = useState<string>('');
+  const [filterMinScore, setFilterMinScore] = useState<string>('');
+  const [filterMaxScore, setFilterMaxScore] = useState<string>('');
+  const [filterMinPortfolio, setFilterMinPortfolio] = useState<string>('');
+  const [filterHasPhone, setFilterHasPhone] = useState<boolean | null>(null);
+  const [filterHasEmail, setFilterHasEmail] = useState<boolean | null>(null);
+  const [filterHasWebsite, setFilterHasWebsite] = useState<boolean | null>(null);
+  
+  // Sorting
+  const [sortField, setSortField] = useState<SortField>('score');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  
+  // Pagination
+  const [page, setPage] = useState(0);
+  const pageSize = 50;
+  
+  // Selection for bulk actions
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [enriching, setEnriching] = useState(false);
 
-  // Fetch leads from API
+  // Fetch leads
   useEffect(() => {
     async function loadLeads() {
       setLoading(true);
       setError(null);
       try {
-        const boroFilter = filterBorough === 'ALL' ? undefined : filterBorough;
-        const apiLeads = await fetchLeads({ 
-          boro: boroFilter,
-          limit: 100,
-        });
-        setLeads(apiLeads.map(apiLeadToBuildingLead));
+        const apiLeads = await fetchLeads({ limit: 500 });
+        setLeads(apiLeads);
       } catch (err) {
         console.error('Failed to fetch leads:', err);
-        setError('Failed to load leads. Make sure the backend is running.');
+        setError('Failed to load leads. Make sure the backend is running and data is loaded.');
       } finally {
         setLoading(false);
       }
     }
     loadLeads();
-  }, [filterBorough]);
+  }, []);
 
-  const filteredLeads = leads.filter(lead => {
-    const matchesSearch = 
-      lead.address.toLowerCase().includes(searchTerm.toLowerCase()) || 
-      lead.ownerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      lead.bbl.includes(searchTerm) ||
-      (lead.contacts[0]?.phone || '').includes(searchTerm);
-    return matchesSearch;
-  });
+  // Filter and sort leads
+  const filteredLeads = useMemo(() => {
+    let result = [...leads];
+    
+    // Text search
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      result = result.filter(lead => 
+        (lead.agent_name || '').toLowerCase().includes(term) ||
+        (lead.owner_name || '').toLowerCase().includes(term) ||
+        (lead.address || '').toLowerCase().includes(term) ||
+        lead.buildings.some(b => b.toLowerCase().includes(term))
+      );
+    }
+    
+    // Borough filter
+    if (filterBorough) {
+      result = result.filter(lead => lead.boro.toUpperCase() === filterBorough.toUpperCase());
+    }
+    
+    // Score filters
+    if (filterMinScore) {
+      const min = parseFloat(filterMinScore);
+      if (!isNaN(min)) result = result.filter(lead => lead.score >= min);
+    }
+    if (filterMaxScore) {
+      const max = parseFloat(filterMaxScore);
+      if (!isNaN(max)) result = result.filter(lead => lead.score <= max);
+    }
+    
+    // Portfolio filter
+    if (filterMinPortfolio) {
+      const min = parseInt(filterMinPortfolio);
+      if (!isNaN(min)) result = result.filter(lead => lead.portfolio_size >= min);
+    }
+    
+    // Contact filters
+    if (filterHasPhone === true) result = result.filter(lead => lead.phone);
+    if (filterHasPhone === false) result = result.filter(lead => !lead.phone);
+    if (filterHasEmail === true) result = result.filter(lead => lead.email);
+    if (filterHasEmail === false) result = result.filter(lead => !lead.email);
+    if (filterHasWebsite === true) result = result.filter(lead => lead.website);
+    if (filterHasWebsite === false) result = result.filter(lead => !lead.website);
+    
+    // Sort
+    result.sort((a, b) => {
+      let aVal: any = a[sortField];
+      let bVal: any = b[sortField];
+      
+      if (typeof aVal === 'string') aVal = aVal.toLowerCase();
+      if (typeof bVal === 'string') bVal = bVal.toLowerCase();
+      
+      if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+    
+    return result;
+  }, [leads, searchTerm, filterBorough, filterMinScore, filterMaxScore, filterMinPortfolio, filterHasPhone, filterHasEmail, filterHasWebsite, sortField, sortDir]);
+
+  // Paginated results
+  const paginatedLeads = useMemo(() => {
+    const start = page * pageSize;
+    return filteredLeads.slice(start, start + pageSize);
+  }, [filteredLeads, page, pageSize]);
+
+  const totalPages = Math.ceil(filteredLeads.length / pageSize);
+
+  // Get unique boroughs for filter
+  const boroughs = useMemo(() => {
+    const boroSet = new Set(leads.map(l => l.boro).filter(Boolean));
+    return Array.from(boroSet).sort();
+  }, [leads]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDir('desc');
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    const newSelected = new Set(selectedIds);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedIds(newSelected);
+  };
+
+  const selectAll = () => {
+    if (selectedIds.size === paginatedLeads.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(paginatedLeads.map(l => l.lead_id)));
+    }
+  };
+
+  const handleEnrichSelected = async () => {
+    if (selectedIds.size === 0) return;
+    setEnriching(true);
+    try {
+      await enrichLeads(Array.from(selectedIds));
+      // Reload data
+      const apiLeads = await fetchLeads({ limit: 500 });
+      setLeads(apiLeads);
+      setSelectedIds(new Set());
+    } catch (err) {
+      console.error('Enrichment failed:', err);
+    } finally {
+      setEnriching(false);
+    }
+  };
+
+  const clearFilters = () => {
+    setSearchTerm('');
+    setFilterBorough('');
+    setFilterMinScore('');
+    setFilterMaxScore('');
+    setFilterMinPortfolio('');
+    setFilterHasPhone(null);
+    setFilterHasEmail(null);
+    setFilterHasWebsite(null);
+  };
+
+  const SortIcon = ({ field }: { field: SortField }) => (
+    <span className="ml-1 text-slate-600">
+      {sortField === field ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
+    </span>
+  );
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="text-slate-500">Loading leads...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <div className="text-rose-400 mb-4">{error}</div>
+        <p className="text-slate-500 text-sm">Click "Refresh from HPD" to load data</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="bg-slate-900/40 border border-white/5 rounded-[2.5rem] overflow-hidden shadow-2xl backdrop-blur-xl animate-in fade-in slide-in-from-bottom-8 duration-700">
-      <div className="p-10 border-b border-white/5 flex flex-col lg:flex-row gap-10 justify-between items-center bg-slate-950/40">
-        <div className="relative w-full lg:w-[650px]">
+    <div className="space-y-4">
+      {/* Filter Bar - Vantage.sh style */}
+      <div className="bg-slate-900/60 border border-white/5 rounded-xl p-4">
+        <div className="flex flex-wrap gap-3 items-center">
+          {/* Search */}
+          <div className="flex-1 min-w-[200px]">
+            <input
+              type="text"
+              placeholder="Search name, address..."
+              className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              value={searchTerm}
+              onChange={(e) => { setSearchTerm(e.target.value); setPage(0); }}
+            />
+          </div>
+          
+          {/* Borough */}
+          <select
+            className="px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            value={filterBorough}
+            onChange={(e) => { setFilterBorough(e.target.value); setPage(0); }}
+          >
+            <option value="">All Boroughs</option>
+            {boroughs.map(b => <option key={b} value={b}>{b}</option>)}
+          </select>
+          
+          {/* Score Range */}
+          <div className="flex items-center gap-1">
+            <input
+              type="number"
+              placeholder="Min Score"
+              className="w-24 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              value={filterMinScore}
+              onChange={(e) => { setFilterMinScore(e.target.value); setPage(0); }}
+            />
+            <span className="text-slate-600">-</span>
+            <input
+              type="number"
+              placeholder="Max"
+              className="w-20 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              value={filterMaxScore}
+              onChange={(e) => { setFilterMaxScore(e.target.value); setPage(0); }}
+            />
+          </div>
+          
+          {/* Portfolio Size */}
           <input
-            type="text"
-            placeholder="Query Asset Database (BBL, BIN, Owner, Address)..."
-            className="w-full pl-14 pr-4 py-5 bg-slate-950/60 border border-white/10 rounded-2xl text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/40 transition-all placeholder:text-slate-700 font-mono tracking-tight"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            type="number"
+            placeholder="Min Buildings"
+            className="w-28 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            value={filterMinPortfolio}
+            onChange={(e) => { setFilterMinPortfolio(e.target.value); setPage(0); }}
           />
-          <svg className="w-6 h-6 text-slate-700 absolute left-5 top-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-          </svg>
-        </div>
-        <div className="flex flex-wrap gap-2.5 justify-center lg:justify-end">
-          {['ALL', 'MANHATTAN', 'BROOKLYN', 'QUEENS', 'BRONX'].map(b => (
+          
+          {/* Contact Filters */}
+          <div className="flex gap-2">
             <button
-              key={b}
-              onClick={() => setFilterBorough(b)}
-              className={`px-6 py-3 rounded-xl text-[10px] font-black tracking-widest uppercase transition-all border ${
-                filterBorough === b 
-                ? 'bg-blue-600 text-white border-blue-500 shadow-[0_0_20px_rgba(37,99,235,0.4)] translate-y-[-2px]' 
-                : 'bg-slate-950/40 text-slate-500 border-white/5 hover:text-slate-200 hover:bg-slate-800'
+              onClick={() => setFilterHasPhone(filterHasPhone === true ? null : true)}
+              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                filterHasPhone === true 
+                  ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' 
+                  : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
               }`}
             >
-              {b}
+              📞 Phone
             </button>
-          ))}
-        </div>
-      </div>
-      
-      <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-slate-950/60 text-slate-600 text-[10px] font-black uppercase tracking-[0.35em] border-b border-white/5">
-              <th className="px-12 py-7">Target Asset</th>
-              <th className="px-12 py-7">Identifiers</th>
-              <th className="px-12 py-7">Ownership Network</th>
-              <th className="px-12 py-7 text-center">Score</th>
-              <th className="px-12 py-7">Violations</th>
-              <th className="px-12 py-7 text-right">Dossier</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-white/5">
-            {filteredLeads.map((lead) => (
-              <tr 
-                key={lead.buildingId} 
-                className="hover:bg-blue-600/[0.04] transition-all cursor-pointer group" 
-                onClick={() => onSelectLead(lead)}
-              >
-                <td className="px-12 py-9">
-                  <div className="text-lg font-black text-white group-hover:text-blue-400 transition-colors tracking-tighter leading-none">{lead.address}</div>
-                  <div className="text-[10px] text-slate-600 font-bold uppercase tracking-[0.15em] mt-2.5 flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 bg-slate-800 rounded-full"></span>
-                    {lead.borough}, NY {lead.zip}
-                  </div>
-                </td>
-                <td className="px-12 py-9">
-                  <div className="font-mono text-[11px] text-blue-400/90 bg-blue-500/10 px-3.5 py-1.5 rounded-lg inline-block border border-blue-500/10 shadow-sm">BBL: {lead.bbl}</div>
-                  <div className="text-[10px] text-slate-700 mt-3 font-mono font-bold tracking-tighter">BIN: {lead.buildingId}</div>
-                </td>
-                <td className="px-12 py-9">
-                  <div className="text-[13px] font-black text-slate-300 group-hover:text-slate-100 transition-colors uppercase tracking-tight">{lead.ownerName}</div>
-                  <div className="flex items-center gap-3 mt-3">
-                    <span className="text-[9px] font-black text-blue-500 bg-blue-500/10 px-2.5 py-1 rounded border border-blue-500/10 uppercase tracking-widest">
-                      {lead.contacts[0]?.role || 'PRINCIPAL'}
-                    </span>
-                    <span className="text-[11px] text-slate-500 font-mono tracking-tighter">{lead.contacts[0]?.phone}</span>
-                  </div>
-                </td>
-                <td className="px-12 py-9">
-                  <div className="flex flex-col items-center">
-                    <span className={`text-3xl font-black font-mono leading-none ${lead.score > 80 ? 'text-rose-500' : 'text-blue-500'}`}>{lead.score}</span>
-                    <div className="w-28 h-1.5 bg-slate-900 rounded-full mt-4 overflow-hidden shadow-inner">
-                       <div className={`h-full ${lead.score > 80 ? 'bg-rose-500 shadow-[0_0_15px_#f43f5e]' : 'bg-blue-500 shadow-[0_0_15px_#3b82f6]'}`} style={{ width: `${lead.score}%` }} />
-                    </div>
-                  </div>
-                </td>
-                <td className="px-12 py-9">
-                  <div className="flex items-center gap-10">
-                    <div className="text-center">
-                      <div className="text-base font-black text-slate-100">{lead.totalViolations}</div>
-                      <div className="text-[9px] text-slate-700 uppercase font-black tracking-widest mt-1.5">Gross</div>
-                    </div>
-                    <div className="w-[1px] h-14 bg-white/5"></div>
-                    <div className="text-center">
-                      <div className="text-sm font-black text-rose-500">{lead.criticalViolations}</div>
-                      <div className="text-[9px] text-rose-950 uppercase font-black tracking-widest mt-1.5">Class C</div>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-12 py-9 text-right">
-                  <div className="inline-flex p-5 bg-slate-950 border border-white/5 rounded-[1.5rem] group-hover:bg-blue-600 group-hover:text-white group-hover:shadow-[0_10px_30px_rgba(37,99,235,0.4)] group-hover:translate-x-2 transition-all duration-300">
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      
-      {filteredLeads.length === 0 && (
-        <div className="py-48 text-center bg-slate-950/20">
-          <div className="w-28 h-28 bg-slate-950 border border-white/5 rounded-[2.5rem] flex items-center justify-center mx-auto mb-10 text-slate-800 shadow-2xl">
-            <svg className="w-14 h-14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            <button
+              onClick={() => setFilterHasEmail(filterHasEmail === true ? null : true)}
+              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                filterHasEmail === true 
+                  ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' 
+                  : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
+              }`}
+            >
+              ✉️ Email
+            </button>
+            <button
+              onClick={() => setFilterHasWebsite(filterHasWebsite === true ? null : true)}
+              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                filterHasWebsite === true 
+                  ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' 
+                  : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
+              }`}
+            >
+              🌐 Website
+            </button>
           </div>
-          <p className="text-slate-700 font-black uppercase tracking-[0.4em] text-[11px]">Zero intelligence matches for active filters</p>
+          
+          {/* Clear Filters */}
+          <button
+            onClick={clearFilters}
+            className="px-3 py-2 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            Clear Filters
+          </button>
         </div>
-      )}
+        
+        {/* Results count and bulk actions */}
+        <div className="flex justify-between items-center mt-3 pt-3 border-t border-white/5">
+          <div className="text-sm text-slate-500">
+            Showing <span className="text-slate-300 font-medium">{filteredLeads.length}</span> of {leads.length} leads
+            {selectedIds.size > 0 && (
+              <span className="ml-3 text-blue-400">({selectedIds.size} selected)</span>
+            )}
+          </div>
+          {selectedIds.size > 0 && (
+            <button
+              onClick={handleEnrichSelected}
+              disabled={enriching}
+              className="px-4 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {enriching ? 'Enriching...' : `Enrich ${selectedIds.size} Selected`}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Data Table */}
+      <div className="bg-slate-900/40 border border-white/5 rounded-xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="bg-slate-950/80 text-slate-500 text-xs uppercase tracking-wider border-b border-white/5">
+                <th className="px-4 py-3 w-8">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.size === paginatedLeads.length && paginatedLeads.length > 0}
+                    onChange={selectAll}
+                    className="rounded bg-slate-800 border-slate-600"
+                  />
+                </th>
+                <th 
+                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors"
+                  onClick={() => handleSort('agent_name')}
+                >
+                  Name <SortIcon field="agent_name" />
+                </th>
+                <th 
+                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors"
+                  onClick={() => handleSort('boro')}
+                >
+                  Borough <SortIcon field="boro" />
+                </th>
+                <th 
+                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right"
+                  onClick={() => handleSort('portfolio_size')}
+                >
+                  Buildings <SortIcon field="portfolio_size" />
+                </th>
+                <th 
+                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right"
+                  onClick={() => handleSort('score')}
+                >
+                  Score <SortIcon field="score" />
+                </th>
+                <th className="px-4 py-3">Contact</th>
+                <th 
+                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors"
+                  onClick={() => handleSort('enrichment_status')}
+                >
+                  Status <SortIcon field="enrichment_status" />
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {paginatedLeads.map((lead) => (
+                <tr 
+                  key={lead.lead_id}
+                  className="hover:bg-slate-800/50 transition-colors cursor-pointer"
+                  onClick={() => onSelectLead(lead)}
+                >
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(lead.lead_id)}
+                      onChange={() => toggleSelect(lead.lead_id)}
+                      className="rounded bg-slate-800 border-slate-600"
+                    />
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-slate-200 text-sm">{lead.agent_name || lead.owner_name}</div>
+                    <div className="text-xs text-slate-600 truncate max-w-[200px]">{lead.buildings[0]}</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="px-2 py-0.5 bg-slate-800 text-slate-400 text-xs rounded">
+                      {lead.boro}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <span className="text-slate-300 font-mono text-sm">{lead.portfolio_size}</span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <span className={`font-mono text-sm font-medium ${
+                      lead.score >= 60 ? 'text-emerald-400' : 
+                      lead.score >= 40 ? 'text-amber-400' : 'text-slate-500'
+                    }`}>
+                      {lead.score.toFixed(1)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex gap-1.5">
+                      {lead.phone && <span title={lead.phone} className="text-emerald-500">📞</span>}
+                      {lead.email && <span title={lead.email} className="text-blue-500">✉️</span>}
+                      {lead.website && <span title={lead.website} className="text-purple-500">🌐</span>}
+                      {!lead.phone && !lead.email && !lead.website && <span className="text-slate-700">—</span>}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-0.5 text-xs rounded ${
+                      lead.enrichment_status === 'complete' ? 'bg-emerald-900/30 text-emerald-400' :
+                      lead.enrichment_status === 'partial' ? 'bg-amber-900/30 text-amber-400' :
+                      lead.enrichment_status === 'failed' ? 'bg-rose-900/30 text-rose-400' :
+                      'bg-slate-800 text-slate-500'
+                    }`}>
+                      {lead.enrichment_status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-white/5 bg-slate-950/50">
+            <button
+              onClick={() => setPage(Math.max(0, page - 1))}
+              disabled={page === 0}
+              className="px-3 py-1 text-sm text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              ← Previous
+            </button>
+            <div className="text-sm text-slate-500">
+              Page {page + 1} of {totalPages}
+            </div>
+            <button
+              onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
+              disabled={page >= totalPages - 1}
+              className="px-3 py-1 text-sm text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              Next →
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
