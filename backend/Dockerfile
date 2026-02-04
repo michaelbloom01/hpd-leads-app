@@ -1,14 +1,17 @@
-# HPD Leads API - Railway Deployment
+# HPD Leads API - Railway Deployment v2 - Cache bust
 FROM python:3.12-slim
+
+# Force cache invalidation
+ARG CACHEBUST=1
 
 WORKDIR /app
 
-# Install dependencies
+# Install dependencies first
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
 
-# Use Python script to handle PORT - avoids shell expansion issues
-CMD ["python", "start.py"]
+# Start using Python script that reads PORT env var
+ENTRYPOINT ["python", "start.py"]
