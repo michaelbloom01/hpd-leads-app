@@ -43,6 +43,8 @@ class Lead:
     website_source: Optional[str] = None  # Where we found the website
     business_summary: Optional[str] = None
     owner_principal: Optional[str] = None
+    linkedin_url: Optional[str] = None  # Company LinkedIn page
+    linkedin_people: List[str] = field(default_factory=list)  # Key people's LinkedIn profiles
     contacts: List[Dict] = field(default_factory=list)
     address: Optional[str] = None
     boro: str = ""

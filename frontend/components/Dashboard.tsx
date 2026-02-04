@@ -91,7 +91,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                 />
                 <Bar dataKey="buildings" radius={[12, 12, 0, 0]} barSize={50}>
                   {chartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.buildings > 50 ? COLORS.accent : COLORS.accent} fillOpacity={0.7} className="hover:fill-opacity-100 transition-all duration-300" />
+                    <Cell key={`cell-${index}`} fill={entry.buildings > 50 ? COLORS.primary : COLORS.accent} fillOpacity={0.7} className="hover:fill-opacity-100 transition-all duration-300" />
                   ))}
                 </Bar>
               </BarChart>
@@ -102,7 +102,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
         <div className="glass p-12 rounded-[3.5rem] border border-white/5 shadow-2xl">
           <h4 className="text-[12px] font-black text-slate-600 uppercase tracking-[0.5em] mb-10">Top Leads by Score</h4>
           <div className="space-y-6">
-            {leads.sort((a,b) => b.score - a.score).slice(0, 5).map((lead) => (
+            {[...leads].sort((a,b) => b.score - a.score).slice(0, 5).map((lead) => (
               <div 
                 key={lead.lead_id} 
                 onClick={() => onSelectLead?.(lead)}

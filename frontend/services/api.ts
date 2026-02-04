@@ -46,6 +46,8 @@ export interface ApiLead {
   website: string | null;
   website_source: string | null;
   business_summary: string | null;
+  linkedin_url: string | null;  // Company LinkedIn page
+  linkedin_people: string[];  // Key people's LinkedIn profiles
   address: string | null;
   boro: string;
   boros: string[];

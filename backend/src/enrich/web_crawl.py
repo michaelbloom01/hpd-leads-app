@@ -75,6 +75,8 @@ class WebEnrichmentResult:
     address: Optional[str] = None
     business_summary: Optional[str] = None
     owner_principal: Optional[str] = None
+    linkedin_url: Optional[str] = None  # Company LinkedIn page
+    linkedin_people: Optional[List[str]] = None  # Key people's LinkedIn profiles
     source: str = "web_crawl"
     success: bool = False
     error: Optional[str] = None
@@ -241,6 +243,12 @@ class WebCrawler:
             result.address = contact_info.get("address")
             result.business_summary = contact_info.get("summary")
             result.owner_principal = contact_info.get("owner")
+            
+            # Step 3: Find LinkedIn profiles
+            linkedin_results = self.find_linkedin_profiles(company_name)
+            result.linkedin_url = linkedin_results.get("company_page")
+            result.linkedin_people = linkedin_results.get("people", [])
+            
             result.success = True
             
         except Exception as e:
@@ -276,6 +284,56 @@ class WebCrawler:
         
         logger.info(f"No website found for {company_name}")
         return None
+    
+    def find_linkedin_profiles(self, company_name: str) -> Dict:
+        """
+        Search for LinkedIn company page and key people.
+        
+        Args:
+            company_name: Company name to search
+            
+        Returns:
+            Dict with 'company_page' and 'people' list
+        """
+        result = {"company_page": None, "people": []}
+        
+        if not GOOGLE_SEARCH_AVAILABLE:
+            return result
+        
+        try:
+            # Search for company LinkedIn page
+            company_query = f'site:linkedin.com/company "{company_name}" NYC property management'
+            time.sleep(self.delay + random.uniform(0.5, 1.0))
+            
+            company_results = list(google_search(company_query, num_results=5, sleep_interval=2))
+            
+            for url in company_results:
+                if "linkedin.com/company/" in url.lower():
+                    result["company_page"] = url
+                    logger.info(f"Found LinkedIn company page for {company_name}: {url}")
+                    break
+            
+            # Search for key people (principals/owners) at the company
+            people_query = f'site:linkedin.com/in "{company_name}" (owner OR principal OR president OR CEO OR founder) NYC'
+            time.sleep(self.delay + random.uniform(0.5, 1.0))
+            
+            people_results = list(google_search(people_query, num_results=5, sleep_interval=2))
+            
+            for url in people_results:
+                if "linkedin.com/in/" in url.lower():
+                    # Avoid duplicates
+                    if url not in result["people"]:
+                        result["people"].append(url)
+                        if len(result["people"]) >= 3:  # Cap at 3 people
+                            break
+            
+            if result["people"]:
+                logger.info(f"Found {len(result['people'])} LinkedIn profiles for {company_name}")
+                
+        except Exception as e:
+            logger.warning(f"LinkedIn search failed for {company_name}: {e}")
+        
+        return result
     
     def _search_google(self, company_name: str) -> Optional[str]:
         """Search Google for company website."""
@@ -454,16 +512,18 @@ class WebCrawler:
                 if result["summary"] or result["owner"]:
                     break
         
-        # Finally try homepage if we still need data
+        # Finally try homepage if we still need data (fetch once and reuse)
+        homepage_content = None
         if not result["phone"] and not result["email"]:
-            content = self._fetch_page(url)
-            if content:
-                self._extract_contact_data(content, result)
+            homepage_content = self._fetch_page(url)
+            if homepage_content:
+                self._extract_contact_data(homepage_content, result)
         
         if not result["summary"]:
-            content = self._fetch_page(url)
-            if content:
-                self._extract_about_data(content, result)
+            if homepage_content is None:
+                homepage_content = self._fetch_page(url)
+            if homepage_content:
+                self._extract_about_data(homepage_content, result)
         
         return result
     

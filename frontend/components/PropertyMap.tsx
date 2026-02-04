@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -78,10 +78,9 @@ const FitBounds: React.FC<{ buildings: GeocodedBuilding[] }> = ({ buildings }) =
 interface Props {
   leads: ApiLead[];
   onSelectLead?: (lead: ApiLead) => void;
-  selectedLeadId?: string | null;
 }
 
-const PropertyMap: React.FC<Props> = ({ leads, onSelectLead, selectedLeadId }) => {
+const PropertyMap: React.FC<Props> = ({ leads, onSelectLead }) => {
   const [geocodedBuildings, setGeocodedBuildings] = useState<GeocodedBuilding[]>([]);
   
   // Geocode buildings (using approximate coords based on borough)
@@ -107,20 +106,6 @@ const PropertyMap: React.FC<Props> = ({ leads, onSelectLead, selectedLeadId }) =
     });
     
     setGeocodedBuildings(buildings);
-  }, [leads]);
-
-  // Group buildings by lead for the legend
-  const leadSummary = useMemo(() => {
-    const summary: Record<string, { name: string; count: number; score: number; boro: string }> = {};
-    leads.forEach(lead => {
-      summary[lead.lead_id] = {
-        name: lead.agent_name || lead.owner_name,
-        count: Math.min(lead.buildings.length, 5),
-        score: lead.score,
-        boro: lead.boro,
-      };
-    });
-    return summary;
   }, [leads]);
 
   if (leads.length === 0) {

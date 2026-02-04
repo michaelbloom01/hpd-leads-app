@@ -141,6 +141,8 @@ class LeadResponse(BaseModel):
     website: Optional[str]
     website_source: Optional[str] = None  # Where we found the website
     business_summary: Optional[str]
+    linkedin_url: Optional[str] = None  # Company LinkedIn page
+    linkedin_people: List[str] = []  # Key people's LinkedIn profiles
     address: Optional[str]
     boro: str
     boros: List[str]
@@ -1416,6 +1418,8 @@ def _lead_to_response(lead: Lead) -> LeadResponse:
         website=lead.website,
         website_source=getattr(lead, 'website_source', None),
         business_summary=lead.business_summary[:200] if isinstance(lead.business_summary, str) else None,
+        linkedin_url=getattr(lead, 'linkedin_url', None),
+        linkedin_people=getattr(lead, 'linkedin_people', []) or [],
         address=lead.address,
         boro=lead.boro,
         boros=lead.boros,

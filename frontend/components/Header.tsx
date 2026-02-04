@@ -1,11 +1,16 @@
 
 import React from 'react';
 
-const Header: React.FC = () => {
+interface HeaderProps {
+  searchQuery?: string;
+  onSearchChange?: (query: string) => void;
+}
+
+const Header: React.FC<HeaderProps> = ({ searchQuery = '', onSearchChange }) => {
   return (
     <header className="h-20 bg-slate-950 border-b border-white/5 flex items-center justify-between px-8 sticky top-0 z-20">
       <div className="flex items-center gap-4 lg:hidden">
-        <button className="p-2 text-slate-400">
+        <button className="p-2 text-slate-400" aria-label="Open menu">
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
         </button>
         <span className="text-xl font-bold text-white tracking-tighter uppercase">HPD Leads</span>
@@ -16,10 +21,12 @@ const Header: React.FC = () => {
           <input 
             type="text" 
             placeholder="Search leads by name or address..."
+            value={searchQuery}
+            onChange={(e) => onSearchChange?.(e.target.value)}
+            aria-label="Search leads"
             className="w-full pl-12 pr-4 py-3 bg-slate-900 border border-white/5 rounded-2xl text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500/50 transition-all placeholder:text-slate-600"
           />
           <svg className="w-4 h-4 text-slate-600 absolute left-4 top-3.5 group-focus-within:text-blue-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-          <div className="absolute right-3 top-2.5 px-2 py-1 bg-slate-950 border border-white/10 rounded text-[9px] font-mono text-slate-600">CMD + K</div>
         </div>
       </div>
 

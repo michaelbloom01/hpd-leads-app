@@ -13,8 +13,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional, Dict, Callable, Set
-from collections import defaultdict
+from typing import List, Optional, Dict, Callable
 
 from src.transform.aggregate import Lead
 from src.enrich.web_crawl import WebCrawler, WebEnrichmentResult

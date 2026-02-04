@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ApiLead, enrichLeads, updateLead, researchLead, addOutreachAttempt, enrichLeadContacts, CompanyResearch, OutreachAttempt, ContactWithSource, DOSInfo } from '../services/api';
 
 interface Props {
@@ -29,6 +29,16 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
   const [outreachAttempts, setOutreachAttempts] = useState<OutreachAttempt[]>(lead.outreach_attempts || []);
   const [showAddOutreach, setShowAddOutreach] = useState(false);
   const [newOutreach, setNewOutreach] = useState({ method: 'phone', outcome: 'no_answer', notes: '' });
+
+  // Sync state when lead prop changes
+  useEffect(() => {
+    setEnrichedLead(lead);
+    setNotes(lead.notes || '');
+    setOutreachStatus(lead.outreach_status || 'new');
+    setOutreachAttempts(lead.outreach_attempts || []);
+    setDosInfo(null);
+    setCompanyResearch(null);
+  }, [lead.lead_id]);
 
   const handleEnrich = async () => {
     setIsEnriching(true);
@@ -535,6 +545,35 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                   </span>
                 )}
               </div>
+            </div>
+            
+            {/* LinkedIn */}
+            <div className="space-y-2 mb-4">
+              <div className="text-xs text-slate-500 uppercase tracking-wider font-medium">LinkedIn</div>
+              {enrichedLead.linkedin_url ? (
+                <div className="flex items-center gap-3 p-2 bg-slate-900/50 rounded-lg">
+                  <span className="text-lg">💼</span>
+                  <a href={enrichedLead.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
+                    Company Page
+                  </a>
+                </div>
+              ) : (
+                <div className="text-slate-600 text-sm p-2">No company LinkedIn found</div>
+              )}
+              
+              {enrichedLead.linkedin_people && enrichedLead.linkedin_people.length > 0 && (
+                <div className="space-y-1 mt-2">
+                  <div className="text-[10px] text-slate-600 uppercase tracking-wider">Key People</div>
+                  {enrichedLead.linkedin_people.map((url, i) => (
+                    <div key={i} className="flex items-center gap-3 p-2 bg-slate-900/50 rounded-lg">
+                      <span className="text-sm">👤</span>
+                      <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline text-sm truncate">
+                        {url.split('/in/')[1]?.split('?')[0] || 'Profile'}
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             
             {/* Address */}

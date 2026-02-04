@@ -14,15 +14,13 @@ Each contact found includes:
 - Confidence score (0-100)
 - Timestamp
 """
-import json
 import logging
 import os
 import re
-import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
-from typing import Optional, List, Dict, Any
-from urllib.parse import quote_plus
+from typing import Optional, List, Dict
+from urllib.parse import urlparse
 
 import requests
 
@@ -495,7 +493,6 @@ class MultiSourceEnricher:
             
             try:
                 # Extract domain from website
-                from urllib.parse import urlparse
                 domain = urlparse(found_website).netloc
                 if domain.startswith("www."):
                     domain = domain[4:]
