@@ -162,7 +162,7 @@ class PLUTOClient:
         """
         Get building classifications for a batch of buildings.
         
-        More efficient than individual lookups - fetches by borough+block.
+        Uses bulk fetch by borough to minimize API calls.
         
         Args:
             buildings: List of building dicts with boro/block/lot fields
@@ -175,9 +175,9 @@ class PLUTOClient:
         """
         results = {}
         
-        # Group buildings by borough and block for efficient fetching
-        by_boro_block: Dict[str, Set[str]] = defaultdict(set)
-        bbl_to_building = {}
+        # Build set of BBLs we need and group by borough
+        needed_bbls: Dict[str, Set[str]] = defaultdict(set)  # boro -> set of BBLs
+        bbl_to_info = {}
         
         for building in buildings:
             boro = building.get(boro_field, '')
@@ -193,50 +193,68 @@ class PLUTOClient:
                         results[bbl] = self._cache[bbl]
                     continue
                 
-                key = f"{boro}_{block}"
-                by_boro_block[key].add(lot)
-                bbl_to_building[bbl] = (boro, block, lot)
+                needed_bbls[boro].add(bbl)
+                bbl_to_info[bbl] = (boro, block, lot)
         
-        # Fetch by borough+block (more efficient)
+        if not needed_bbls:
+            logger.info(f"PLUTO batch: all {len(buildings)} buildings already cached")
+            return results
+        
+        # Fetch by borough - get all records, filter locally
         total_fetched = 0
-        for key, lots in by_boro_block.items():
-            boro, block = key.split('_')
+        for boro, bbls_needed in needed_bbls.items():
+            logger.info(f"PLUTO: Fetching data for borough {boro} ({len(bbls_needed)} BBLs needed)")
             
-            try:
-                # Fetch all lots in this block
-                params = {
-                    "$where": f"borocode='{boro}' AND block='{block}'",
-                    "$limit": 1000
-                }
+            # Get unique blocks in this borough
+            blocks_needed = set()
+            for bbl in bbls_needed:
+                _, block, _ = bbl_to_info[bbl]
+                blocks_needed.add(block)
+            
+            # Fetch in batches of blocks (max 50 blocks per request to keep URL short)
+            block_list = sorted(list(blocks_needed))
+            batch_size = 50
+            
+            for i in range(0, len(block_list), batch_size):
+                batch_blocks = block_list[i:i+batch_size]
                 
-                response = self.session.get(PLUTO_ENDPOINT, params=params, timeout=30)
-                response.raise_for_status()
-                records = response.json()
-                
-                # Process results
-                for record in records:
-                    lot = record.get('lot', '')
-                    bbl = self.make_bbl(boro, block, lot)
+                try:
+                    # Build IN clause for blocks
+                    blocks_str = ",".join(f"'{b}'" for b in batch_blocks)
+                    params = {
+                        "$where": f"borocode='{boro}' AND block in ({blocks_str})",
+                        "$limit": 50000  # Max per request
+                    }
                     
-                    classification = self._parse_record(record)
-                    self._cache[bbl] = classification
+                    response = self.session.get(PLUTO_ENDPOINT, params=params, timeout=60)
+                    response.raise_for_status()
+                    records = response.json()
                     
-                    if bbl in bbl_to_building:
-                        results[bbl] = classification
-                        total_fetched += 1
-                
-                # Mark lots not found as None in cache
-                found_lots = {r.get('lot', '') for r in records}
-                for lot in lots:
-                    bbl = self.make_bbl(boro, block, lot)
-                    if bbl not in self._cache:
-                        self._cache[bbl] = None
-                
-                # Small delay between requests
-                time.sleep(0.1)
-                
-            except Exception as e:
-                logger.warning(f"PLUTO batch fetch failed for boro={boro}, block={block}: {e}")
+                    logger.info(f"PLUTO: Got {len(records)} records for boro {boro} blocks {batch_blocks[0]}-{batch_blocks[-1]}")
+                    
+                    # Process results
+                    for record in records:
+                        block = record.get('block', '')
+                        lot = record.get('lot', '')
+                        bbl = self.make_bbl(boro, block, lot)
+                        
+                        classification = self._parse_record(record)
+                        self._cache[bbl] = classification
+                        
+                        if bbl in bbls_needed:
+                            results[bbl] = classification
+                            total_fetched += 1
+                    
+                    # Small delay between requests
+                    time.sleep(0.2)
+                    
+                except Exception as e:
+                    logger.warning(f"PLUTO batch fetch failed for boro={boro}: {e}")
+            
+            # Mark BBLs not found as None in cache
+            for bbl in bbls_needed:
+                if bbl not in self._cache:
+                    self._cache[bbl] = None
         
         logger.info(f"PLUTO batch fetch: {total_fetched} classifications found for {len(buildings)} buildings")
         return results
