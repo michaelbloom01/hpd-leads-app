@@ -56,7 +56,7 @@ def main():
     # 1. Ingest (incremental)
     logger.info(f"Fetching HPD registrations since {last_run}...")
     client = HPDClient()
-    raw_buildings = client.fetch_since(last_run)
+    raw_buildings = client.fetch_buildings_since(last_run)
     logger.info(f"Fetched {len(raw_buildings)} updated buildings")
     
     if not raw_buildings:

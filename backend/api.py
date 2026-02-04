@@ -46,6 +46,7 @@ app.add_middleware(
 # Global state - loaded from SQLite on startup
 _leads_cache: List[Lead] = []
 _last_refresh: Optional[datetime] = None
+_leads_lock = threading.Lock()  # Protects _leads_cache modifications
 
 # Background enrichment state
 _enrichment_state: Dict = {
@@ -58,7 +59,7 @@ _enrichment_state: Dict = {
     "started_at": None,
     "finished_at": None,
 }
-_enrichment_lock = threading.Lock()
+_enrichment_lock = threading.Lock()  # Protects _enrichment_state
 
 
 @app.on_event("startup")
@@ -75,6 +76,15 @@ async def startup_load():
         logger.info(f"Startup: Loaded {len(loaded)} leads from database")
     else:
         logger.info("Startup: No leads in database, run /api/refresh to populate")
+
+
+class OutreachAttemptResponse(BaseModel):
+    """Outreach attempt data for API response."""
+    id: str
+    method: str
+    outcome: str
+    notes: Optional[str]
+    timestamp: str
 
 
 class LeadResponse(BaseModel):
@@ -98,6 +108,7 @@ class LeadResponse(BaseModel):
     enrichment_status: str
     outreach_status: str
     notes: Optional[str]
+    outreach_attempts: List[OutreachAttemptResponse] = []
 
 
 class PipelineStatus(BaseModel):
@@ -141,7 +152,7 @@ async def get_leads(
     Returns leads sorted by score descending.
     """
     if not _leads_cache:
-        raise HTTPException(status_code=404, detail="No leads available. Run /api/refresh first.")
+        return []  # Return empty list instead of 404 for better frontend handling
     
     # Apply filters
     filtered = _leads_cache
@@ -487,9 +498,10 @@ def _run_background_enrichment(limit: int, min_score: Optional[float] = None):
                 logger.info(f"[{i+1}/{len(batch)}] Enriching: {lead.agent_name or lead.owner_name}")
                 enriched_lead = enricher.enrich_lead(lead)
                 
-                # Update cache
-                if lead.lead_id in lead_index:
-                    _leads_cache[lead_index[lead.lead_id]] = enriched_lead
+                # Update cache with lock to prevent race conditions
+                with _leads_lock:
+                    if lead.lead_id in lead_index:
+                        _leads_cache[lead_index[lead.lead_id]] = enriched_lead
                 
                 # Persist to database
                 db.save_leads([enriched_lead])
@@ -816,7 +828,7 @@ def _lead_to_response(lead: Lead) -> LeadResponse:
         phone=lead.phone,
         email=lead.email,
         website=lead.website,
-        business_summary=lead.business_summary[:200] if lead.business_summary else None,
+        business_summary=lead.business_summary[:200] if isinstance(lead.business_summary, str) else None,
         address=lead.address,
         boro=lead.boro,
         boros=lead.boros,
@@ -825,7 +837,24 @@ def _lead_to_response(lead: Lead) -> LeadResponse:
         enrichment_status=lead.enrichment_status,
         outreach_status=lead.outreach_status,
         notes=lead.notes,
+        outreach_attempts=_get_outreach_attempts_for_lead(lead.lead_id),
     )
+
+
+def _get_outreach_attempts_for_lead(lead_id: str) -> List[OutreachAttemptResponse]:
+    """Get outreach attempts for a lead from database."""
+    db = get_database()
+    attempts = db.get_outreach_attempts(lead_id)
+    return [
+        OutreachAttemptResponse(
+            id=a.get('id', ''),
+            method=a.get('method', ''),
+            outcome=a.get('outcome', ''),
+            notes=a.get('notes'),
+            timestamp=a.get('timestamp', ''),
+        )
+        for a in attempts
+    ]
 
 
 if __name__ == "__main__":
