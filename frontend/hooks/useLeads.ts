@@ -46,11 +46,11 @@ export function useLeads(options: UseLeadsOptions = {}) {
   }, []);
 
   // Refresh pipeline (fetch new data from HPD)
-  const refresh = useCallback(async (limit: number = 5000) => {
+  const refresh = useCallback(async (full: boolean = false) => {
     try {
       setRefreshing(true);
       setError(null);
-      await refreshPipeline(limit);
+      await refreshPipeline(full);
       // Reload leads after refresh
       await loadLeads();
       await loadStatus();
