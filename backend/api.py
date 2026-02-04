@@ -6,6 +6,7 @@ Exposes REST endpoints for the frontend to:
 - Trigger enrichment
 - Get pipeline status
 """
+import gc
 import logging
 import threading
 from datetime import datetime
@@ -477,9 +478,10 @@ def _run_background_refresh(limit: Optional[int], include_pluto: bool = True):
     """
     global _leads_cache, _last_refresh, _refresh_state
     
-    # Chunk size - tuned for Railway's memory limits
-    # 25k buildings per chunk keeps memory usage reasonable
-    CHUNK_SIZE = 25000
+    # Chunk size - tuned for Railway's memory limits (512MB hobby tier)
+    # 10k buildings per chunk to stay well under memory limits during PLUTO lookup
+    # PLUTO data can be 50-100KB per building, so 10k = 500MB-1GB peak
+    CHUNK_SIZE = 10000
     
     with _refresh_lock:
         _refresh_state["running"] = True
@@ -577,8 +579,10 @@ def _run_background_refresh(limit: Optional[int], include_pluto: bool = True):
             # Add to streaming aggregator (memory-efficient - only keeps lead summaries)
             num_leads = aggregator.process_chunk(normalized)
             
-            # Free normalized buildings
+            # Free normalized buildings and force garbage collection
+            # This is critical on memory-constrained Railway instances
             del normalized
+            gc.collect()
             
             stats = aggregator.get_stats()
             logger.info(f"After chunk {chunk_num}: {stats['unique_leads']} leads, {stats['total_buildings']} buildings")
