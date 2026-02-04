@@ -2,19 +2,25 @@
 
 ## Current Sprint
 
-- [ ] Build NY DOS registry lookup
+- [x] **Build NY DOS registry lookup** — DONE Feb 4, 2026
+  - New `/api/dos/lookup` and `/api/dos/search` endpoints
+  - Integrated into enrichment pipeline
 - [ ] Add Apollo API integration
 - [ ] Set up Google Sheets output (needs credentials)
 - [x] **Deploy to Render (backend) + Vercel (frontend)** — DONE Feb 4, 2026
   - Frontend: https://frontend-nine-psi-58.vercel.app
   - Backend: https://hpd-leads-api.onrender.com
+- [x] **Add CSV export to frontend** — DONE Feb 4, 2026
+- [x] **Add lead status/notes tracking** — DONE Feb 4, 2026
+  - Outreach statuses: new, contacted, interested, not_interested, closed
+  - Notes field per lead
+  - Status filter in table
 
 ## Backlog
 
 - [ ] Set up daily scheduler
 - [ ] Add failure alerting
 - [ ] Tune scoring weights based on real data
-- [ ] Add CSV export to frontend
 
 ## Done
 

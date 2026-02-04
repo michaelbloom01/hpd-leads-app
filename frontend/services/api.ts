@@ -26,6 +26,8 @@ export interface ApiLead {
   score: number;
   tags: string[];
   enrichment_status: string;
+  outreach_status: string;
+  notes: string | null;
 }
 
 export interface PipelineStatus {
@@ -186,6 +188,31 @@ export async function enrichBatch(limit: number = 10, minScore?: number): Promis
   
   if (!response.ok) {
     throw new Error(`Failed to enrich batch: ${response.statusText}`);
+  }
+  
+  return response.json();
+}
+
+/**
+ * Update a lead's status and/or notes
+ */
+export async function updateLead(
+  leadId: string, 
+  updates: { outreach_status?: string; notes?: string }
+): Promise<{
+  status: string;
+  lead_id: string;
+  outreach_status: string;
+  notes: string | null;
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/leads/${leadId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  
+  if (!response.ok) {
+    throw new Error(`Failed to update lead: ${response.statusText}`);
   }
   
   return response.json();

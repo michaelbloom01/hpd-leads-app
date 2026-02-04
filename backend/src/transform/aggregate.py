@@ -43,6 +43,8 @@ class Lead:
     score_breakdown: Dict = field(default_factory=dict)
     tags: List[str] = field(default_factory=list)
     opportunity_note: Optional[str] = None
+    outreach_status: str = "new"  # new, contacted, interested, not_interested, closed
+    notes: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
 

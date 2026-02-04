@@ -1,15 +1,25 @@
-
 import React, { useState } from 'react';
-import { ApiLead, enrichLeads } from '../services/api';
+import { ApiLead, enrichLeads, updateLead } from '../services/api';
 
 interface Props {
   lead: ApiLead;
   onClose: () => void;
 }
 
+const OUTREACH_STATUSES = [
+  { value: 'new', label: 'New', color: 'bg-slate-600 text-slate-200' },
+  { value: 'contacted', label: 'Contacted', color: 'bg-blue-600 text-blue-100' },
+  { value: 'interested', label: 'Interested', color: 'bg-emerald-600 text-emerald-100' },
+  { value: 'not_interested', label: 'Not Interested', color: 'bg-amber-600 text-amber-100' },
+  { value: 'closed', label: 'Closed', color: 'bg-purple-600 text-purple-100' },
+];
+
 const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
   const [isEnriching, setIsEnriching] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [enrichedLead, setEnrichedLead] = useState(lead);
+  const [notes, setNotes] = useState(lead.notes || '');
+  const [outreachStatus, setOutreachStatus] = useState(lead.outreach_status || 'new');
 
   const handleEnrich = async () => {
     setIsEnriching(true);
@@ -29,6 +39,29 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
       console.error('Enrichment failed:', err);
     } finally {
       setIsEnriching(false);
+    }
+  };
+
+  const handleSaveStatus = async (newStatus: string) => {
+    setOutreachStatus(newStatus);
+    setIsSaving(true);
+    try {
+      await updateLead(lead.lead_id, { outreach_status: newStatus });
+    } catch (err) {
+      console.error('Failed to update status:', err);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveNotes = async () => {
+    setIsSaving(true);
+    try {
+      await updateLead(lead.lead_id, { notes });
+    } catch (err) {
+      console.error('Failed to save notes:', err);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -147,6 +180,47 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                 Enrichment: {enrichedLead.enrichment_status}
               </span>
             </div>
+          </div>
+
+          {/* Outreach Status */}
+          <div className="bg-slate-800/30 rounded-xl p-5">
+            <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-3">Outreach Status</h3>
+            <div className="flex flex-wrap gap-2">
+              {OUTREACH_STATUSES.map((status) => (
+                <button
+                  key={status.value}
+                  onClick={() => handleSaveStatus(status.value)}
+                  disabled={isSaving}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                    outreachStatus === status.value 
+                      ? `${status.color} ring-2 ring-offset-2 ring-offset-slate-900 ring-white/20` 
+                      : 'bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300'
+                  }`}
+                >
+                  {status.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div className="bg-slate-800/30 rounded-xl p-5">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider">Notes</h3>
+              <button
+                onClick={handleSaveNotes}
+                disabled={isSaving || notes === (lead.notes || '')}
+                className="px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {isSaving ? 'Saving...' : 'Save Notes'}
+              </button>
+            </div>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Add notes about this lead..."
+              className="w-full h-24 px-3 py-2 bg-slate-900 border border-white/10 rounded-lg text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
+            />
           </div>
 
           {/* Business Summary */}

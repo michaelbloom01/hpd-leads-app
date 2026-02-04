@@ -65,6 +65,8 @@ class LeadResponse(BaseModel):
     score: float
     tags: List[str]
     enrichment_status: str
+    outreach_status: str
+    notes: Optional[str]
 
 
 class PipelineStatus(BaseModel):
@@ -78,6 +80,12 @@ class PipelineStatus(BaseModel):
 class EnrichmentRequest(BaseModel):
     """Request to enrich specific leads."""
     lead_ids: List[str]
+
+
+class UpdateLeadRequest(BaseModel):
+    """Request to update lead status/notes."""
+    outreach_status: Optional[str] = None  # new, contacted, interested, not_interested, closed
+    notes: Optional[str] = None
 
 
 @app.get("/")
@@ -140,6 +148,41 @@ async def get_lead(lead_id: str):
     for lead in _leads_cache:
         if lead.lead_id == lead_id:
             return _lead_to_response(lead)
+    raise HTTPException(status_code=404, detail="Lead not found")
+
+
+@app.patch("/api/leads/{lead_id}")
+async def update_lead(lead_id: str, request: UpdateLeadRequest):
+    """
+    Update a lead's outreach status and/or notes.
+    
+    Valid statuses: new, contacted, interested, not_interested, closed
+    """
+    global _leads_cache
+    
+    valid_statuses = {"new", "contacted", "interested", "not_interested", "closed"}
+    
+    if request.outreach_status and request.outreach_status not in valid_statuses:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
+        )
+    
+    for i, lead in enumerate(_leads_cache):
+        if lead.lead_id == lead_id:
+            if request.outreach_status is not None:
+                lead.outreach_status = request.outreach_status
+            if request.notes is not None:
+                lead.notes = request.notes
+            lead.updated_at = datetime.now()
+            _leads_cache[i] = lead
+            return {
+                "status": "success",
+                "lead_id": lead_id,
+                "outreach_status": lead.outreach_status,
+                "notes": lead.notes,
+            }
+    
     raise HTTPException(status_code=404, detail="Lead not found")
 
 
@@ -440,6 +483,8 @@ def _lead_to_response(lead: Lead) -> LeadResponse:
         score=lead.score,
         tags=lead.tags,
         enrichment_status=lead.enrichment_status,
+        outreach_status=lead.outreach_status,
+        notes=lead.notes,
     )
 
 

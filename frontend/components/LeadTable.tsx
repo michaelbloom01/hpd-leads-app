@@ -24,6 +24,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   const [filterHasEmail, setFilterHasEmail] = useState<boolean | null>(null);
   const [filterHasWebsite, setFilterHasWebsite] = useState<boolean | null>(null);
   const [filterHasMgmtCompany, setFilterHasMgmtCompany] = useState<boolean | null>(null);
+  const [filterOutreachStatus, setFilterOutreachStatus] = useState<string>('');
   
   // Sorting
   const [sortField, setSortField] = useState<SortField>('score');
@@ -103,6 +104,11 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     if (filterHasMgmtCompany === true) result = result.filter(lead => lead.agent_name);
     if (filterHasMgmtCompany === false) result = result.filter(lead => !lead.agent_name);
     
+    // Outreach status filter
+    if (filterOutreachStatus) {
+      result = result.filter(lead => lead.outreach_status === filterOutreachStatus);
+    }
+    
     // Sort
     result.sort((a, b) => {
       let aVal: any = a[sortField];
@@ -117,7 +123,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     });
     
     return result;
-  }, [leads, searchTerm, filterBorough, filterMinScore, filterMaxScore, filterMinPortfolio, filterHasPhone, filterHasEmail, filterHasWebsite, filterHasMgmtCompany, sortField, sortDir]);
+  }, [leads, searchTerm, filterBorough, filterMinScore, filterMaxScore, filterMinPortfolio, filterHasPhone, filterHasEmail, filterHasWebsite, filterHasMgmtCompany, filterOutreachStatus, sortField, sortDir]);
 
   // Paginated results
   const paginatedLeads = useMemo(() => {
@@ -186,6 +192,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     setFilterHasEmail(null);
     setFilterHasWebsite(null);
     setFilterHasMgmtCompany(null);
+    setFilterOutreachStatus('');
   };
 
   const exportToCsv = () => {
@@ -295,6 +302,20 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
           >
             <option value="">All Boroughs</option>
             {boroughs.map(b => <option key={b} value={b}>{b}</option>)}
+          </select>
+          
+          {/* Outreach Status */}
+          <select
+            className="px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            value={filterOutreachStatus}
+            onChange={(e) => { setFilterOutreachStatus(e.target.value); setPage(0); }}
+          >
+            <option value="">All Statuses</option>
+            <option value="new">New</option>
+            <option value="contacted">Contacted</option>
+            <option value="interested">Interested</option>
+            <option value="not_interested">Not Interested</option>
+            <option value="closed">Closed</option>
           </select>
           
           {/* Score Range */}
