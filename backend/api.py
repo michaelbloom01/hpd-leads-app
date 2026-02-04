@@ -668,7 +668,9 @@ async def enrich_leads(request: EnrichmentRequest):
 
 def _run_background_enrichment(limit: int, min_score: Optional[float] = None):
     """Background task to enrich leads (legacy sequential method)."""
-    global _leads_cache, _enrichment_state
+    global _leads_cache, _enrichment_state, _enrichment_stop_requested
+    
+    _enrichment_stop_requested = False  # Reset stop flag
     
     with _enrichment_lock:
         _enrichment_state["running"] = True
@@ -706,6 +708,13 @@ def _run_background_enrichment(limit: int, min_score: Optional[float] = None):
         lead_index = {l.lead_id: i for i, l in enumerate(_leads_cache)}
         
         for i, lead in enumerate(batch):
+            # Check for stop request
+            if _enrichment_stop_requested:
+                logger.info("Enrichment stopped by user request")
+                with _enrichment_lock:
+                    _enrichment_state["error"] = "Stopped by user"
+                break
+            
             with _enrichment_lock:
                 _enrichment_state["progress"] = i + 1
                 _enrichment_state["current_lead"] = lead.agent_name or lead.owner_name
@@ -741,6 +750,7 @@ def _run_background_enrichment(limit: int, min_score: Optional[float] = None):
         with _enrichment_lock:
             _enrichment_state["error"] = str(e)
     finally:
+        _enrichment_stop_requested = False  # Reset
         with _enrichment_lock:
             _enrichment_state["running"] = False
             _enrichment_state["phase"] = "complete"
@@ -1015,6 +1025,309 @@ async def get_enrichment_status():
             "error": _enrichment_state.get("error"),
             "percent_complete": round(_enrichment_state["progress"] / _enrichment_state["total"] * 100, 1) if _enrichment_state["total"] > 0 else 0,
         }
+
+
+# Global stop flag for enrichment
+_enrichment_stop_requested = False
+
+
+@app.post("/api/enrich/stop")
+async def stop_enrichment():
+    """
+    Stop the running enrichment job.
+    
+    The job will stop after completing the current lead.
+    """
+    global _enrichment_stop_requested
+    
+    with _enrichment_lock:
+        if not _enrichment_state["running"]:
+            return {
+                "status": "not_running",
+                "message": "No enrichment job is currently running",
+            }
+        
+        _enrichment_stop_requested = True
+        return {
+            "status": "stopping",
+            "message": "Stop requested. Job will stop after current lead completes.",
+            "current_lead": _enrichment_state["current_lead"],
+        }
+
+
+def _run_api_enrichment(limit: int, min_portfolio: int = 5, boro: Optional[str] = None):
+    """
+    API-only batch enrichment using Google Places + NY DOS.
+    
+    This avoids web scraping/Google search which gets rate limited.
+    Uses only reliable API sources:
+    - Google Places API: Phone numbers, website (uses your API key, $200/mo free)
+    - NY DOS Registry: Corporation info (completely free, no limits)
+    """
+    global _leads_cache, _enrichment_state, _enrichment_stop_requested
+    
+    from src.enrich.contact_sources import GooglePlacesEnricher
+    from src.enrich.ny_dos import NYDOSClient
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import re
+    
+    _enrichment_stop_requested = False
+    
+    with _enrichment_lock:
+        _enrichment_state["running"] = True
+        _enrichment_state["phase"] = "api_enrichment"
+        _enrichment_state["progress"] = 0
+        _enrichment_state["total"] = limit
+        _enrichment_state["completed"] = 0
+        _enrichment_state["failed"] = 0
+        _enrichment_state["dos_completed"] = 0
+        _enrichment_state["dos_found"] = 0
+        _enrichment_state["web_completed"] = 0  # Will track Google Places instead
+        _enrichment_state["web_found"] = 0
+        _enrichment_state["started_at"] = datetime.now().isoformat()
+        _enrichment_state["finished_at"] = None
+        _enrichment_state["error"] = None
+    
+    try:
+        google_places = GooglePlacesEnricher()
+        dos_client = NYDOSClient()
+        db = get_database()
+        
+        if not google_places.is_configured():
+            logger.warning("Google Places API key not configured - will only use NY DOS")
+        else:
+            logger.info("Google Places API configured - will use for phone/website lookup")
+        
+        # Filter candidates - prioritize by portfolio size
+        candidates = []
+        for lead in _leads_cache:
+            # Skip already enriched with contact info
+            if lead.phone or lead.email:
+                continue
+            # Portfolio filter
+            if lead.portfolio_size < min_portfolio:
+                continue
+            # Borough filter
+            if boro and lead.boro != boro.upper():
+                continue
+            candidates.append(lead)
+        
+        # Sort by portfolio size (larger = more valuable) 
+        candidates.sort(key=lambda l: (l.score, l.portfolio_size), reverse=True)
+        batch = candidates[:limit]
+        
+        with _enrichment_lock:
+            _enrichment_state["total"] = len(batch)
+        
+        logger.info(f"API enrichment started: {len(batch)} leads (Google Places + NY DOS)")
+        
+        lead_index = {l.lead_id: i for i, l in enumerate(_leads_cache)}
+        
+        # Process in parallel with thread pool
+        def enrich_single_lead(lead):
+            """Enrich a single lead using APIs only."""
+            name = lead.agent_name or lead.owner_name
+            if not name:
+                return lead, False, False
+            
+            google_found = False
+            dos_found = False
+            
+            # 1. Try Google Places for phone/website
+            if google_places.is_configured():
+                try:
+                    gp_result = google_places.find_business(name)
+                    if gp_result:
+                        if gp_result.get("phone") and not lead.phone:
+                            # Normalize phone
+                            phone = gp_result["phone"]
+                            digits = re.sub(r"\D", "", phone)
+                            if len(digits) == 11 and digits.startswith("1"):
+                                digits = digits[1:]
+                            if len(digits) == 10:
+                                lead.phone = f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
+                                if "has_phone" not in lead.tags:
+                                    lead.tags.append("has_phone")
+                                google_found = True
+                        
+                        if gp_result.get("website") and not lead.website:
+                            lead.website = gp_result["website"]
+                            if "has_website" not in lead.tags:
+                                lead.tags.append("has_website")
+                            google_found = True
+                        
+                        if "google_places" not in lead.enrichment_sources:
+                            lead.enrichment_sources.append("google_places")
+                except Exception as e:
+                    logger.debug(f"Google Places failed for {name}: {e}")
+            
+            # 2. Try NY DOS for corporation info (if name looks like a corp)
+            corp_indicators = ['LLC', 'L.L.C.', 'INC', 'CORP', 'LP', 'L.P.', 'LLP', 'COMPANY', 'CO.', 'PARTNERS']
+            if any(ind in name.upper() for ind in corp_indicators):
+                try:
+                    dos_entity = dos_client.lookup_entity(name)
+                    if dos_entity:
+                        if dos_entity.process_name and not lead.owner_principal:
+                            lead.owner_principal = dos_entity.process_name
+                        
+                        if not lead.business_summary:
+                            parts = []
+                            if dos_entity.entity_type:
+                                parts.append(f"Entity: {dos_entity.entity_type}")
+                            if dos_entity.status:
+                                parts.append(f"Status: {dos_entity.status}")
+                            if dos_entity.formation_date:
+                                parts.append(f"Formed: {dos_entity.formation_date[:10]}")
+                            if dos_entity.process_name:
+                                parts.append(f"Agent: {dos_entity.process_name}")
+                            if parts:
+                                lead.business_summary = " | ".join(parts)
+                        
+                        lead.dos_id = dos_entity.dos_id
+                        lead.dos_status = dos_entity.status
+                        
+                        if "ny_dos_verified" not in lead.tags:
+                            lead.tags.append("ny_dos_verified")
+                        if "ny_dos" not in lead.enrichment_sources:
+                            lead.enrichment_sources.append("ny_dos")
+                        
+                        dos_found = True
+                except Exception as e:
+                    logger.debug(f"NY DOS failed for {name}: {e}")
+            
+            # Update enrichment status
+            lead.last_enriched = datetime.now()
+            has_contact = bool(lead.phone or lead.email)
+            has_website = bool(lead.website)
+            if has_contact and has_website:
+                lead.enrichment_status = "complete"
+            elif has_contact or has_website or dos_found:
+                lead.enrichment_status = "partial"
+            else:
+                lead.enrichment_status = "failed"
+            
+            return lead, google_found, dos_found
+        
+        # Process with thread pool (5 workers for APIs)
+        completed_count = 0
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(enrich_single_lead, lead): lead for lead in batch}
+            
+            for future in as_completed(futures):
+                if _enrichment_stop_requested:
+                    logger.info("API enrichment stopped by user")
+                    with _enrichment_lock:
+                        _enrichment_state["error"] = "Stopped by user"
+                    break
+                
+                original_lead = futures[future]
+                try:
+                    enriched_lead, gp_found, dos_found = future.result()
+                    
+                    # Update cache
+                    with _leads_lock:
+                        if enriched_lead.lead_id in lead_index:
+                            _leads_cache[lead_index[enriched_lead.lead_id]] = enriched_lead
+                    
+                    # Persist to DB
+                    db.save_leads([enriched_lead])
+                    
+                    completed_count += 1
+                    with _enrichment_lock:
+                        _enrichment_state["progress"] = completed_count
+                        _enrichment_state["current_lead"] = enriched_lead.agent_name or enriched_lead.owner_name
+                        if gp_found:
+                            _enrichment_state["web_found"] += 1  # Using web_found for Google Places
+                        if dos_found:
+                            _enrichment_state["dos_found"] += 1
+                        if enriched_lead.enrichment_status in ["complete", "partial"]:
+                            _enrichment_state["completed"] += 1
+                        else:
+                            _enrichment_state["failed"] += 1
+                    
+                    if completed_count % 50 == 0:
+                        logger.info(f"API enrichment progress: {completed_count}/{len(batch)}")
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to enrich {original_lead.agent_name}: {e}")
+                    with _enrichment_lock:
+                        _enrichment_state["failed"] += 1
+        
+        logger.info(f"API enrichment complete: {_enrichment_state['completed']} enriched, {_enrichment_state['failed']} failed")
+        logger.info(f"  Google Places found: {_enrichment_state['web_found']}, NY DOS found: {_enrichment_state['dos_found']}")
+        
+    except Exception as e:
+        logger.error(f"API enrichment failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        with _enrichment_lock:
+            _enrichment_state["error"] = str(e)
+    finally:
+        _enrichment_stop_requested = False
+        with _enrichment_lock:
+            _enrichment_state["running"] = False
+            _enrichment_state["phase"] = "complete"
+            _enrichment_state["current_lead"] = None
+            _enrichment_state["finished_at"] = datetime.now().isoformat()
+
+
+@app.post("/api/enrich/api-only")
+async def enrich_api_only(
+    background_tasks: BackgroundTasks,
+    limit: int = Query(500, le=2000, description="Max leads to enrich"),
+    min_portfolio: int = Query(5, description="Minimum portfolio size"),
+    boro: Optional[str] = Query(None, description="Filter by borough (e.g., MANHATTAN)"),
+):
+    """
+    API-only batch enrichment using Google Places + NY DOS.
+    
+    This is the recommended enrichment method - no web scraping or Google search.
+    Uses only reliable, rate-limit-free API sources:
+    
+    1. Google Places API: Phone numbers and websites
+       - Uses your configured API key (GOOGLE_PLACES_API_KEY)
+       - $200/month free credit (~11,700 lookups)
+       
+    2. NY DOS Registry: Corporation info (registered agent, formation date)
+       - Completely free, no rate limits
+       - Only for corporation-like names (LLC, Inc, Corp, etc.)
+    
+    Check progress at GET /api/enrich/status
+    """
+    global _leads_cache, _enrichment_state
+    
+    # Check if already running
+    with _enrichment_lock:
+        if _enrichment_state["running"]:
+            return {
+                "status": "already_running",
+                "message": "Background enrichment is already in progress",
+                "progress": _enrichment_state["progress"],
+                "total": _enrichment_state["total"],
+                "check_progress": "/api/enrich/status",
+            }
+    
+    if not _leads_cache:
+        raise HTTPException(status_code=400, detail="No leads loaded. Run /api/refresh first.")
+    
+    # Check Google Places config
+    from src.enrich.contact_sources import GooglePlacesEnricher
+    gp = GooglePlacesEnricher()
+    
+    # Run in background
+    background_tasks.add_task(_run_api_enrichment, limit, min_portfolio, boro)
+    
+    return {
+        "status": "started",
+        "message": f"API-only enrichment started for up to {limit} leads",
+        "config": {
+            "limit": limit,
+            "min_portfolio": min_portfolio,
+            "boro": boro,
+            "google_places_configured": gp.is_configured(),
+        },
+        "check_progress": "/api/enrich/status",
+    }
 
 
 @app.get("/api/dos/lookup")
