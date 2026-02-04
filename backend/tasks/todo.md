@@ -23,7 +23,9 @@
 
 - [ ] Set up daily scheduler (cron job for refresh)
 - [ ] Add failure alerting (email on errors)
-- [ ] Persistent database (SQLite or PostgreSQL) instead of in-memory cache
+- [x] **Persistent database (SQLite)** — DONE Feb 4, 2026
+  - Notes, status, enrichment data now persists across restarts
+  - New `src/storage/database.py` module
 - [ ] Add building-level detail view
 - [ ] Violation history from HPD (another dataset)
 
