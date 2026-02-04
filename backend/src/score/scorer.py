@@ -195,3 +195,19 @@ class Scorer:
             return "D"
         else:
             return "F"
+
+
+def score_leads(leads: List[Lead]) -> List[Lead]:
+    """
+    Score a list of leads.
+    
+    Convenience function that creates a Scorer instance and scores all leads.
+    
+    Args:
+        leads: List of leads to score
+        
+    Returns:
+        List of scored leads
+    """
+    scorer = Scorer()
+    return [scorer.score_lead(lead) for lead in leads]
