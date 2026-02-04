@@ -10,8 +10,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Expose port (Railway sets PORT env var)
-EXPOSE 8000
+# Railway injects PORT env var - default to 8000 for local testing
+ENV PORT=8000
 
-# Start the server
-CMD gunicorn api:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:${PORT:-8000}
+# Start the server - use shell form to expand $PORT
+CMD gunicorn api:app --workers 1 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT --timeout 120
