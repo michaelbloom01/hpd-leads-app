@@ -1,10 +1,13 @@
 name: Deploy to Vercel
 
+# DISABLED: Using Vercel's native GitHub integration instead
+# Uncomment and add secrets (VERCEL_ORG_ID, VERCEL_PROJECT_ID, VERCEL_TOKEN, VITE_API_URL) to re-enable
 on:
-  push:
-    branches: [master, main]
-  pull_request:
-    branches: [master, main]
+  workflow_dispatch:  # Only run manually
+  # push:
+  #   branches: [master, main]
+  # pull_request:
+  #   branches: [master, main]
 
 env:
   VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
