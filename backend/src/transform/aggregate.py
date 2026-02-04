@@ -200,6 +200,149 @@ def _generate_lead_id(name: str) -> str:
     return hashlib.md5(name.encode()).hexdigest()[:12]
 
 
+class StreamingLeadAggregator:
+    """
+    Memory-efficient lead aggregator that processes buildings in chunks.
+    
+    Instead of holding all buildings in memory, this aggregates incrementally
+    by maintaining only the lead-level data structures.
+    """
+    
+    def __init__(self):
+        # Store partial lead data keyed by grouping_key
+        # Each value is a dict with aggregated info (not full Building objects)
+        self._lead_data: Dict[str, Dict] = {}
+    
+    def process_chunk(self, buildings: List[Building]) -> int:
+        """
+        Process a chunk of buildings and merge into aggregated lead data.
+        
+        Args:
+            buildings: List of normalized Building objects
+            
+        Returns:
+            Number of unique leads after this chunk
+        """
+        for building in buildings:
+            # Determine grouping key
+            key = building.agent_name
+            if not key or len(key) < 3:
+                key = building.owner_name
+            
+            if not key or len(key) < 3:
+                continue
+            
+            grouping_key = normalize_name_for_grouping(key)
+            
+            if grouping_key not in self._lead_data:
+                # Initialize new lead data
+                self._lead_data[grouping_key] = {
+                    "lead_id": _generate_lead_id(grouping_key),
+                    "agent_names": Counter(),
+                    "owner_names": Counter(),
+                    "owner_types": Counter(),
+                    "building_addresses": [],
+                    "building_ids": [],
+                    "boros": [],
+                    "contacts": {},  # keyed by contact_id to dedupe
+                    "last_registration": None,
+                    "business_address": None,
+                }
+            
+            data = self._lead_data[grouping_key]
+            
+            # Accumulate names
+            if building.agent_name:
+                data["agent_names"][building.agent_name] += 1
+            if building.owner_name:
+                data["owner_names"][building.owner_name] += 1
+            if building.owner:
+                data["owner_types"][building.owner.contact_type] += 1
+            
+            # Accumulate building info
+            if building.address:
+                data["building_addresses"].append(building.address)
+            if building.building_id:
+                data["building_ids"].append(building.building_id)
+            if building.boro:
+                data["boros"].append(building.boro)
+            
+            # Track most recent registration
+            if building.last_registration:
+                if data["last_registration"] is None or building.last_registration > data["last_registration"]:
+                    data["last_registration"] = building.last_registration
+                    # Update business address from most recent
+                    if building.agent:
+                        agent = building.agent
+                        addr_parts = [agent.business_address, agent.business_city, agent.business_state, agent.business_zip]
+                        data["business_address"] = ", ".join(p for p in addr_parts if p)
+            
+            # Accumulate unique contacts
+            for c in building.contacts:
+                if c.contact_id not in data["contacts"]:
+                    data["contacts"][c.contact_id] = {
+                        "type": c.contact_type,
+                        "name": c.full_name,
+                        "title": c.title,
+                        "address": c.business_address,
+                        "city": c.business_city,
+                        "state": c.business_state,
+                        "zip": c.business_zip,
+                    }
+        
+        return len(self._lead_data)
+    
+    def get_leads(self) -> List[Lead]:
+        """
+        Finalize and return all aggregated leads.
+        
+        Returns:
+            List of Lead objects sorted by portfolio size
+        """
+        leads = []
+        
+        for grouping_key, data in self._lead_data.items():
+            # Determine best names from counters
+            agent_name = data["agent_names"].most_common(1)[0][0] if data["agent_names"] else ""
+            owner_name = data["owner_names"].most_common(1)[0][0] if data["owner_names"] else ""
+            owner_type = data["owner_types"].most_common(1)[0][0] if data["owner_types"] else ""
+            
+            # Determine primary borough
+            boro_counts = Counter(data["boros"])
+            primary_boro = boro_counts.most_common(1)[0][0] if boro_counts else ""
+            unique_boros = list(boro_counts.keys())
+            
+            lead = Lead(
+                lead_id=data["lead_id"],
+                agent_name=agent_name,
+                owner_name=owner_name,
+                owner_type=owner_type,
+                portfolio_size=len(data["building_addresses"]),
+                total_units=0,
+                buildings=data["building_addresses"],
+                building_ids=data["building_ids"],
+                contacts=list(data["contacts"].values()),
+                address=data["business_address"],
+                boro=primary_boro,
+                boros=unique_boros,
+                last_registration=data["last_registration"],
+            )
+            leads.append(lead)
+        
+        # Sort by portfolio size descending
+        leads.sort(key=lambda l: l.portfolio_size, reverse=True)
+        
+        return leads
+    
+    def get_stats(self) -> Dict:
+        """Get current aggregation statistics."""
+        total_buildings = sum(len(d["building_addresses"]) for d in self._lead_data.values())
+        return {
+            "unique_leads": len(self._lead_data),
+            "total_buildings": total_buildings,
+        }
+
+
 # Quick test
 if __name__ == "__main__":
     from .normalize import normalize_building

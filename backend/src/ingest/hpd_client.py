@@ -244,6 +244,109 @@ class HPDClient:
         logger.info(f"Combined {len(buildings)} buildings with contact data")
         return buildings
 
+    def stream_buildings_with_contacts(
+        self, 
+        chunk_size: int = 25000,
+        total_limit: Optional[int] = None,
+        progress_callback: Optional[callable] = None
+    ):
+        """
+        Generator that yields buildings with contacts in memory-efficient chunks.
+        
+        This is the recommended method for processing large datasets.
+        
+        Args:
+            chunk_size: Number of buildings per chunk
+            total_limit: Maximum total buildings (None for all)
+            progress_callback: Optional callback(buildings_fetched, total_estimated)
+            
+        Yields:
+            List[Dict]: Chunks of building records with contacts attached
+        """
+        offset = 0
+        total_fetched = 0
+        
+        # First, get total count estimate
+        logger.info("Estimating total building count...")
+        first_page = self._fetch_page(BUILDINGS_ENDPOINT, offset=0, limit=1)
+        # We'll discover total as we go
+        
+        while True:
+            if total_limit and total_fetched >= total_limit:
+                break
+            
+            # Calculate this chunk's limit
+            this_chunk_limit = chunk_size
+            if total_limit:
+                remaining = total_limit - total_fetched
+                this_chunk_limit = min(chunk_size, remaining)
+            
+            logger.info(f"Fetching buildings chunk: offset={offset}, limit={this_chunk_limit}")
+            
+            # Fetch buildings for this chunk using pagination
+            chunk_buildings = []
+            chunk_offset = offset
+            while len(chunk_buildings) < this_chunk_limit:
+                page_limit = min(PAGE_SIZE, this_chunk_limit - len(chunk_buildings))
+                page = self._fetch_page(BUILDINGS_ENDPOINT, offset=chunk_offset, limit=page_limit)
+                
+                if not page:
+                    break
+                    
+                chunk_buildings.extend(page)
+                chunk_offset += len(page)
+                
+                if len(page) < page_limit:
+                    # No more data
+                    break
+            
+            if not chunk_buildings:
+                logger.info("No more buildings to fetch")
+                break
+            
+            logger.info(f"Fetched {len(chunk_buildings)} buildings in this chunk")
+            
+            # Get unique registration IDs for this chunk
+            reg_ids = list(set(b.get("registrationid") for b in chunk_buildings if b.get("registrationid")))
+            logger.info(f"Fetching contacts for {len(reg_ids)} registrations...")
+            
+            # Fetch contacts for these registrations
+            contacts = self.fetch_contacts_for_registrations(reg_ids)
+            
+            # Group contacts by registration ID
+            contacts_by_reg = {}
+            for contact in contacts:
+                reg_id = contact.get("registrationid")
+                if reg_id:
+                    if reg_id not in contacts_by_reg:
+                        contacts_by_reg[reg_id] = []
+                    contacts_by_reg[reg_id].append(contact)
+            
+            # Combine buildings with their contacts
+            for building in chunk_buildings:
+                reg_id = building.get("registrationid")
+                building["contacts"] = contacts_by_reg.get(reg_id, [])
+            
+            total_fetched += len(chunk_buildings)
+            offset += len(chunk_buildings)
+            
+            if progress_callback:
+                progress_callback(total_fetched, total_limit or total_fetched)
+            
+            logger.info(f"Yielding chunk of {len(chunk_buildings)} buildings (total: {total_fetched})")
+            yield chunk_buildings
+            
+            # Free memory
+            del contacts
+            del contacts_by_reg
+            
+            # Check if we got less than requested (means we're done)
+            if len(chunk_buildings) < this_chunk_limit:
+                logger.info("Reached end of buildings data")
+                break
+        
+        logger.info(f"Streaming complete: {total_fetched} total buildings processed")
+
 
 # Quick test
 if __name__ == "__main__":

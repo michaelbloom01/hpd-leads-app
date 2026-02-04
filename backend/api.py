@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from src.ingest.hpd_client import HPDClient
 from src.transform.normalize import normalize_building
-from src.transform.aggregate import aggregate_to_leads, Lead
+from src.transform.aggregate import aggregate_to_leads, Lead, StreamingLeadAggregator
 from src.score.scorer import score_leads
 from src.enrich.enricher import Enricher
 from src.enrich.ny_dos import NYDOSClient
@@ -338,221 +338,110 @@ async def get_stats():
 
 
 def _run_background_refresh(limit: Optional[int]):
-    """Background task to refresh pipeline data with chunked processing for memory efficiency."""
+    """
+    Background task to refresh pipeline data using streaming/chunked processing.
+    
+    This is memory-efficient: instead of loading all 200k buildings into memory,
+    it processes in 25k chunks and aggregates incrementally.
+    """
     global _leads_cache, _last_refresh, _refresh_state
     
-    # Process in chunks to avoid memory issues
-    # For full refresh (200k+), process in 50k chunks
-    CHUNK_SIZE = 50000
+    # Chunk size - tuned for Railway's memory limits
+    # 25k buildings per chunk keeps memory usage reasonable
+    CHUNK_SIZE = 25000
     
     with _refresh_lock:
         _refresh_state["running"] = True
-        _refresh_state["phase"] = "fetching"
+        _refresh_state["phase"] = "initializing"
         _refresh_state["buildings_fetched"] = 0
-        _refresh_state["total_buildings"] = limit or 0  # 0 means all
+        _refresh_state["total_buildings"] = limit or 0
         _refresh_state["leads_created"] = 0
         _refresh_state["started_at"] = datetime.now().isoformat()
         _refresh_state["finished_at"] = None
         _refresh_state["error"] = None
     
     try:
-        logger.info(f"Background refresh started with limit={limit or 'ALL'}")
+        logger.info(f"Background refresh started with limit={limit or 'ALL'} using streaming aggregation")
         
         client = HPDClient()
         db = get_database()
         
-        # For smaller datasets, process normally
-        if limit and limit <= CHUNK_SIZE:
-            with _refresh_lock:
-                _refresh_state["phase"] = "fetching"
-            
-            raw_buildings = client.get_combined_data(building_limit=limit)
-            
-            with _refresh_lock:
-                _refresh_state["buildings_fetched"] = len(raw_buildings)
-                _refresh_state["phase"] = "normalizing"
-            
-            logger.info(f"Fetched {len(raw_buildings)} buildings from HPD")
-            
-            buildings = [normalize_building(b) for b in raw_buildings]
-            
-            with _refresh_lock:
-                _refresh_state["phase"] = "aggregating"
-            
-            leads = aggregate_to_leads(buildings)
-            logger.info(f"Aggregated into {len(leads)} leads")
-            
-            with _refresh_lock:
-                _refresh_state["phase"] = "scoring"
-            
-            leads = score_leads(leads)
-            
-            with _refresh_lock:
-                _refresh_state["phase"] = "persisting"
-            
-            leads = db.apply_persisted_data_to_leads(leads)
-            db.save_leads(leads)
-            logger.info(f"Persisted {len(leads)} leads to database")
-            
-            with _leads_lock:
-                _leads_cache = leads
-            
-            _last_refresh = datetime.now()
-            
-            with _refresh_lock:
-                _refresh_state["leads_created"] = len(leads)
-            
-        else:
-            # Large dataset: process in chunks and merge leads
-            # This is memory-efficient as we process and discard each chunk
-            from collections import defaultdict
-            
-            all_lead_data = defaultdict(lambda: {
-                "buildings": [],
-                "building_ids": [],
-                "contacts": [],
-                "boros": [],
-                "agent_names": [],
-                "owner_names": [],
-                "most_recent_building": None,
-            })
-            
-            offset = 0
-            total_fetched = 0
-            target = limit or 999999  # Large number for "all"
-            
-            while total_fetched < target:
-                chunk_limit = min(CHUNK_SIZE, target - total_fetched)
-                
-                with _refresh_lock:
-                    _refresh_state["phase"] = f"fetching chunk {offset // CHUNK_SIZE + 1}"
-                
-                logger.info(f"Fetching chunk: offset={offset}, limit={chunk_limit}")
-                
-                # Fetch buildings for this chunk
-                raw_buildings = client.fetch_all_buildings(limit=chunk_limit)
-                if offset > 0:
-                    # Need to skip already fetched buildings
-                    # Since we can't pass offset to the API easily, we fetch sequentially
-                    # This is a simplification - for real chunked processing we'd need 
-                    # to modify the HPD client to support true pagination
-                    break  # For now, just do one chunk at full limit
-                
-                if not raw_buildings:
-                    break
-                
-                # Fetch contacts for these buildings
-                reg_ids = list(set(b.get("registrationid") for b in raw_buildings if b.get("registrationid")))
-                contacts = client.fetch_contacts_for_registrations(reg_ids)
-                
-                # Group contacts by registration
-                contacts_by_reg = {}
-                for contact in contacts:
-                    reg_id = contact.get("registrationid")
-                    if reg_id:
-                        if reg_id not in contacts_by_reg:
-                            contacts_by_reg[reg_id] = []
-                        contacts_by_reg[reg_id].append(contact)
-                
-                # Attach contacts to buildings
-                for building in raw_buildings:
-                    reg_id = building.get("registrationid")
-                    building["contacts"] = contacts_by_reg.get(reg_id, [])
-                
-                total_fetched += len(raw_buildings)
-                
-                with _refresh_lock:
-                    _refresh_state["buildings_fetched"] = total_fetched
-                    _refresh_state["phase"] = f"processing chunk {offset // CHUNK_SIZE + 1}"
-                
-                logger.info(f"Processing {len(raw_buildings)} buildings from chunk")
-                
-                # Normalize this chunk
-                buildings = [normalize_building(b) for b in raw_buildings]
-                
-                # Free memory
-                del raw_buildings
-                
-                # Aggregate this chunk
-                chunk_leads = aggregate_to_leads(buildings)
-                
-                # Free memory
-                del buildings
-                
-                # Merge into all_lead_data (by lead_id for deduplication)
-                for lead in chunk_leads:
-                    key = lead.lead_id
-                    data = all_lead_data[key]
-                    data["buildings"].extend(lead.buildings)
-                    data["building_ids"].extend(lead.building_ids)
-                    data["contacts"].extend(lead.contacts)
-                    data["boros"].extend(lead.boros)
-                    data["agent_names"].append(lead.agent_name)
-                    data["owner_names"].append(lead.owner_name)
-                    if data["most_recent_building"] is None:
-                        data["most_recent_building"] = lead
-                    elif lead.last_registration and (
-                        data["most_recent_building"].last_registration is None or 
-                        lead.last_registration > data["most_recent_building"].last_registration
-                    ):
-                        data["most_recent_building"] = lead
-                
-                del chunk_leads
-                
-                offset += CHUNK_SIZE
-                
-                # For full refresh, we actually need the API to support proper pagination
-                # which it doesn't easily. So for now, fall back to single large chunk
-                break
-            
-            with _refresh_lock:
-                _refresh_state["phase"] = "merging"
-            
-            logger.info(f"Merging {len(all_lead_data)} unique leads")
-            
-            # Convert merged data back to Lead objects
-            from collections import Counter
-            
-            leads = []
-            for lead_id, data in all_lead_data.items():
-                base = data["most_recent_building"]
-                if base:
-                    # Update with merged data
-                    base.buildings = list(set(data["buildings"]))
-                    base.building_ids = list(set(data["building_ids"]))
-                    base.portfolio_size = len(base.buildings)
-                    base.boros = list(set(data["boros"]))
-                    base.boro = Counter(data["boros"]).most_common(1)[0][0] if data["boros"] else ""
-                    # Use most common names
-                    if data["agent_names"]:
-                        base.agent_name = Counter(data["agent_names"]).most_common(1)[0][0]
-                    if data["owner_names"]:
-                        base.owner_name = Counter(data["owner_names"]).most_common(1)[0][0]
-                    leads.append(base)
-            
-            del all_lead_data
-            
-            with _refresh_lock:
-                _refresh_state["phase"] = "scoring"
-            
-            leads = score_leads(leads)
-            
-            with _refresh_lock:
-                _refresh_state["phase"] = "persisting"
-            
-            leads = db.apply_persisted_data_to_leads(leads)
-            db.save_leads(leads)
-            logger.info(f"Persisted {len(leads)} leads to database")
-            
-            with _leads_lock:
-                _leads_cache = leads
-            
-            _last_refresh = datetime.now()
-            
-            with _refresh_lock:
-                _refresh_state["leads_created"] = len(leads)
+        # Use streaming aggregator for memory efficiency
+        aggregator = StreamingLeadAggregator()
+        chunk_num = 0
         
-        logger.info(f"Background refresh complete: {_refresh_state['buildings_fetched']} buildings -> {_refresh_state['leads_created']} leads")
+        def update_progress(fetched, total):
+            with _refresh_lock:
+                _refresh_state["buildings_fetched"] = fetched
+                if total:
+                    _refresh_state["total_buildings"] = total
+        
+        # Stream buildings in chunks
+        for chunk_buildings in client.stream_buildings_with_contacts(
+            chunk_size=CHUNK_SIZE,
+            total_limit=limit,
+            progress_callback=update_progress
+        ):
+            chunk_num += 1
+            
+            with _refresh_lock:
+                _refresh_state["phase"] = f"processing chunk {chunk_num}"
+            
+            logger.info(f"Processing chunk {chunk_num}: {len(chunk_buildings)} buildings")
+            
+            # Normalize buildings in this chunk
+            normalized = [normalize_building(b) for b in chunk_buildings]
+            
+            # Free the raw buildings from memory
+            del chunk_buildings
+            
+            # Add to streaming aggregator (memory-efficient - only keeps lead summaries)
+            num_leads = aggregator.process_chunk(normalized)
+            
+            # Free normalized buildings
+            del normalized
+            
+            stats = aggregator.get_stats()
+            logger.info(f"After chunk {chunk_num}: {stats['unique_leads']} leads, {stats['total_buildings']} buildings")
+            
+            with _refresh_lock:
+                _refresh_state["leads_created"] = stats["unique_leads"]
+        
+        # Finalize: get all leads from aggregator
+        with _refresh_lock:
+            _refresh_state["phase"] = "finalizing"
+        
+        logger.info("Finalizing leads from streaming aggregator...")
+        leads = aggregator.get_leads()
+        logger.info(f"Created {len(leads)} leads from streaming aggregation")
+        
+        # Score leads
+        with _refresh_lock:
+            _refresh_state["phase"] = "scoring"
+        
+        leads = score_leads(leads)
+        logger.info(f"Scored {len(leads)} leads")
+        
+        # Apply persisted user data (notes, status, enrichment)
+        with _refresh_lock:
+            _refresh_state["phase"] = "persisting"
+        
+        leads = db.apply_persisted_data_to_leads(leads)
+        
+        # Save to database
+        db.save_leads(leads)
+        logger.info(f"Persisted {len(leads)} leads to database")
+        
+        # Update cache
+        with _leads_lock:
+            _leads_cache = leads
+        
+        _last_refresh = datetime.now()
+        
+        with _refresh_lock:
+            _refresh_state["leads_created"] = len(leads)
+        
+        logger.info(f"Background refresh complete: {_refresh_state['buildings_fetched']} buildings -> {len(leads)} leads")
         
     except Exception as e:
         logger.error(f"Background refresh failed: {e}")
