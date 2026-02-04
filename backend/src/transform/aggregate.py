@@ -446,6 +446,10 @@ class StreamingLeadAggregator:
                     "contacts": {},  # keyed by contact_id to dedupe
                     "last_registration": None,
                     "business_address": None,
+                    # PLUTO building type tracking
+                    "building_types": Counter(),
+                    "building_classes": Counter(),
+                    "total_units": 0,
                 }
             
             data = self._lead_data[grouping_key]
@@ -488,6 +492,17 @@ class StreamingLeadAggregator:
                         "state": c.business_state,
                         "zip": c.business_zip,
                     }
+            
+            # Track PLUTO building types
+            if building.building_type:
+                data["building_types"][building.building_type] += 1
+            else:
+                data["building_types"]["unknown"] += 1
+            
+            if building.building_class:
+                data["building_classes"][building.building_class] += 1
+            
+            data["total_units"] += building.units_res
         
         return len(self._lead_data)
     
@@ -511,19 +526,33 @@ class StreamingLeadAggregator:
             primary_boro = boro_counts.most_common(1)[0][0] if boro_counts else ""
             unique_boros = list(boro_counts.keys())
             
+            # Build building type breakdown
+            type_counts = data["building_types"]
+            building_types = BuildingTypeBreakdown(
+                condo=type_counts.get('condo', 0),
+                coop=type_counts.get('coop', 0),
+                rental_elevator=type_counts.get('rental_elevator', 0),
+                rental_walkup=type_counts.get('rental_walkup', 0),
+                small_residential=type_counts.get('small_residential', 0),
+                other=type_counts.get('other', 0),
+                unknown=type_counts.get('unknown', 0),
+            )
+            
             lead = Lead(
                 lead_id=data["lead_id"],
                 agent_name=agent_name,
                 owner_name=owner_name,
                 owner_type=owner_type,
                 portfolio_size=len(data["building_addresses"]),
-                total_units=0,
+                total_units=data["total_units"],
                 buildings=data["building_addresses"],
                 building_ids=data["building_ids"],
                 contacts=list(data["contacts"].values()),
                 address=data["business_address"],
                 boro=primary_boro,
                 boros=unique_boros,
+                building_types=building_types,
+                building_classes=dict(data["building_classes"]),
                 last_registration=data["last_registration"],
             )
             leads.append(lead)

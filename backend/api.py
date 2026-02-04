@@ -203,6 +203,12 @@ async def get_leads(
     boro: Optional[str] = Query(None, description="Filter by borough"),
     has_website: Optional[bool] = Query(None, description="Filter by website availability"),
     has_email: Optional[bool] = Query(None, description="Filter by email availability"),
+    # Building type filters
+    building_type: Optional[str] = Query(None, description="Filter by primary building type (condo, coop, rental_elevator, rental_walkup, small_residential)"),
+    min_condo: Optional[int] = Query(None, description="Minimum number of condo buildings"),
+    min_coop: Optional[int] = Query(None, description="Minimum number of coop buildings"),
+    min_rental: Optional[int] = Query(None, description="Minimum number of rental buildings (elevator + walkup)"),
+    min_units: Optional[int] = Query(None, description="Minimum total residential units"),
     limit: int = Query(100, le=500, description="Max results to return"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
 ):
@@ -210,6 +216,11 @@ async def get_leads(
     Get leads with optional filtering.
     
     Returns leads sorted by score descending.
+    
+    Building Type Filters:
+    - building_type: Filter by the primary (most common) building type
+    - min_condo, min_coop, min_rental: Minimum counts for specific types
+    - min_units: Minimum total residential units in portfolio
     """
     if not _leads_cache:
         return []  # Return empty list instead of 404 for better frontend handling
@@ -237,6 +248,36 @@ async def get_leads(
             filtered = [l for l in filtered if l.email]
         else:
             filtered = [l for l in filtered if not l.email]
+    
+    # Building type filters
+    if building_type is not None:
+        building_type_lower = building_type.lower()
+        def get_primary_type(lead):
+            if not lead.building_types:
+                return None
+            types = {
+                'condo': lead.building_types.condo,
+                'coop': lead.building_types.coop,
+                'rental_elevator': lead.building_types.rental_elevator,
+                'rental_walkup': lead.building_types.rental_walkup,
+                'small_residential': lead.building_types.small_residential,
+            }
+            if max(types.values()) == 0:
+                return None
+            return max(types, key=types.get)
+        filtered = [l for l in filtered if get_primary_type(l) == building_type_lower]
+    
+    if min_condo is not None:
+        filtered = [l for l in filtered if l.building_types and l.building_types.condo >= min_condo]
+    
+    if min_coop is not None:
+        filtered = [l for l in filtered if l.building_types and l.building_types.coop >= min_coop]
+    
+    if min_rental is not None:
+        filtered = [l for l in filtered if l.building_types and l.building_types.total_rental >= min_rental]
+    
+    if min_units is not None:
+        filtered = [l for l in filtered if l.total_units >= min_units]
     
     # Paginate
     paginated = filtered[offset:offset + limit]
@@ -408,12 +449,16 @@ async def get_stats():
     }
 
 
-def _run_background_refresh(limit: Optional[int]):
+def _run_background_refresh(limit: Optional[int], include_pluto: bool = True):
     """
     Background task to refresh pipeline data using streaming/chunked processing.
     
     This is memory-efficient: instead of loading all 200k buildings into memory,
     it processes in 25k chunks and aggregates incrementally.
+    
+    Args:
+        limit: Max buildings to fetch (None = all)
+        include_pluto: If True, fetch PLUTO data for building classification
     """
     global _leads_cache, _last_refresh, _refresh_state
     
@@ -427,19 +472,28 @@ def _run_background_refresh(limit: Optional[int]):
         _refresh_state["buildings_fetched"] = 0
         _refresh_state["total_buildings"] = limit or 0
         _refresh_state["leads_created"] = 0
+        _refresh_state["pluto_lookups"] = 0
         _refresh_state["started_at"] = datetime.now().isoformat()
         _refresh_state["finished_at"] = None
         _refresh_state["error"] = None
     
     try:
-        logger.info(f"Background refresh started with limit={limit or 'ALL'} using streaming aggregation")
+        logger.info(f"Background refresh started with limit={limit or 'ALL'}, pluto={include_pluto}")
         
         client = HPDClient()
         db = get_database()
         
+        # Initialize PLUTO client if enabled
+        pluto_client = None
+        if include_pluto:
+            from src.ingest.pluto_client import PLUTOClient, classify_building
+            pluto_client = PLUTOClient()
+            logger.info("PLUTO client initialized for building classification")
+        
         # Use streaming aggregator for memory efficiency
         aggregator = StreamingLeadAggregator()
         chunk_num = 0
+        total_pluto_lookups = 0
         
         def update_progress(fetched, total):
             with _refresh_lock:
@@ -460,11 +514,50 @@ def _run_background_refresh(limit: Optional[int]):
             
             logger.info(f"Processing chunk {chunk_num}: {len(chunk_buildings)} buildings")
             
-            # Normalize buildings in this chunk
+            # Fetch PLUTO data for this chunk if enabled
+            if pluto_client:
+                with _refresh_lock:
+                    _refresh_state["phase"] = f"PLUTO lookup chunk {chunk_num}"
+                
+                logger.info(f"Fetching PLUTO data for chunk {chunk_num}...")
+                pluto_data = pluto_client.get_classifications_batch(
+                    chunk_buildings,
+                    boro_field='boroid',
+                    block_field='block',
+                    lot_field='lot'
+                )
+                total_pluto_lookups += len(pluto_data)
+                
+                with _refresh_lock:
+                    _refresh_state["pluto_lookups"] = total_pluto_lookups
+                
+                logger.info(f"Got {len(pluto_data)} PLUTO classifications")
+                
+                # Enrich raw buildings with PLUTO data
+                for building in chunk_buildings:
+                    boro_id = building.get('boroid', '')
+                    block = building.get('block', '')
+                    lot = building.get('lot', '')
+                    
+                    if boro_id and block and lot:
+                        bbl = pluto_client.make_bbl(boro_id, block, lot)
+                        if bbl in pluto_data:
+                            pluto = pluto_data[bbl]
+                            building['building_class'] = pluto.building_class
+                            building['building_type'] = pluto.building_type
+                            building['units_res'] = pluto.units_res
+                            building['year_built'] = pluto.year_built
+            
+            with _refresh_lock:
+                _refresh_state["phase"] = f"normalizing chunk {chunk_num}"
+            
+            # Normalize buildings in this chunk (now includes PLUTO data)
             normalized = [normalize_building(b) for b in chunk_buildings]
             
             # Free the raw buildings from memory
             del chunk_buildings
+            if pluto_client:
+                del pluto_data
             
             # Add to streaming aggregator (memory-efficient - only keeps lead summaries)
             num_leads = aggregator.process_chunk(normalized)
@@ -512,7 +605,7 @@ def _run_background_refresh(limit: Optional[int]):
         with _refresh_lock:
             _refresh_state["leads_created"] = len(leads)
         
-        logger.info(f"Background refresh complete: {_refresh_state['buildings_fetched']} buildings -> {len(leads)} leads")
+        logger.info(f"Background refresh complete: {_refresh_state['buildings_fetched']} buildings -> {len(leads)} leads, {total_pluto_lookups} PLUTO lookups")
         
     except Exception as e:
         logger.error(f"Background refresh failed: {e}")
@@ -532,12 +625,18 @@ async def refresh_pipeline(
     limit: Optional[int] = Query(None, description="Max buildings to fetch (None = ALL ~200k)"),
     full: bool = Query(False, description="Fetch ALL buildings (overrides limit)"),
     background: bool = Query(True, description="Run in background (recommended for large datasets)"),
+    pluto: bool = Query(True, description="Include PLUTO building classification (condo/coop/rental)"),
 ):
     """
     Refresh the pipeline: fetch from HPD, normalize, aggregate, score.
     
     By default fetches 10,000 buildings for speed. Set full=true to fetch ALL ~200k.
     For full refresh, background=true is REQUIRED (default) due to worker timeouts.
+    
+    PLUTO Integration (pluto=true, default):
+    - Fetches building classification from NYC PLUTO dataset
+    - Adds building type breakdown: condo, coop, rental_elevator, rental_walkup, etc.
+    - Adds total units count per building
     
     Check progress at GET /api/refresh/status
     """
@@ -567,14 +666,15 @@ async def refresh_pipeline(
             "message": "For datasets > 15,000 buildings, background=true is required to avoid timeouts",
         }
     
-    logger.info(f"Starting pipeline refresh with limit={limit or 'ALL'}, background={background}")
+    logger.info(f"Starting pipeline refresh with limit={limit or 'ALL'}, background={background}, pluto={pluto}")
     
     if background:
         # Run in background
-        background_tasks.add_task(_run_background_refresh, limit)
+        background_tasks.add_task(_run_background_refresh, limit, pluto)
         return {
             "status": "started",
-            "message": f"Background refresh started for {limit or 'ALL'} buildings",
+            "message": f"Background refresh started for {limit or 'ALL'} buildings" + (" with PLUTO data" if pluto else ""),
+            "pluto_enabled": pluto,
             "check_progress": "/api/refresh/status",
         }
     else:

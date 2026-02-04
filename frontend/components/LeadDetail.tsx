@@ -178,7 +178,19 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
           {enrichedLead.building_types && enrichedLead.building_types.total > 0 && (
             <div className="bg-slate-800/30 rounded-xl p-5">
               <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-4">Portfolio Composition</h3>
-              <div className="space-y-3">
+              <div className="space-y-4">
+                {/* Summary Stats First */}
+                <div className="grid grid-cols-2 gap-4 pb-4 border-b border-white/5">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-white">{enrichedLead.building_types.total}</div>
+                    <div className="text-xs text-slate-500 uppercase tracking-wider">Buildings</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-blue-400">{enrichedLead.total_units.toLocaleString()}</div>
+                    <div className="text-xs text-slate-500 uppercase tracking-wider">Total Units</div>
+                  </div>
+                </div>
+                
                 {/* Visual breakdown bar */}
                 <div className="h-6 rounded-lg overflow-hidden flex bg-slate-700/50">
                   {enrichedLead.building_types.condo > 0 && (
@@ -237,7 +249,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                   )}
                 </div>
                 
-                {/* Legend */}
+                {/* Breakdown Legend */}
                 <div className="grid grid-cols-3 gap-2 text-xs">
                   {enrichedLead.building_types.condo > 0 && (
                     <div className="flex items-center gap-2">
@@ -282,14 +294,6 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                     </div>
                   )}
                 </div>
-                
-                {/* Total Units */}
-                {enrichedLead.total_units > 0 && (
-                  <div className="pt-3 border-t border-white/5 flex justify-between items-center">
-                    <span className="text-slate-500 text-sm">Total Units</span>
-                    <span className="text-white font-bold">{enrichedLead.total_units.toLocaleString()}</span>
-                  </div>
-                )}
               </div>
             </div>
           )}

@@ -6,8 +6,9 @@ interface Props {
   onSelectLead: (lead: ApiLead) => void;
 }
 
-type SortField = 'agent_name' | 'portfolio_size' | 'score' | 'boro' | 'enrichment_status';
+type SortField = 'agent_name' | 'portfolio_size' | 'total_units' | 'score' | 'boro' | 'enrichment_status';
 type SortDir = 'asc' | 'desc';
+type BuildingTypeFilter = 'condo' | 'coop' | 'rental' | null;
 
 const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   const [leads, setLeads] = useState<ApiLead[]>([]);
@@ -25,6 +26,8 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   const [filterHasWebsite, setFilterHasWebsite] = useState<boolean | null>(null);
   const [filterHasMgmtCompany, setFilterHasMgmtCompany] = useState<boolean | null>(null);
   const [filterOutreachStatus, setFilterOutreachStatus] = useState<string>('');
+  const [filterBuildingType, setFilterBuildingType] = useState<BuildingTypeFilter>(null);
+  const [filterMinUnits, setFilterMinUnits] = useState<string>('');
   
   // Sorting
   const [sortField, setSortField] = useState<SortField>('score');
@@ -109,6 +112,23 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       result = result.filter(lead => lead.outreach_status === filterOutreachStatus);
     }
     
+    // Building type filter
+    if (filterBuildingType) {
+      result = result.filter(lead => {
+        if (!lead.building_types) return false;
+        if (filterBuildingType === 'condo') return lead.building_types.condo > 0;
+        if (filterBuildingType === 'coop') return lead.building_types.coop > 0;
+        if (filterBuildingType === 'rental') return (lead.building_types.rental_elevator + lead.building_types.rental_walkup) > 0;
+        return false;
+      });
+    }
+    
+    // Min units filter
+    if (filterMinUnits) {
+      const min = parseInt(filterMinUnits);
+      if (!isNaN(min)) result = result.filter(lead => lead.total_units >= min);
+    }
+    
     // Sort
     result.sort((a, b) => {
       let aVal: any = a[sortField];
@@ -123,7 +143,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     });
     
     return result;
-  }, [leads, searchTerm, filterBorough, filterMinScore, filterMaxScore, filterMinPortfolio, filterHasPhone, filterHasEmail, filterHasWebsite, filterHasMgmtCompany, filterOutreachStatus, sortField, sortDir]);
+  }, [leads, searchTerm, filterBorough, filterMinScore, filterMaxScore, filterMinPortfolio, filterHasPhone, filterHasEmail, filterHasWebsite, filterHasMgmtCompany, filterOutreachStatus, filterBuildingType, filterMinUnits, sortField, sortDir]);
 
   // Paginated results
   const paginatedLeads = useMemo(() => {
@@ -193,6 +213,8 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     setFilterHasWebsite(null);
     setFilterHasMgmtCompany(null);
     setFilterOutreachStatus('');
+    setFilterBuildingType(null);
+    setFilterMinUnits('');
   };
 
   const exportToCsv = () => {
@@ -204,6 +226,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       'Borough',
       'Buildings',
       'Total Units',
+      'Condos',
+      'Coops',
+      'Elevator Rentals',
+      'Walk-up Rentals',
       'Score',
       'Phone',
       'Email',
@@ -220,6 +246,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       lead.boro || '',
       lead.portfolio_size,
       lead.total_units,
+      lead.building_types?.condo || 0,
+      lead.building_types?.coop || 0,
+      lead.building_types?.rental_elevator || 0,
+      lead.building_types?.rental_walkup || 0,
       lead.score.toFixed(1),
       lead.phone || '',
       lead.email || '',
@@ -346,6 +376,49 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
             onChange={(e) => { setFilterMinPortfolio(e.target.value); setPage(0); }}
           />
           
+          {/* Min Units */}
+          <input
+            type="number"
+            placeholder="Min Units"
+            className="w-24 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            value={filterMinUnits}
+            onChange={(e) => { setFilterMinUnits(e.target.value); setPage(0); }}
+          />
+          
+          {/* Building Type Filters */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setFilterBuildingType(filterBuildingType === 'condo' ? null : 'condo')}
+              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                filterBuildingType === 'condo' 
+                  ? 'bg-blue-600/30 text-blue-400 border border-blue-500/30' 
+                  : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
+              }`}
+            >
+              🏢 Condo
+            </button>
+            <button
+              onClick={() => setFilterBuildingType(filterBuildingType === 'coop' ? null : 'coop')}
+              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                filterBuildingType === 'coop' 
+                  ? 'bg-purple-600/30 text-purple-400 border border-purple-500/30' 
+                  : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
+              }`}
+            >
+              🏠 Coop
+            </button>
+            <button
+              onClick={() => setFilterBuildingType(filterBuildingType === 'rental' ? null : 'rental')}
+              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                filterBuildingType === 'rental' 
+                  ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' 
+                  : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
+              }`}
+            >
+              🏬 Rental
+            </button>
+          </div>
+          
           {/* Contact Filters */}
           <div className="flex gap-2">
             <button
@@ -465,6 +538,15 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                 </th>
                 <th 
                   className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right"
+                  onClick={() => handleSort('total_units')}
+                >
+                  Units <SortIcon field="total_units" />
+                </th>
+                <th className="px-4 py-3">
+                  Type Mix
+                </th>
+                <th 
+                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right"
                   onClick={() => handleSort('score')}
                 >
                   Score <SortIcon field="score" />
@@ -509,6 +591,42 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <span className="text-slate-300 font-mono text-sm">{lead.portfolio_size}</span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <span className="text-blue-400 font-mono text-sm">{lead.total_units.toLocaleString()}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {lead.building_types && lead.building_types.total > 0 ? (
+                      <div className="flex gap-1 items-center">
+                        {lead.building_types.condo > 0 && (
+                          <span className="px-1.5 py-0.5 bg-blue-900/30 text-blue-400 text-[10px] rounded" title="Condos">
+                            {lead.building_types.condo}C
+                          </span>
+                        )}
+                        {lead.building_types.coop > 0 && (
+                          <span className="px-1.5 py-0.5 bg-purple-900/30 text-purple-400 text-[10px] rounded" title="Coops">
+                            {lead.building_types.coop}Co
+                          </span>
+                        )}
+                        {lead.building_types.rental_elevator > 0 && (
+                          <span className="px-1.5 py-0.5 bg-emerald-900/30 text-emerald-400 text-[10px] rounded" title="Elevator Rentals">
+                            {lead.building_types.rental_elevator}E
+                          </span>
+                        )}
+                        {lead.building_types.rental_walkup > 0 && (
+                          <span className="px-1.5 py-0.5 bg-amber-900/30 text-amber-400 text-[10px] rounded" title="Walk-up Rentals">
+                            {lead.building_types.rental_walkup}W
+                          </span>
+                        )}
+                        {(lead.building_types.small_residential + lead.building_types.other + lead.building_types.unknown) > 0 && (
+                          <span className="px-1.5 py-0.5 bg-slate-800 text-slate-500 text-[10px] rounded" title="Other/Small">
+                            {lead.building_types.small_residential + lead.building_types.other + lead.building_types.unknown}O
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-slate-700 text-xs">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <span className={`font-mono text-sm font-medium ${
