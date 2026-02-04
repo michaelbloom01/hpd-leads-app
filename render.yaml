@@ -1,0 +1,20 @@
+# Render Blueprint for HPD Leads App
+# https://render.com/docs/blueprint-spec
+
+services:
+  # Backend API Service (Python FastAPI)
+  - type: web
+    name: hpd-leads-api
+    runtime: python
+    region: ohio  # Free tier available
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn api:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      - key: NYC_OPEN_DATA_APP_TOKEN
+        sync: false  # Optional - set manually if needed for higher rate limits
+    healthCheckPath: /
+    autoDeploy: true
