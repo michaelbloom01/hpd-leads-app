@@ -7,9 +7,10 @@
   - Integrated into enrichment pipeline
 - [ ] Add Apollo API integration
 - [ ] Set up Google Sheets output (needs credentials)
-- [x] **Deploy to Render (backend) + Vercel (frontend)** — DONE Feb 4, 2026
+- [x] **Deploy to Railway (backend) + Vercel (frontend)** — DONE Feb 4, 2026
   - Frontend: https://frontend-nine-psi-58.vercel.app
-  - Backend: https://hpd-leads-api.onrender.com
+  - Backend: https://hpd-leads-app-production.up.railway.app
+  - Migrated from Render to Railway for longer timeouts (5min vs 30s)
 - [x] **Add CSV export to frontend** — DONE Feb 4, 2026
 - [x] **Add lead status/notes tracking** — DONE Feb 4, 2026
   - Outreach statuses: new, contacted, interested, not_interested, closed
