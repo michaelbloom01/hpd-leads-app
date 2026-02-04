@@ -84,9 +84,30 @@ class LeadsDatabase:
                     opportunity_note TEXT,
                     outreach_status TEXT DEFAULT 'new',
                     notes TEXT,
+                    building_types TEXT,  -- JSON object with condo, coop, rental counts
+                    building_classes TEXT,  -- JSON object with raw class codes
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
+                
+                -- Add building_types and building_classes columns if they don't exist (migration)
+                -- SQLite doesn't support ADD COLUMN IF NOT EXISTS, so we catch errors
+            """)
+            
+            # Migration: Add building_types column if it doesn't exist
+            try:
+                conn.execute("ALTER TABLE leads ADD COLUMN building_types TEXT")
+                logger.info("Added building_types column to leads table")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            
+            try:
+                conn.execute("ALTER TABLE leads ADD COLUMN building_classes TEXT")
+                logger.info("Added building_classes column to leads table")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            
+            conn.executescript("""
                 
                 -- Lead user data (notes, status, etc.) - kept for backward compatibility
                 CREATE TABLE IF NOT EXISTS lead_user_data (
@@ -297,6 +318,11 @@ class LeadsDatabase:
         with self._get_connection() as conn:
             # Use INSERT OR REPLACE for upsert behavior
             for lead in leads:
+                # Serialize building_types to JSON
+                building_types_json = None
+                if lead.building_types:
+                    building_types_json = json.dumps(lead.building_types.to_dict())
+                
                 conn.execute(
                     """INSERT OR REPLACE INTO leads (
                         lead_id, agent_name, owner_name, owner_type,
@@ -305,8 +331,9 @@ class LeadsDatabase:
                         last_registration, dos_id, dos_status, phone, email,
                         website, business_summary, owner_principal, enrichment_status,
                         enrichment_sources, last_enriched, score, score_breakdown,
-                        tags, opportunity_note, outreach_status, notes, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        tags, opportunity_note, outreach_status, notes, 
+                        building_types, building_classes, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         lead.lead_id,
                         lead.agent_name,
@@ -338,6 +365,8 @@ class LeadsDatabase:
                         lead.opportunity_note,
                         lead.outreach_status,
                         lead.notes,
+                        building_types_json,
+                        json.dumps(lead.building_classes) if lead.building_classes else None,
                         datetime.now().isoformat(),
                     )
                 )
@@ -352,7 +381,7 @@ class LeadsDatabase:
         Returns an empty list if no leads are stored.
         """
         # Import here to avoid circular imports
-        from src.transform.aggregate import Lead
+        from src.transform.aggregate import Lead, BuildingTypeBreakdown
         
         with self._get_connection() as conn:
             rows = conn.execute(
@@ -375,6 +404,31 @@ class LeadsDatabase:
                 enrichment_sources = json.loads(row_dict.get('enrichment_sources') or '[]')
                 score_breakdown = json.loads(row_dict.get('score_breakdown') or '{}')
                 tags = json.loads(row_dict.get('tags') or '[]')
+                
+                # Parse building_types from JSON
+                building_types = BuildingTypeBreakdown()
+                if row_dict.get('building_types'):
+                    try:
+                        bt_data = json.loads(row_dict['building_types'])
+                        building_types = BuildingTypeBreakdown(
+                            condo=bt_data.get('condo', 0),
+                            coop=bt_data.get('coop', 0),
+                            rental_elevator=bt_data.get('rental_elevator', 0),
+                            rental_walkup=bt_data.get('rental_walkup', 0),
+                            small_residential=bt_data.get('small_residential', 0),
+                            other=bt_data.get('other', 0),
+                            unknown=bt_data.get('unknown', 0),
+                        )
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                
+                # Parse building_classes from JSON
+                building_classes = {}
+                if row_dict.get('building_classes'):
+                    try:
+                        building_classes = json.loads(row_dict['building_classes'])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
                 
                 # Parse dates
                 last_registration = None
@@ -418,6 +472,8 @@ class LeadsDatabase:
                     address=row_dict.get('address'),
                     boro=row_dict.get('boro') or '',
                     boros=boros,
+                    building_types=building_types,
+                    building_classes=building_classes,
                     reg_status=row_dict.get('reg_status') or '',
                     last_registration=last_registration,
                     dos_id=row_dict.get('dos_id'),

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ApiLead, enrichLeads, updateLead, researchLead, addOutreachAttempt, enrichLeadContacts, CompanyResearch, OutreachAttempt, ContactWithSource, DOSInfo } from '../services/api';
+import { ApiLead, enrichLeads, updateLead, researchLead, addOutreachAttempt, enrichLeadContacts, CompanyResearch, OutreachAttempt, DOSInfo } from '../services/api';
 
 interface Props {
   lead: ApiLead;
@@ -38,7 +38,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
     setOutreachAttempts(lead.outreach_attempts || []);
     setDosInfo(null);
     setCompanyResearch(null);
-  }, [lead.lead_id]);
+  }, [lead]);
 
   const handleEnrich = async () => {
     setIsEnriching(true);

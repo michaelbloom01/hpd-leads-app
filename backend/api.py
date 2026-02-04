@@ -35,9 +35,13 @@ app = FastAPI(
 )
 
 # Enable CORS for frontend
+import os
+_cors_origins = os.environ.get("CORS_ORIGINS", "*")
+_allowed_origins = _cors_origins.split(",") if _cors_origins != "*" else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict to your frontend domain
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -311,31 +315,33 @@ async def update_lead(lead_id: str, request: UpdateLeadRequest):
             detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
         )
     
-    for i, lead in enumerate(_leads_cache):
-        if lead.lead_id == lead_id:
-            if request.outreach_status is not None:
-                lead.outreach_status = request.outreach_status
-            if request.notes is not None:
-                lead.notes = request.notes
-            lead.updated_at = datetime.now()
-            _leads_cache[i] = lead
-            
-            # Persist to database (both user_data table for backward compat and leads table)
-            db = get_database()
-            db.save_lead_user_data(
-                lead_id=lead_id,
-                outreach_status=request.outreach_status,
-                notes=request.notes
-            )
-            # Also update the main leads table
-            db.save_leads([lead])
-            
-            return {
-                "status": "success",
-                "lead_id": lead_id,
-                "outreach_status": lead.outreach_status,
-                "notes": lead.notes,
-            }
+    # Use lock to prevent race conditions
+    with _leads_lock:
+        for i, lead in enumerate(_leads_cache):
+            if lead.lead_id == lead_id:
+                if request.outreach_status is not None:
+                    lead.outreach_status = request.outreach_status
+                if request.notes is not None:
+                    lead.notes = request.notes
+                lead.updated_at = datetime.now()
+                _leads_cache[i] = lead
+                
+                # Persist to database (both user_data table for backward compat and leads table)
+                db = get_database()
+                db.save_lead_user_data(
+                    lead_id=lead_id,
+                    outreach_status=request.outreach_status,
+                    notes=request.notes
+                )
+                # Also update the main leads table
+                db.save_leads([lead])
+                
+                return {
+                    "status": "success",
+                    "lead_id": lead_id,
+                    "outreach_status": lead.outreach_status,
+                    "notes": lead.notes,
+                }
     
     raise HTTPException(status_code=404, detail="Lead not found")
 
@@ -368,23 +374,36 @@ async def get_stats():
             "with_phone": 0,
             "with_email": 0,
             "with_website": 0,
+            "building_type_distribution": {},
+            "leads_with_pluto_data": 0,
         }
     
-    # Count by borough
+    # Single-pass aggregation for performance (O(n) instead of O(5n))
     by_borough = {}
+    by_status = {}
+    score_dist = {"0-20": 0, "20-40": 0, "40-60": 0, "60-80": 0, "80-100": 0}
+    portfolio_dist = {"1-5": 0, "6-10": 0, "11-25": 0, "26-50": 0, "51-100": 0, "100+": 0}
+    building_type_dist = {
+        "condo": 0, "coop": 0, "rental_elevator": 0, "rental_walkup": 0,
+        "small_residential": 0, "other": 0, "unknown": 0,
+    }
+    
+    total_buildings = 0
+    with_phone = 0
+    with_email = 0
+    with_website = 0
+    leads_with_pluto = 0
+    
     for lead in _leads_cache:
+        # Borough
         boro = lead.boro or "Unknown"
         by_borough[boro] = by_borough.get(boro, 0) + 1
-    
-    # Count by enrichment status
-    by_status = {}
-    for lead in _leads_cache:
+        
+        # Enrichment status
         status = lead.enrichment_status
         by_status[status] = by_status.get(status, 0) + 1
-    
-    # Score distribution
-    score_dist = {"0-20": 0, "20-40": 0, "40-60": 0, "60-80": 0, "80-100": 0}
-    for lead in _leads_cache:
+        
+        # Score distribution
         if lead.score < 20:
             score_dist["0-20"] += 1
         elif lead.score < 40:
@@ -395,10 +414,8 @@ async def get_stats():
             score_dist["60-80"] += 1
         else:
             score_dist["80-100"] += 1
-    
-    # Portfolio size distribution
-    portfolio_dist = {"1-5": 0, "6-10": 0, "11-25": 0, "26-50": 0, "51-100": 0, "100+": 0}
-    for lead in _leads_cache:
+        
+        # Portfolio distribution
         if lead.portfolio_size <= 5:
             portfolio_dist["1-5"] += 1
         elif lead.portfolio_size <= 10:
@@ -411,19 +428,17 @@ async def get_stats():
             portfolio_dist["51-100"] += 1
         else:
             portfolio_dist["100+"] += 1
-    
-    # Building type distribution (from PLUTO)
-    building_type_dist = {
-        "condo": 0,
-        "coop": 0,
-        "rental_elevator": 0, 
-        "rental_walkup": 0,
-        "small_residential": 0,
-        "other": 0,
-        "unknown": 0,
-    }
-    leads_with_pluto = 0
-    for lead in _leads_cache:
+        
+        # Totals
+        total_buildings += lead.portfolio_size
+        if lead.phone:
+            with_phone += 1
+        if lead.email:
+            with_email += 1
+        if lead.website:
+            with_website += 1
+        
+        # Building types (PLUTO)
         if lead.building_types and lead.building_types.total > 0:
             leads_with_pluto += 1
             building_type_dist["condo"] += lead.building_types.condo
@@ -436,14 +451,14 @@ async def get_stats():
     
     return {
         "total_leads": len(_leads_cache),
-        "total_buildings": sum(l.portfolio_size for l in _leads_cache),
+        "total_buildings": total_buildings,
         "by_borough": by_borough,
         "by_enrichment_status": by_status,
         "score_distribution": score_dist,
         "portfolio_distribution": portfolio_dist,
-        "with_phone": len([l for l in _leads_cache if l.phone]),
-        "with_email": len([l for l in _leads_cache if l.email]),
-        "with_website": len([l for l in _leads_cache if l.website]),
+        "with_phone": with_phone,
+        "with_email": with_email,
+        "with_website": with_website,
         "building_type_distribution": building_type_dist,
         "leads_with_pluto_data": leads_with_pluto,
     }
@@ -766,13 +781,14 @@ async def enrich_leads(request: EnrichmentRequest):
     enricher = Enricher(use_cache=True)
     enriched = enricher.enrich_batch(to_enrich, limit=len(to_enrich), skip_enriched=False)
     
-    # Update cache and persist enrichment to database
+    # Update cache with lock and persist enrichment to database
     db = get_database()
     updated_leads = []
-    for lead in enriched:
-        if lead.lead_id in lead_index:
-            _leads_cache[lead_index[lead.lead_id]] = lead
-            updated_leads.append(lead)
+    with _leads_lock:
+        for lead in enriched:
+            if lead.lead_id in lead_index:
+                _leads_cache[lead_index[lead.lead_id]] = lead
+                updated_leads.append(lead)
             # Save to enrichment cache (backward compatibility)
             db.save_enrichment(
                 lead_id=lead.lead_id,

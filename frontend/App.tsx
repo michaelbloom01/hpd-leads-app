@@ -8,7 +8,7 @@ import LeadDetail from './components/LeadDetail';
 import { ApiLead, refreshPipeline } from './services/api';
 
 const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'leads' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'leads'>('dashboard');
   const [selectedLead, setSelectedLead] = useState<ApiLead | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);

@@ -66,6 +66,11 @@ class NYDOSClient:
         
         return name.strip()
     
+    def _escape_soql(self, value: str) -> str:
+        """Escape a string for use in SoQL queries to prevent injection."""
+        # Escape single quotes by doubling them (SoQL standard)
+        return value.replace("'", "''")
+    
     def lookup_entity(self, name: str, include_inactive: bool = False) -> Optional[DOSEntity]:
         """
         Look up a business entity by name.
@@ -90,8 +95,10 @@ class NYDOSClient:
             # Use LIKE for partial matching
             # Note: New endpoint (n9v6-gdp6) only contains active corporations,
             # so no need to filter by status
+            # Escape the normalized name to prevent SQL injection
+            escaped_normalized = self._escape_soql(normalized)
             params = {
-                "$where": f"upper(current_entity_name) LIKE '%{normalized}%'",
+                "$where": f"upper(current_entity_name) LIKE '%{escaped_normalized}%'",
                 "$limit": 20,
                 "$order": "initial_dos_filing_date DESC"  # Most recent first
             }
@@ -102,7 +109,8 @@ class NYDOSClient:
             
             if not results:
                 # Try exact match with original name
-                params["$where"] = f"upper(current_entity_name) = '{name.upper()}'"
+                escaped_name = self._escape_soql(name.upper())
+                params["$where"] = f"upper(current_entity_name) = '{escaped_name}'"
                 
                 response = self.session.get(NY_DOS_ENDPOINT, params=params, timeout=15)
                 response.raise_for_status()
@@ -171,8 +179,9 @@ class NYDOSClient:
             return []
         
         try:
+            escaped_normalized = self._escape_soql(normalized)
             params = {
-                "$where": f"upper(current_entity_name) LIKE '%{normalized}%'",
+                "$where": f"upper(current_entity_name) LIKE '%{escaped_normalized}%'",
                 "$limit": limit,
                 "$order": "initial_dos_filing_date DESC"
             }
