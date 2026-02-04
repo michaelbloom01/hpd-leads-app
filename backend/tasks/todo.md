@@ -15,12 +15,17 @@
   - Outreach statuses: new, contacted, interested, not_interested, closed
   - Notes field per lead
   - Status filter in table
+- [x] **Improve scoring with geographic concentration** — DONE Feb 4, 2026
+  - Single-borough operators get bonus (easier acquisition targets)
+  - New tags: single_borough_focus, concentrated
 
 ## Backlog
 
-- [ ] Set up daily scheduler
-- [ ] Add failure alerting
-- [ ] Tune scoring weights based on real data
+- [ ] Set up daily scheduler (cron job for refresh)
+- [ ] Add failure alerting (email on errors)
+- [ ] Persistent database (SQLite or PostgreSQL) instead of in-memory cache
+- [ ] Add building-level detail view
+- [ ] Violation history from HPD (another dataset)
 
 ## Done
 

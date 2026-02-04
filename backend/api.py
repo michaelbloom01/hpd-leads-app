@@ -20,6 +20,7 @@ from src.transform.aggregate import aggregate_to_leads, Lead
 from src.score.scorer import score_leads
 from src.enrich.enricher import Enricher
 from src.enrich.ny_dos import NYDOSClient
+from src.storage.database import get_database
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -176,6 +177,15 @@ async def update_lead(lead_id: str, request: UpdateLeadRequest):
                 lead.notes = request.notes
             lead.updated_at = datetime.now()
             _leads_cache[i] = lead
+            
+            # Persist to database
+            db = get_database()
+            db.save_lead_user_data(
+                lead_id=lead_id,
+                outreach_status=request.outreach_status,
+                notes=request.notes
+            )
+            
             return {
                 "status": "success",
                 "lead_id": lead_id,
@@ -308,6 +318,10 @@ async def refresh_pipeline(
         # Score
         leads = score_leads(leads)
         
+        # Apply persisted user data (notes, status, enrichment)
+        db = get_database()
+        leads = db.apply_persisted_data_to_leads(leads)
+        
         # Update cache
         _leads_cache = leads
         _last_refresh = datetime.now()
@@ -351,10 +365,22 @@ async def enrich_leads(request: EnrichmentRequest):
     enricher = Enricher(use_cache=True)
     enriched = enricher.enrich_batch(to_enrich, limit=len(to_enrich), skip_enriched=False)
     
-    # Update cache
+    # Update cache and persist enrichment to database
+    db = get_database()
     for lead in enriched:
         if lead.lead_id in lead_index:
             _leads_cache[lead_index[lead.lead_id]] = lead
+            # Save to database
+            db.save_enrichment(
+                lead_id=lead.lead_id,
+                phone=lead.phone,
+                email=lead.email,
+                website=lead.website,
+                business_summary=lead.business_summary,
+                owner_principal=lead.owner_principal,
+                enrichment_status=lead.enrichment_status,
+                enrichment_sources=lead.enrichment_sources,
+            )
     
     return {
         "status": "success",
