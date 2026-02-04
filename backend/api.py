@@ -1449,6 +1449,84 @@ def _get_outreach_attempts_for_lead(lead_id: str) -> List[OutreachAttemptRespons
     ]
 
 
+@app.get("/api/export/csv")
+async def export_leads_csv(
+    min_score: Optional[float] = None,
+    min_portfolio: Optional[int] = None,
+    boro: Optional[str] = None,
+    limit: int = Query(500, le=5000, description="Max leads to export"),
+):
+    """
+    Export leads to CSV format.
+    
+    Returns a CSV file download.
+    """
+    from fastapi.responses import StreamingResponse
+    import csv
+    import io
+    
+    # Filter leads
+    filtered = list(_leads_cache)
+    
+    if min_score is not None:
+        filtered = [l for l in filtered if l.score >= min_score]
+    if min_portfolio is not None:
+        filtered = [l for l in filtered if l.portfolio_size >= min_portfolio]
+    if boro:
+        boro_upper = boro.upper()
+        filtered = [l for l in filtered if l.boro.upper() == boro_upper]
+    
+    # Sort by portfolio size and limit
+    filtered.sort(key=lambda l: l.portfolio_size, reverse=True)
+    filtered = filtered[:limit]
+    
+    # Generate CSV
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Headers
+    writer.writerow([
+        "Score", "Tier", "Agent Name", "Owner Name", "Portfolio Size",
+        "Phone", "Email", "Website", "LinkedIn Company", "LinkedIn People",
+        "Business Summary", "Address", "Borough", "Tags", 
+        "Enrichment Status", "Lead ID"
+    ])
+    
+    # Rows
+    for lead in filtered:
+        tier = "A" if lead.score >= 80 else "B" if lead.score >= 60 else "C" if lead.score >= 40 else "D"
+        linkedin_people = "; ".join(getattr(lead, 'linkedin_people', []) or [])
+        
+        writer.writerow([
+            round(lead.score, 1),
+            tier,
+            lead.agent_name or "",
+            lead.owner_name or "",
+            lead.portfolio_size,
+            lead.phone or "",
+            lead.email or "",
+            lead.website or "",
+            getattr(lead, 'linkedin_url', "") or "",
+            linkedin_people,
+            (lead.business_summary or "")[:200],
+            lead.address or "",
+            lead.boro,
+            ", ".join(lead.tags) if lead.tags else "",
+            lead.enrichment_status,
+            lead.lead_id,
+        ])
+    
+    output.seek(0)
+    
+    # Return as downloadable CSV
+    filename = f"hpd_leads_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
