@@ -1,0 +1,308 @@
+"""
+FastAPI server for HPD Leads Pipeline.
+
+Exposes REST endpoints for the frontend to:
+- Fetch leads
+- Trigger enrichment
+- Get pipeline status
+"""
+import logging
+from datetime import datetime
+from typing import List, Optional
+
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+from src.ingest.hpd_client import HPDClient
+from src.transform.normalize import normalize_building
+from src.transform.aggregate import aggregate_to_leads, Lead
+from src.score.scorer import score_leads
+from src.enrich.enricher import Enricher
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Create FastAPI app
+app = FastAPI(
+    title="HPD Leads API",
+    description="API for NYC HPD property management lead generation",
+    version="1.0.0",
+)
+
+# Enable CORS for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, restrict to your frontend domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Global state (in production, use a database)
+_leads_cache: List[Lead] = []
+_last_refresh: Optional[datetime] = None
+
+
+class LeadResponse(BaseModel):
+    """Lead data for API response."""
+    lead_id: str
+    agent_name: str
+    owner_name: str
+    owner_type: str
+    portfolio_size: int
+    total_units: int
+    buildings: List[str]
+    phone: Optional[str]
+    email: Optional[str]
+    website: Optional[str]
+    business_summary: Optional[str]
+    address: Optional[str]
+    boro: str
+    boros: List[str]
+    score: float
+    tags: List[str]
+    enrichment_status: str
+
+
+class PipelineStatus(BaseModel):
+    """Pipeline status response."""
+    total_leads: int
+    last_refresh: Optional[str]
+    enriched_count: int
+    top_score: float
+
+
+class EnrichmentRequest(BaseModel):
+    """Request to enrich specific leads."""
+    lead_ids: List[str]
+
+
+@app.get("/")
+async def root():
+    """Health check endpoint."""
+    return {"status": "ok", "service": "hpd-leads-api"}
+
+
+@app.get("/api/leads", response_model=List[LeadResponse])
+async def get_leads(
+    min_score: Optional[float] = Query(None, description="Minimum score filter"),
+    min_portfolio: Optional[int] = Query(None, description="Minimum portfolio size"),
+    boro: Optional[str] = Query(None, description="Filter by borough"),
+    has_website: Optional[bool] = Query(None, description="Filter by website availability"),
+    has_email: Optional[bool] = Query(None, description="Filter by email availability"),
+    limit: int = Query(100, le=500, description="Max results to return"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+):
+    """
+    Get leads with optional filtering.
+    
+    Returns leads sorted by score descending.
+    """
+    if not _leads_cache:
+        raise HTTPException(status_code=404, detail="No leads available. Run /api/refresh first.")
+    
+    # Apply filters
+    filtered = _leads_cache
+    
+    if min_score is not None:
+        filtered = [l for l in filtered if l.score >= min_score]
+    
+    if min_portfolio is not None:
+        filtered = [l for l in filtered if l.portfolio_size >= min_portfolio]
+    
+    if boro is not None:
+        filtered = [l for l in filtered if boro.upper() in [b.upper() for b in l.boros]]
+    
+    if has_website is not None:
+        if has_website:
+            filtered = [l for l in filtered if l.website]
+        else:
+            filtered = [l for l in filtered if not l.website]
+    
+    if has_email is not None:
+        if has_email:
+            filtered = [l for l in filtered if l.email]
+        else:
+            filtered = [l for l in filtered if not l.email]
+    
+    # Paginate
+    paginated = filtered[offset:offset + limit]
+    
+    return [_lead_to_response(l) for l in paginated]
+
+
+@app.get("/api/leads/{lead_id}", response_model=LeadResponse)
+async def get_lead(lead_id: str):
+    """Get a single lead by ID."""
+    for lead in _leads_cache:
+        if lead.lead_id == lead_id:
+            return _lead_to_response(lead)
+    raise HTTPException(status_code=404, detail="Lead not found")
+
+
+@app.get("/api/status", response_model=PipelineStatus)
+async def get_status():
+    """Get pipeline status."""
+    enriched = len([l for l in _leads_cache if l.enrichment_status in ["complete", "partial"]])
+    top = max((l.score for l in _leads_cache), default=0)
+    
+    return PipelineStatus(
+        total_leads=len(_leads_cache),
+        last_refresh=_last_refresh.isoformat() if _last_refresh else None,
+        enriched_count=enriched,
+        top_score=top,
+    )
+
+
+@app.post("/api/refresh")
+async def refresh_pipeline(limit: int = Query(5000, le=50000, description="Max buildings to fetch")):
+    """
+    Refresh the pipeline: fetch from HPD, normalize, aggregate, score.
+    
+    This is an expensive operation - call sparingly.
+    """
+    global _leads_cache, _last_refresh
+    
+    logger.info(f"Starting pipeline refresh with limit={limit}")
+    
+    try:
+        # Ingest
+        client = HPDClient()
+        raw_buildings = client.fetch_buildings(limit=limit)
+        logger.info(f"Fetched {len(raw_buildings)} buildings from HPD")
+        
+        # Normalize
+        buildings = [normalize_building(b) for b in raw_buildings]
+        
+        # Aggregate
+        leads = aggregate_to_leads(buildings)
+        logger.info(f"Aggregated into {len(leads)} leads")
+        
+        # Score
+        leads = score_leads(leads)
+        
+        # Update cache
+        _leads_cache = leads
+        _last_refresh = datetime.now()
+        
+        return {
+            "status": "success",
+            "buildings_fetched": len(raw_buildings),
+            "leads_created": len(leads),
+            "timestamp": _last_refresh.isoformat(),
+        }
+        
+    except Exception as e:
+        logger.error(f"Pipeline refresh failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/enrich")
+async def enrich_leads(request: EnrichmentRequest):
+    """
+    Enrich specific leads by ID.
+    
+    Uses web crawl to find website, phone, email.
+    """
+    global _leads_cache
+    
+    if not request.lead_ids:
+        raise HTTPException(status_code=400, detail="No lead IDs provided")
+    
+    # Find leads to enrich
+    to_enrich = []
+    lead_index = {l.lead_id: i for i, l in enumerate(_leads_cache)}
+    
+    for lid in request.lead_ids:
+        if lid in lead_index:
+            to_enrich.append(_leads_cache[lead_index[lid]])
+    
+    if not to_enrich:
+        raise HTTPException(status_code=404, detail="No matching leads found")
+    
+    # Run enrichment
+    enricher = Enricher(use_cache=True)
+    enriched = enricher.enrich_batch(to_enrich, limit=len(to_enrich), skip_enriched=False)
+    
+    # Update cache
+    for lead in enriched:
+        if lead.lead_id in lead_index:
+            _leads_cache[lead_index[lead.lead_id]] = lead
+    
+    return {
+        "status": "success",
+        "enriched_count": len(enriched),
+        "results": [
+            {
+                "lead_id": l.lead_id,
+                "agent_name": l.agent_name,
+                "website": l.website,
+                "phone": l.phone,
+                "email": l.email,
+                "status": l.enrichment_status,
+            }
+            for l in enriched
+        ],
+    }
+
+
+@app.post("/api/enrich/batch")
+async def enrich_batch(
+    limit: int = Query(10, le=50, description="Max leads to enrich"),
+    min_score: Optional[float] = Query(None, description="Only enrich leads with score >= this"),
+):
+    """
+    Enrich a batch of top leads automatically.
+    
+    Prioritizes high-score leads that haven't been enriched.
+    """
+    global _leads_cache
+    
+    enricher = Enricher(use_cache=True)
+    enriched = enricher.enrich_batch(
+        _leads_cache,
+        limit=limit,
+        skip_enriched=True,
+        min_score=min_score,
+    )
+    
+    # Update cache
+    lead_index = {l.lead_id: i for i, l in enumerate(_leads_cache)}
+    for lead in enriched:
+        if lead.lead_id in lead_index:
+            _leads_cache[lead_index[lead.lead_id]] = lead
+    
+    return {
+        "status": "success",
+        "enriched_count": len(enriched),
+    }
+
+
+def _lead_to_response(lead: Lead) -> LeadResponse:
+    """Convert Lead dataclass to API response."""
+    return LeadResponse(
+        lead_id=lead.lead_id,
+        agent_name=lead.agent_name,
+        owner_name=lead.owner_name,
+        owner_type=lead.owner_type,
+        portfolio_size=lead.portfolio_size,
+        total_units=lead.total_units,
+        buildings=lead.buildings[:10],  # Limit for response size
+        phone=lead.phone,
+        email=lead.email,
+        website=lead.website,
+        business_summary=lead.business_summary[:200] if lead.business_summary else None,
+        address=lead.address,
+        boro=lead.boro,
+        boros=lead.boros,
+        score=lead.score,
+        tags=lead.tags,
+        enrichment_status=lead.enrichment_status,
+    )
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

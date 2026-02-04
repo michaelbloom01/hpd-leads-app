@@ -1,0 +1,53 @@
+# Scoring Configuration
+# Adjust these weights to change how leads are prioritized
+
+weights:
+  portfolio: 0.50    # Weight for portfolio size score
+  units: 0.20        # Weight for total units score
+  professional: 0.15 # Weight for professional indicators
+  contact: 0.15      # Weight for contact completeness
+
+# Thresholds for portfolio size scoring
+portfolio_thresholds:
+  tier_100: 100  # 100+ buildings = 100 points
+  tier_80: 50    # 50-99 buildings = 80 points
+  tier_60: 25    # 25-49 buildings = 60 points
+  tier_40: 10    # 10-24 buildings = 40 points
+  tier_20: 5     # 5-9 buildings = 20 points
+  # < 5 buildings = 10 points
+
+# Thresholds for unit count scoring
+unit_thresholds:
+  tier_100: 1000  # 1000+ units = 100 points
+  tier_80: 500    # 500-999 units = 80 points
+  tier_60: 250    # 250-499 units = 60 points
+  tier_40: 100    # 100-249 units = 40 points
+  tier_20: 50     # 50-99 units = 20 points
+  # < 50 units = 10 points
+
+# Keywords indicating professional management
+professional_keywords:
+  - management
+  - mgmt
+  - property
+  - realty
+  - holdings
+  - associates
+  - partners
+  - group
+  - capital
+  - investments
+
+# Score tier labels
+tier_labels:
+  A: "Top Tier"      # 80-100
+  B: "Strong"        # 60-79
+  C: "Moderate"      # 40-59
+  D: "Low Priority"  # 20-39
+  F: "Minimal"       # 0-19
+
+# Minimum score to include in output (set to 0 for all)
+min_score_threshold: 0
+
+# Minimum portfolio size to include (default filter)
+min_portfolio_size: 10
