@@ -19,6 +19,7 @@ from src.transform.normalize import normalize_building
 from src.transform.aggregate import aggregate_to_leads, Lead
 from src.score.scorer import score_leads
 from src.enrich.enricher import Enricher
+from src.enrich.ny_dos import NYDOSClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -358,6 +359,64 @@ async def enrich_batch(
     return {
         "status": "success",
         "enriched_count": len(enriched),
+    }
+
+
+@app.get("/api/dos/lookup")
+async def lookup_dos_entity(
+    name: str = Query(..., description="Entity name to look up"),
+    include_inactive: bool = Query(False, description="Include inactive entities"),
+):
+    """
+    Look up a business entity in the NY DOS registry.
+    
+    Returns entity details including registered agent info.
+    """
+    client = NYDOSClient()
+    entity = client.lookup_entity(name, include_inactive=include_inactive)
+    
+    if not entity:
+        raise HTTPException(status_code=404, detail=f"No entity found matching '{name}'")
+    
+    return {
+        "dos_id": entity.dos_id,
+        "name": entity.name,
+        "entity_type": entity.entity_type,
+        "status": entity.status,
+        "jurisdiction": entity.jurisdiction,
+        "formation_date": entity.formation_date,
+        "county": entity.county,
+        "process_name": entity.process_name,
+        "process_address": entity.process_address,
+    }
+
+
+@app.get("/api/dos/search")
+async def search_dos_entities(
+    name: str = Query(..., description="Search term"),
+    limit: int = Query(10, le=50, description="Max results"),
+):
+    """
+    Search for business entities in the NY DOS registry.
+    
+    Returns multiple matching entities.
+    """
+    client = NYDOSClient()
+    entities = client.search_entities(name, limit=limit)
+    
+    return {
+        "count": len(entities),
+        "results": [
+            {
+                "dos_id": e.dos_id,
+                "name": e.name,
+                "entity_type": e.entity_type,
+                "status": e.status,
+                "formation_date": e.formation_date,
+                "process_name": e.process_name,
+            }
+            for e in entities
+        ],
     }
 
 

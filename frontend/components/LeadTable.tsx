@@ -188,6 +188,66 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     setFilterHasMgmtCompany(null);
   };
 
+  const exportToCsv = () => {
+    // Create CSV content from filtered leads
+    const headers = [
+      'Management Company',
+      'Owner Name',
+      'Owner Type',
+      'Borough',
+      'Buildings',
+      'Total Units',
+      'Score',
+      'Phone',
+      'Email',
+      'Website',
+      'Address',
+      'Enrichment Status',
+      'Building Addresses'
+    ];
+    
+    const rows = filteredLeads.map(lead => [
+      lead.agent_name || '',
+      lead.owner_name || '',
+      lead.owner_type || '',
+      lead.boro || '',
+      lead.portfolio_size,
+      lead.total_units,
+      lead.score.toFixed(1),
+      lead.phone || '',
+      lead.email || '',
+      lead.website || '',
+      lead.address || '',
+      lead.enrichment_status,
+      lead.buildings.slice(0, 5).join('; ') + (lead.buildings.length > 5 ? '...' : '')
+    ]);
+    
+    // Escape CSV values
+    const escapeValue = (val: string | number) => {
+      const str = String(val);
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+    
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(escapeValue).join(','))
+    ].join('\n');
+    
+    // Download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `hpd_leads_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const SortIcon = ({ field }: { field: SortField }) => (
     <span className="ml-1 text-slate-600">
       {sortField === field ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
@@ -315,6 +375,18 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
             className="px-3 py-2 text-xs text-slate-500 hover:text-slate-300 transition-colors"
           >
             Clear Filters
+          </button>
+          
+          {/* Export CSV */}
+          <button
+            onClick={exportToCsv}
+            disabled={filteredLeads.length === 0}
+            className="px-3 py-2 bg-slate-800 border border-white/10 rounded-lg text-xs text-slate-300 hover:bg-slate-700 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Export CSV
           </button>
         </div>
         

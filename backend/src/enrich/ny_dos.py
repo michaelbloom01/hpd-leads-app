@@ -2,43 +2,195 @@
 NY DOS Corporation Database lookup.
 
 See docs/01-data-sources.md and docs/04-enrichment-strategy.md for details.
+
+Data source: https://data.ny.gov/Economic-Development/Active-Corporations-Beginning-1800/7tqb-y2d4
 """
 import logging
-from typing import Optional, Dict
+import re
+import time
+from typing import Optional, Dict, List
+from dataclasses import dataclass
 
 import requests
 
 logger = logging.getLogger(__name__)
 
-# NY State Open Data endpoint
+# NY State Open Data endpoint for Active Corporations
 NY_DOS_ENDPOINT = "https://data.ny.gov/resource/7tqb-y2d4.json"
+
+
+@dataclass
+class DOSEntity:
+    """NY DOS business entity record."""
+    dos_id: str
+    name: str
+    entity_type: str  # DOMESTIC LIMITED LIABILITY COMPANY, DOMESTIC BUSINESS CORPORATION, etc.
+    status: str  # ACTIVE, INACTIVE
+    jurisdiction: str
+    formation_date: Optional[str]
+    county: Optional[str]
+    process_name: Optional[str]  # Registered agent name
+    process_address: Optional[str]  # Registered agent address
 
 
 class NYDOSClient:
     """Client for NY Department of State corporation lookups."""
     
-    def __init__(self):
+    def __init__(self, app_token: Optional[str] = None):
         self.session = requests.Session()
+        self.app_token = app_token
+        if app_token:
+            self.session.headers['X-App-Token'] = app_token
+        
+        # Cache to avoid repeated lookups
+        self._cache: Dict[str, Optional[DOSEntity]] = {}
     
-    def lookup_entity(self, name: str) -> Optional[Dict]:
+    def _normalize_name(self, name: str) -> str:
+        """Normalize company name for search."""
+        # Uppercase
+        name = name.upper().strip()
+        
+        # Remove common suffixes for broader matching
+        suffixes = [
+            r'\s+LLC$', r'\s+L\.L\.C\.$', r'\s+LIMITED LIABILITY COMPANY$',
+            r'\s+INC\.?$', r'\s+INCORPORATED$', r'\s+CORP\.?$', r'\s+CORPORATION$',
+            r'\s+LP$', r'\s+L\.P\.$', r'\s+LIMITED PARTNERSHIP$',
+            r'\s+LLP$', r'\s+L\.L\.P\.$',
+            r'\s+CO\.?$', r'\s+COMPANY$',
+            r',?\s+THE$', r'^THE\s+',
+        ]
+        
+        for suffix in suffixes:
+            name = re.sub(suffix, '', name)
+        
+        return name.strip()
+    
+    def lookup_entity(self, name: str, include_inactive: bool = False) -> Optional[DOSEntity]:
         """
         Look up a business entity by name.
         
         Args:
             name: Entity name to search (LLC, Corp, etc.)
+            include_inactive: Whether to include inactive entities
             
         Returns:
-            Entity record or None
+            Best matching DOSEntity or None
         """
-        # TODO: Implement fuzzy search
-        # - Normalize name for search
-        # - Filter for active entities
-        # - Return best match
-        raise NotImplementedError("Implement in next sprint")
+        cache_key = f"{name}:{include_inactive}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+        
+        normalized = self._normalize_name(name)
+        if not normalized:
+            return None
+        
+        try:
+            # Search using SoQL (Socrata Query Language)
+            # Use LIKE for partial matching
+            params = {
+                "$where": f"upper(current_entity_name) LIKE '%{normalized}%'",
+                "$limit": 20,
+                "$order": "dos_file_date DESC"  # Most recent first
+            }
+            
+            if not include_inactive:
+                params["$where"] += " AND current_entity_status = 'ACTIVE'"
+            
+            response = self.session.get(NY_DOS_ENDPOINT, params=params, timeout=15)
+            response.raise_for_status()
+            results = response.json()
+            
+            if not results:
+                # Try exact match with original name
+                params["$where"] = f"upper(current_entity_name) = '{name.upper()}'"
+                if not include_inactive:
+                    params["$where"] += " AND current_entity_status = 'ACTIVE'"
+                
+                response = self.session.get(NY_DOS_ENDPOINT, params=params, timeout=15)
+                response.raise_for_status()
+                results = response.json()
+            
+            if not results:
+                self._cache[cache_key] = None
+                return None
+            
+            # Find best match (prefer exact match, then by recency)
+            best_match = None
+            name_upper = name.upper()
+            
+            for r in results:
+                entity = self._parse_entity(r)
+                if entity.name == name_upper:
+                    best_match = entity
+                    break
+                if best_match is None:
+                    best_match = entity
+            
+            self._cache[cache_key] = best_match
+            return best_match
+            
+        except requests.RequestException as e:
+            logger.error(f"NY DOS lookup failed for '{name}': {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error in NY DOS lookup: {e}")
+            return None
+    
+    def _parse_entity(self, record: Dict) -> DOSEntity:
+        """Parse API response into DOSEntity."""
+        # Build process address from components
+        process_addr_parts = []
+        for field in ['dos_process_addr1', 'dos_process_addr2', 'dos_process_city', 'dos_process_state', 'dos_process_zip']:
+            if record.get(field):
+                process_addr_parts.append(record[field])
+        
+        return DOSEntity(
+            dos_id=record.get('dos_id', ''),
+            name=record.get('current_entity_name', ''),
+            entity_type=record.get('current_entity_type', ''),
+            status=record.get('current_entity_status', ''),
+            jurisdiction=record.get('jurisdiction', ''),
+            formation_date=record.get('dos_file_date'),
+            county=record.get('county'),
+            process_name=record.get('dos_process_name'),
+            process_address=', '.join(process_addr_parts) if process_addr_parts else None
+        )
+    
+    def search_entities(self, name: str, limit: int = 10) -> List[DOSEntity]:
+        """
+        Search for entities matching a name (returns multiple results).
+        
+        Args:
+            name: Search term
+            limit: Max results
+            
+        Returns:
+            List of matching DOSEntity records
+        """
+        normalized = self._normalize_name(name)
+        if not normalized:
+            return []
+        
+        try:
+            params = {
+                "$where": f"upper(current_entity_name) LIKE '%{normalized}%' AND current_entity_status = 'ACTIVE'",
+                "$limit": limit,
+                "$order": "dos_file_date DESC"
+            }
+            
+            response = self.session.get(NY_DOS_ENDPOINT, params=params, timeout=15)
+            response.raise_for_status()
+            results = response.json()
+            
+            return [self._parse_entity(r) for r in results]
+            
+        except Exception as e:
+            logger.error(f"NY DOS search failed: {e}")
+            return []
     
     def get_registered_agent(self, dos_id: str) -> Optional[str]:
         """
-        Get the registered agent for an entity.
+        Get the registered agent for an entity by DOS ID.
         
         Args:
             dos_id: NY DOS entity ID
@@ -46,5 +198,20 @@ class NYDOSClient:
         Returns:
             Registered agent name or None
         """
-        # TODO: Implement registered agent lookup
-        raise NotImplementedError("Implement in next sprint")
+        try:
+            params = {
+                "$where": f"dos_id = '{dos_id}'",
+                "$limit": 1
+            }
+            
+            response = self.session.get(NY_DOS_ENDPOINT, params=params, timeout=15)
+            response.raise_for_status()
+            results = response.json()
+            
+            if results:
+                return results[0].get('dos_process_name')
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to get registered agent for {dos_id}: {e}")
+            return None

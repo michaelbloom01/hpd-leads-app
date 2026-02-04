@@ -9,6 +9,7 @@ from typing import List, Optional
 
 from src.transform.aggregate import Lead
 from src.enrich.web_crawl import WebCrawler, WebEnrichmentResult
+from src.enrich.ny_dos import NYDOSClient, DOSEntity
 
 logger = logging.getLogger(__name__)
 
@@ -16,15 +17,16 @@ logger = logging.getLogger(__name__)
 class Enricher:
     """Orchestrates multi-tier enrichment for leads."""
     
-    def __init__(self, use_cache: bool = True):
+    def __init__(self, use_cache: bool = True, ny_dos_token: Optional[str] = None):
         """
         Initialize enrichment clients.
         
         Args:
             use_cache: Whether to use caching for enrichment results
+            ny_dos_token: Optional app token for NY DOS API
         """
         self.web_crawler = WebCrawler(use_cache=use_cache)
-        # TODO: Initialize NY DOS client
+        self.ny_dos = NYDOSClient(app_token=ny_dos_token)
         # TODO: Initialize paid API clients (Apollo, etc.)
     
     def enrich_lead(self, lead: Lead, tiers: Optional[List[str]] = None) -> Lead:
@@ -44,7 +46,7 @@ class Enricher:
             Enriched lead with updated fields
         """
         if tiers is None:
-            tiers = ["web_crawl"]  # Default to web_crawl for now
+            tiers = ["ny_dos", "web_crawl"]  # NY DOS first (fast), then web crawl
         
         logger.info(f"Enriching lead: {lead.agent_name or lead.owner_name}")
         
@@ -59,10 +61,15 @@ class Enricher:
                 if result.success:
                     enrichment_sources.append("web_crawl")
         
-        # Tier 2: NY DOS (not yet implemented)
+        # Tier 2: NY DOS Corporation Registry
         if "ny_dos" in tiers:
-            logger.debug("NY DOS enrichment not yet implemented")
-            # TODO: Implement
+            # Look up owner/agent in NY DOS registry
+            name_to_lookup = lead.owner_name or lead.agent_name
+            if name_to_lookup and self._is_corporation(name_to_lookup):
+                dos_result = self.ny_dos.lookup_entity(name_to_lookup)
+                if dos_result:
+                    lead = self._apply_dos_result(lead, dos_result)
+                    enrichment_sources.append("ny_dos")
         
         # Tier 3: Apollo (not yet implemented)
         if "apollo" in tiers:
@@ -113,6 +120,42 @@ class Enricher:
         
         if result.owner_principal and not lead.owner_principal:
             lead.owner_principal = result.owner_principal
+        
+        return lead
+    
+    def _is_corporation(self, name: str) -> bool:
+        """Check if a name looks like a corporation/LLC."""
+        corp_indicators = ['LLC', 'L.L.C.', 'INC', 'CORP', 'LP', 'L.P.', 'LLP', 'COMPANY', 'CO.', 'PARTNERS']
+        name_upper = name.upper()
+        return any(indicator in name_upper for indicator in corp_indicators)
+    
+    def _apply_dos_result(self, lead: Lead, dos: DOSEntity) -> Lead:
+        """Apply NY DOS lookup results to lead."""
+        logger.info(f"Found DOS record: {dos.name} ({dos.entity_type}, {dos.status})")
+        
+        # Add registered agent info
+        if dos.process_name and not lead.owner_principal:
+            lead.owner_principal = dos.process_name
+        
+        # Store DOS metadata in business_summary if empty
+        if not lead.business_summary:
+            parts = []
+            if dos.entity_type:
+                parts.append(f"Entity: {dos.entity_type}")
+            if dos.status:
+                parts.append(f"Status: {dos.status}")
+            if dos.formation_date:
+                parts.append(f"Formed: {dos.formation_date[:10]}")
+            if dos.county:
+                parts.append(f"County: {dos.county}")
+            if dos.process_name:
+                parts.append(f"Registered Agent: {dos.process_name}")
+            if parts:
+                lead.business_summary = " | ".join(parts)
+        
+        # Add tag
+        if "ny_dos_verified" not in lead.tags:
+            lead.tags.append("ny_dos_verified")
         
         return lead
     
