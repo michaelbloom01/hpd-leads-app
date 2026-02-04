@@ -103,7 +103,124 @@ def aggregate_to_leads(buildings: List[Building]) -> List[Lead]:
     # Sort by portfolio size descending
     leads.sort(key=lambda l: l.portfolio_size, reverse=True)
     
+    # Deduplicate leads with same business address
+    leads = deduplicate_leads(leads)
+    
     return leads
+
+
+def deduplicate_leads(leads: List[Lead]) -> List[Lead]:
+    """
+    Deduplicate leads that likely represent the same business.
+    
+    Deduplication criteria:
+    1. Same business address (exact match, ignoring case)
+    2. One lead's name is contained in another's (e.g., "ABC LLC" and "ABC MANAGEMENT LLC")
+    
+    When merging, keep the lead with larger portfolio and combine buildings.
+    
+    Args:
+        leads: List of leads to deduplicate
+        
+    Returns:
+        Deduplicated list of leads
+    """
+    if not leads:
+        return leads
+    
+    # Index leads by normalized address
+    address_index: Dict[str, List[int]] = defaultdict(list)
+    for i, lead in enumerate(leads):
+        if lead.address:
+            # Normalize address for comparison
+            normalized_addr = lead.address.upper().strip()
+            # Remove common variations
+            normalized_addr = normalized_addr.replace(".", "").replace(",", " ").replace("  ", " ")
+            address_index[normalized_addr].append(i)
+    
+    # Find leads to merge (same address)
+    merged_indices: set = set()
+    merge_targets: Dict[int, int] = {}  # index -> target index to merge into
+    
+    for addr, indices in address_index.items():
+        if len(indices) > 1:
+            # Multiple leads at same address - merge into the one with largest portfolio
+            sorted_indices = sorted(indices, key=lambda i: leads[i].portfolio_size, reverse=True)
+            target_idx = sorted_indices[0]
+            for idx in sorted_indices[1:]:
+                merge_targets[idx] = target_idx
+                merged_indices.add(idx)
+    
+    # Also check for name containment (e.g., "ABC" and "ABC MANAGEMENT")
+    name_groups: Dict[str, List[int]] = defaultdict(list)
+    for i, lead in enumerate(leads):
+        if i in merged_indices:
+            continue
+        name = (lead.agent_name or lead.owner_name).upper().strip()
+        # Use first 10 significant chars as key
+        name_key = ''.join(c for c in name if c.isalnum())[:10]
+        if len(name_key) >= 5:
+            name_groups[name_key].append(i)
+    
+    for name_key, indices in name_groups.items():
+        if len(indices) > 1:
+            # Check if names are similar enough to merge
+            sorted_indices = sorted(indices, key=lambda i: leads[i].portfolio_size, reverse=True)
+            target_idx = sorted_indices[0]
+            target_name = (leads[target_idx].agent_name or leads[target_idx].owner_name).upper()
+            
+            for idx in sorted_indices[1:]:
+                if idx in merged_indices:
+                    continue
+                other_name = (leads[idx].agent_name or leads[idx].owner_name).upper()
+                # Merge if one name contains the other (minus common suffixes)
+                target_base = target_name.replace("LLC", "").replace("INC", "").replace("CORP", "").strip()
+                other_base = other_name.replace("LLC", "").replace("INC", "").replace("CORP", "").strip()
+                if target_base in other_base or other_base in target_base:
+                    merge_targets[idx] = target_idx
+                    merged_indices.add(idx)
+    
+    # Perform merges
+    for source_idx, target_idx in merge_targets.items():
+        source = leads[source_idx]
+        target = leads[target_idx]
+        
+        # Combine buildings (avoiding duplicates)
+        existing_addresses = set(target.buildings)
+        for addr in source.buildings:
+            if addr not in existing_addresses:
+                target.buildings.append(addr)
+                existing_addresses.add(addr)
+        
+        existing_ids = set(target.building_ids)
+        for bid in source.building_ids:
+            if bid not in existing_ids:
+                target.building_ids.append(bid)
+                existing_ids.add(bid)
+        
+        # Update portfolio size
+        target.portfolio_size = len(target.buildings)
+        
+        # Merge boroughs
+        for boro in source.boros:
+            if boro not in target.boros:
+                target.boros.append(boro)
+        
+        # Keep better contact info
+        if not target.phone and source.phone:
+            target.phone = source.phone
+        if not target.email and source.email:
+            target.email = source.email
+        if not target.website and source.website:
+            target.website = source.website
+    
+    # Return non-merged leads
+    result = [lead for i, lead in enumerate(leads) if i not in merged_indices]
+    
+    # Re-sort by portfolio size
+    result.sort(key=lambda l: l.portfolio_size, reverse=True)
+    
+    return result
 
 
 def _create_lead_from_buildings(grouping_key: str, buildings: List[Building]) -> Lead:
