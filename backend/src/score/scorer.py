@@ -56,14 +56,19 @@ class Scorer:
         units_score = self._score_units(lead.total_units)
         professional_score = self._score_professional(lead)
         contact_score = self._score_contact(lead)
+        concentration_score = self._score_concentration(lead)
         
-        # Apply weights
+        # Apply weights (concentration is a bonus)
         total_score = (
             self.weights.get("portfolio", 0.5) * portfolio_score +
             self.weights.get("units", 0.2) * units_score +
             self.weights.get("professional", 0.15) * professional_score +
             self.weights.get("contact", 0.15) * contact_score
         )
+        
+        # Add concentration bonus (up to 10 points for focused operators)
+        concentration_bonus = self.weights.get("concentration_bonus", 0.1) * concentration_score
+        total_score = min(total_score + concentration_bonus, 100)
         
         # Store breakdown
         lead.score = round(total_score, 1)
@@ -72,6 +77,7 @@ class Scorer:
             "units": units_score,
             "professional": professional_score,
             "contact": contact_score,
+            "concentration": concentration_score,
         }
         
         # Assign tier
@@ -147,6 +153,33 @@ class Scorer:
             score += 10
         return min(score, 100)
     
+    def _score_concentration(self, lead: Lead) -> float:
+        """
+        Score based on geographic concentration.
+        
+        Operators focused in one borough may be easier acquisition targets
+        (less complex operations to integrate).
+        """
+        if not lead.boros or len(lead.boros) == 0:
+            return 50  # Neutral
+        
+        num_boroughs = len(lead.boros)
+        portfolio = lead.portfolio_size
+        
+        if num_boroughs == 1:
+            # Single borough - high concentration
+            return 100
+        elif num_boroughs == 2:
+            # Two boroughs - good concentration
+            return 80
+        elif num_boroughs == 3:
+            return 60
+        elif num_boroughs == 4:
+            return 40
+        else:
+            # All 5 boroughs - spread out
+            return 20
+    
     def _generate_tags(self, lead: Lead) -> List[str]:
         """Generate tags for a lead."""
         tags = []
@@ -173,9 +206,15 @@ class Scorer:
         if lead.phone:
             tags.append("has_phone")
         
-        # Borough tag
+        # Borough tags
         if lead.boro:
             tags.append(lead.boro.lower().replace(" ", "_"))
+        
+        # Geographic concentration tag
+        if lead.boros and len(lead.boros) == 1:
+            tags.append("single_borough_focus")
+        elif lead.boros and len(lead.boros) <= 2:
+            tags.append("concentrated")
         
         # Tier tag
         tier = self._get_tier(lead.score)

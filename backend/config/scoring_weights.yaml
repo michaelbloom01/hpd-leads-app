@@ -6,6 +6,7 @@ weights:
   units: 0.20        # Weight for total units score
   professional: 0.15 # Weight for professional indicators
   contact: 0.15      # Weight for contact completeness
+  concentration_bonus: 0.10  # Bonus for geographically focused operators (0-10 points)
 
 # Thresholds for portfolio size scoring
 portfolio_thresholds:
