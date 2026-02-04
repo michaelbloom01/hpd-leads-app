@@ -65,8 +65,20 @@ class LeadsDatabase:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 
+                -- Outreach attempts log
+                CREATE TABLE IF NOT EXISTS outreach_attempts (
+                    id TEXT PRIMARY KEY,
+                    lead_id TEXT NOT NULL,
+                    method TEXT NOT NULL,
+                    outcome TEXT NOT NULL,
+                    notes TEXT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (lead_id) REFERENCES lead_user_data(lead_id)
+                );
+                
                 -- Index for faster lookups
                 CREATE INDEX IF NOT EXISTS idx_lead_status ON lead_user_data(outreach_status);
+                CREATE INDEX IF NOT EXISTS idx_outreach_lead ON outreach_attempts(lead_id);
             """)
             conn.commit()
             logger.info(f"Database initialized at {self.db_path}")
@@ -237,6 +249,53 @@ class LeadsDatabase:
                 "total_enriched": enriched_count,
                 "by_status": status_counts,
             }
+    
+    # === Outreach Attempts ===
+    
+    def add_outreach_attempt(self, lead_id: str, attempt: Dict):
+        """Add an outreach attempt to the log."""
+        with self._get_connection() as conn:
+            conn.execute(
+                """INSERT INTO outreach_attempts (id, lead_id, method, outcome, notes, timestamp)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (attempt['id'], lead_id, attempt['method'], attempt['outcome'], 
+                 attempt.get('notes'), attempt.get('timestamp', datetime.now().isoformat()))
+            )
+            conn.commit()
+    
+    def get_outreach_attempts(self, lead_id: str) -> List[Dict]:
+        """Get all outreach attempts for a lead, most recent first."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """SELECT id, method, outcome, notes, timestamp 
+                   FROM outreach_attempts 
+                   WHERE lead_id = ? 
+                   ORDER BY timestamp DESC""",
+                (lead_id,)
+            ).fetchall()
+            return [dict(row) for row in rows]
+    
+    def get_all_outreach_attempts(self) -> Dict[str, List[Dict]]:
+        """Get all outreach attempts grouped by lead_id."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """SELECT lead_id, id, method, outcome, notes, timestamp 
+                   FROM outreach_attempts 
+                   ORDER BY timestamp DESC"""
+            ).fetchall()
+            result = {}
+            for row in rows:
+                lead_id = row['lead_id']
+                if lead_id not in result:
+                    result[lead_id] = []
+                result[lead_id].append({
+                    'id': row['id'],
+                    'method': row['method'],
+                    'outcome': row['outcome'],
+                    'notes': row['notes'],
+                    'timestamp': row['timestamp'],
+                })
+            return result
 
 
 # Singleton instance

@@ -641,3 +641,157 @@ class WebCrawler:
         """Make a request with rate limiting."""
         time.sleep(self.delay + random.uniform(0.1, 0.5))
         return self.session.get(url, timeout=10)
+    
+    def deep_scrape(self, url: str, company_name: str = "") -> Dict:
+        """
+        Deep scrape a website for comprehensive company information.
+        
+        Args:
+            url: Website URL
+            company_name: Company name for context
+            
+        Returns:
+            Dict with owner_names, year_established, service_areas, description, phones, emails, social_links
+        """
+        result = {
+            "owner_names": [],
+            "year_established": None,
+            "service_areas": [],
+            "description": None,
+            "phones": [],
+            "emails": [],
+            "social_links": {},
+        }
+        
+        # Pages to scrape
+        pages_to_check = [
+            url,  # Homepage
+            urljoin(url, "/about"),
+            urljoin(url, "/about-us"),
+            urljoin(url, "/contact"),
+            urljoin(url, "/contact-us"),
+            urljoin(url, "/team"),
+            urljoin(url, "/our-team"),
+            urljoin(url, "/leadership"),
+        ]
+        
+        all_text = ""
+        social_platforms = {
+            "linkedin": ["linkedin.com"],
+            "facebook": ["facebook.com"],
+            "twitter": ["twitter.com", "x.com"],
+            "instagram": ["instagram.com"],
+        }
+        
+        for page_url in pages_to_check:
+            try:
+                content = self._fetch_page(page_url)
+                if not content:
+                    continue
+                
+                soup = BeautifulSoup(content, "lxml")
+                
+                # Remove noise
+                for element in soup(["script", "style", "noscript", "nav", "footer"]):
+                    element.decompose()
+                
+                page_text = soup.get_text(separator=" ", strip=True)
+                all_text += " " + page_text
+                
+                # Extract phones from tel: links
+                for link in soup.find_all("a", href=True):
+                    href = link.get("href", "")
+                    if href.startswith("tel:"):
+                        phone = href.replace("tel:", "").strip()
+                        normalized = self._normalize_phone(phone)
+                        if normalized and normalized not in result["phones"]:
+                            result["phones"].append(normalized)
+                
+                # Extract emails from mailto: links
+                for link in soup.find_all("a", href=True):
+                    href = link.get("href", "")
+                    if href.startswith("mailto:"):
+                        email = href.replace("mailto:", "").split("?")[0].strip().lower()
+                        if self._is_valid_email(email) and email not in result["emails"]:
+                            result["emails"].append(email)
+                
+                # Extract social links
+                for link in soup.find_all("a", href=True):
+                    href = link.get("href", "").lower()
+                    for platform, domains in social_platforms.items():
+                        if platform not in result["social_links"]:
+                            for domain in domains:
+                                if domain in href:
+                                    result["social_links"][platform] = link.get("href")
+                                    break
+                
+                # Extract emails from page text
+                email_matches = self.EMAIL_PATTERN.findall(page_text)
+                for email in email_matches:
+                    email = email.lower()
+                    if self._is_valid_email(email) and email not in result["emails"]:
+                        result["emails"].append(email)
+                
+                # Extract phones from page text
+                phone_matches = self.PHONE_PATTERN.findall(page_text)
+                for match in phone_matches:
+                    normalized = self._normalize_phone("".join(match))
+                    if normalized and normalized not in result["phones"]:
+                        result["phones"].append(normalized)
+                
+            except Exception as e:
+                logger.debug(f"Failed to scrape {page_url}: {e}")
+                continue
+        
+        # Extract year established
+        year_patterns = [
+            r"(?:established|founded|since|serving since|in business since)\s*(?:in\s*)?(\d{4})",
+            r"(\d{4})\s*(?:-\s*(?:\d{4}|present))",  # "2005 - present" or "2005 - 2024"
+        ]
+        for pattern in year_patterns:
+            match = re.search(pattern, all_text.lower())
+            if match:
+                year = int(match.group(1))
+                if 1900 < year < 2030:  # Sanity check
+                    result["year_established"] = str(year)
+                    break
+        
+        # Extract owner/principal names
+        owner_patterns = [
+            r"(?:owner|principal|founder|president|ceo|managing director|managing partner)[:\s,]+([A-Z][a-z]+(?:\s+[A-Z]\.?)?\s+[A-Z][a-z]+)",
+            r"([A-Z][a-z]+(?:\s+[A-Z]\.?)?\s+[A-Z][a-z]+)[,\s]+(?:owner|principal|founder|president|ceo)",
+        ]
+        for pattern in owner_patterns:
+            matches = re.findall(pattern, all_text, re.IGNORECASE)
+            for name in matches:
+                name = name.strip()
+                if name and name not in result["owner_names"] and len(name.split()) >= 2:
+                    result["owner_names"].append(name)
+                if len(result["owner_names"]) >= 3:
+                    break
+        
+        # Extract service areas (look for NYC borough mentions)
+        borough_keywords = ["manhattan", "brooklyn", "queens", "bronx", "staten island", "new york city", "nyc"]
+        for borough in borough_keywords:
+            if borough in all_text.lower():
+                proper_name = borough.title() if borough != "nyc" else "NYC"
+                if proper_name not in result["service_areas"]:
+                    result["service_areas"].append(proper_name)
+        
+        # Extract description from meta or first substantial text
+        try:
+            homepage = self._fetch_page(url)
+            if homepage:
+                soup = BeautifulSoup(homepage, "lxml")
+                meta_desc = soup.find("meta", attrs={"name": "description"})
+                if meta_desc:
+                    result["description"] = meta_desc.get("content", "").strip()[:500]
+                
+                if not result["description"] and TRAFILATURA_AVAILABLE:
+                    text = trafilatura.extract(str(soup))
+                    if text:
+                        result["description"] = text[:500].strip()
+        except Exception as e:
+            logger.debug(f"Failed to extract description: {e}")
+        
+        return result

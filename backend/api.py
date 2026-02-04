@@ -489,6 +489,147 @@ async def search_dos_entities(
     }
 
 
+class OutreachAttemptRequest(BaseModel):
+    """Request to log an outreach attempt."""
+    method: str  # phone, email, linkedin, in_person, other
+    outcome: str  # no_answer, left_voicemail, spoke_with_contact, sent_email, meeting_scheduled, not_interested, other
+    notes: Optional[str] = None
+
+
+@app.post("/api/leads/{lead_id}/research")
+async def research_lead(lead_id: str):
+    """
+    Deep research a lead by scraping their website.
+    
+    Extracts owner names, year established, service areas, contact info, etc.
+    """
+    global _leads_cache
+    
+    # Find the lead
+    lead = None
+    for l in _leads_cache:
+        if l.lead_id == lead_id:
+            lead = l
+            break
+    
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    # Import the deep research function
+    from src.enrich.web_crawl import WebCrawler
+    
+    crawler = WebCrawler()
+    company_name = lead.agent_name or lead.owner_name
+    
+    # First, try to find their website if we don't have it
+    if not lead.website:
+        website = crawler.find_website(company_name + " property management NYC")
+        if website:
+            lead.website = website
+            # Update the lead in cache
+            for i, l in enumerate(_leads_cache):
+                if l.lead_id == lead_id:
+                    _leads_cache[i] = lead
+                    break
+    
+    # If we have a website, do deep scrape
+    research_result = {
+        "lead_id": lead_id,
+        "owner_names": None,
+        "year_established": None,
+        "service_areas": None,
+        "description": None,
+        "phones": None,
+        "emails": None,
+        "social_links": None,
+        "scraped_at": datetime.now().isoformat(),
+    }
+    
+    if lead.website:
+        try:
+            deep_data = crawler.deep_scrape(lead.website, company_name)
+            research_result.update({
+                "owner_names": deep_data.get("owner_names"),
+                "year_established": deep_data.get("year_established"),
+                "service_areas": deep_data.get("service_areas"),
+                "description": deep_data.get("description"),
+                "phones": deep_data.get("phones"),
+                "emails": deep_data.get("emails"),
+                "social_links": deep_data.get("social_links"),
+            })
+        except Exception as e:
+            logger.error(f"Deep scrape failed for {lead.website}: {e}")
+    
+    # Also try NY DOS lookup for additional info
+    try:
+        dos_client = NYDOSClient()
+        dos_entity = dos_client.lookup_entity(company_name)
+        if dos_entity:
+            if dos_entity.formation_date and not research_result["year_established"]:
+                research_result["year_established"] = dos_entity.formation_date[:4]  # Just the year
+            if dos_entity.process_name and not research_result["owner_names"]:
+                # Registered agent might be the owner
+                research_result["owner_names"] = [dos_entity.process_name]
+    except Exception as e:
+        logger.error(f"DOS lookup failed: {e}")
+    
+    return research_result
+
+
+@app.post("/api/leads/{lead_id}/outreach")
+async def add_outreach_attempt(lead_id: str, request: OutreachAttemptRequest):
+    """
+    Log an outreach attempt for a lead.
+    """
+    import uuid
+    
+    # Validate lead exists
+    lead_exists = any(l.lead_id == lead_id for l in _leads_cache)
+    if not lead_exists:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    valid_methods = {"phone", "email", "linkedin", "in_person", "other"}
+    valid_outcomes = {"no_answer", "left_voicemail", "spoke_with_contact", "sent_email", "meeting_scheduled", "not_interested", "other"}
+    
+    if request.method not in valid_methods:
+        raise HTTPException(status_code=400, detail=f"Invalid method. Must be one of: {', '.join(valid_methods)}")
+    if request.outcome not in valid_outcomes:
+        raise HTTPException(status_code=400, detail=f"Invalid outcome. Must be one of: {', '.join(valid_outcomes)}")
+    
+    attempt = {
+        "id": str(uuid.uuid4()),
+        "method": request.method,
+        "outcome": request.outcome,
+        "notes": request.notes,
+        "timestamp": datetime.now().isoformat(),
+    }
+    
+    # Save to database
+    db = get_database()
+    db.add_outreach_attempt(lead_id, attempt)
+    
+    return {
+        "status": "success",
+        "attempt": attempt,
+    }
+
+
+@app.get("/api/leads/{lead_id}/outreach")
+async def get_outreach_attempts(lead_id: str):
+    """
+    Get all outreach attempts for a lead.
+    """
+    # Validate lead exists
+    lead_exists = any(l.lead_id == lead_id for l in _leads_cache)
+    if not lead_exists:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    db = get_database()
+    attempts = db.get_outreach_attempts(lead_id)
+    
+    return attempts
+
+
 def _lead_to_response(lead: Lead) -> LeadResponse:
     """Convert Lead dataclass to API response."""
     return LeadResponse(

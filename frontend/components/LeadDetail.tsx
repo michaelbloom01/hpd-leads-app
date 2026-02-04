@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ApiLead, enrichLeads, updateLead } from '../services/api';
+import { ApiLead, enrichLeads, updateLead, researchLead, addOutreachAttempt, CompanyResearch, OutreachAttempt } from '../services/api';
 
 interface Props {
   lead: ApiLead;
@@ -14,12 +14,20 @@ const OUTREACH_STATUSES = [
   { value: 'closed', label: 'Closed', color: 'bg-purple-600 text-purple-100' },
 ];
 
+const OUTREACH_METHODS = ['phone', 'email', 'linkedin', 'in_person', 'other'];
+const OUTREACH_OUTCOMES = ['no_answer', 'left_voicemail', 'spoke_with_contact', 'sent_email', 'meeting_scheduled', 'not_interested', 'other'];
+
 const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
   const [isEnriching, setIsEnriching] = useState(false);
+  const [isResearching, setIsResearching] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [enrichedLead, setEnrichedLead] = useState(lead);
   const [notes, setNotes] = useState(lead.notes || '');
   const [outreachStatus, setOutreachStatus] = useState(lead.outreach_status || 'new');
+  const [companyResearch, setCompanyResearch] = useState<CompanyResearch | null>(null);
+  const [outreachAttempts, setOutreachAttempts] = useState<OutreachAttempt[]>(lead.outreach_attempts || []);
+  const [showAddOutreach, setShowAddOutreach] = useState(false);
+  const [newOutreach, setNewOutreach] = useState({ method: 'phone', outcome: 'no_answer', notes: '' });
 
   const handleEnrich = async () => {
     setIsEnriching(true);
@@ -63,6 +71,46 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleResearch = async () => {
+    setIsResearching(true);
+    try {
+      const result = await researchLead(lead.lead_id);
+      setCompanyResearch(result);
+      // Update lead with any new contact info found
+      if (result.phones?.length || result.emails?.length) {
+        setEnrichedLead({
+          ...enrichedLead,
+          phone: result.phones?.[0] || enrichedLead.phone,
+          email: result.emails?.[0] || enrichedLead.email,
+        });
+      }
+    } catch (err) {
+      console.error('Research failed:', err);
+    } finally {
+      setIsResearching(false);
+    }
+  };
+
+  const handleAddOutreachAttempt = async () => {
+    if (!newOutreach.method || !newOutreach.outcome) return;
+    setIsSaving(true);
+    try {
+      const result = await addOutreachAttempt(lead.lead_id, newOutreach);
+      setOutreachAttempts([result.attempt, ...outreachAttempts]);
+      setShowAddOutreach(false);
+      setNewOutreach({ method: 'phone', outcome: 'no_answer', notes: '' });
+    } catch (err) {
+      console.error('Failed to add outreach attempt:', err);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const openWebsite = () => {
+    const url = enrichedLead.website || `https://www.google.com/search?q=${encodeURIComponent((enrichedLead.agent_name || enrichedLead.owner_name) + ' property management NYC')}`;
+    window.open(url, '_blank');
   };
 
   return (
@@ -115,18 +163,97 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
             </div>
           </div>
 
+          {/* Quick Actions */}
+          <div className="flex gap-2">
+            <button
+              onClick={openWebsite}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-purple-600 text-white text-sm font-medium rounded-xl hover:bg-purple-500 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+              </svg>
+              {enrichedLead.website ? 'Open Website' : 'Search Google'}
+            </button>
+            <button
+              onClick={handleResearch}
+              disabled={isResearching}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 text-white text-sm font-medium rounded-xl hover:bg-emerald-500 disabled:opacity-50 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+              </svg>
+              {isResearching ? 'Researching...' : 'Deep Research'}
+            </button>
+            <button
+              onClick={handleEnrich}
+              disabled={isEnriching}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-500 disabled:opacity-50 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+              </svg>
+              {isEnriching ? 'Enriching...' : 'Enrich'}
+            </button>
+          </div>
+
+          {/* Company Research Results */}
+          {companyResearch && (
+            <div className="bg-emerald-900/20 border border-emerald-500/30 rounded-xl p-5">
+              <h3 className="text-sm font-bold text-emerald-400 uppercase tracking-wider mb-4">Company Research</h3>
+              <div className="space-y-3 text-sm">
+                {companyResearch.owner_names && companyResearch.owner_names.length > 0 && (
+                  <div>
+                    <span className="text-slate-500">Owner/Principal:</span>
+                    <span className="text-white ml-2">{companyResearch.owner_names.join(', ')}</span>
+                  </div>
+                )}
+                {companyResearch.year_established && (
+                  <div>
+                    <span className="text-slate-500">Established:</span>
+                    <span className="text-white ml-2">{companyResearch.year_established}</span>
+                  </div>
+                )}
+                {companyResearch.service_areas && companyResearch.service_areas.length > 0 && (
+                  <div>
+                    <span className="text-slate-500">Service Areas:</span>
+                    <span className="text-white ml-2">{companyResearch.service_areas.join(', ')}</span>
+                  </div>
+                )}
+                {companyResearch.description && (
+                  <div>
+                    <span className="text-slate-500">About:</span>
+                    <p className="text-slate-300 mt-1">{companyResearch.description}</p>
+                  </div>
+                )}
+                {companyResearch.phones && companyResearch.phones.length > 0 && (
+                  <div>
+                    <span className="text-slate-500">Phones Found:</span>
+                    <span className="text-emerald-400 ml-2">{companyResearch.phones.join(', ')}</span>
+                  </div>
+                )}
+                {companyResearch.emails && companyResearch.emails.length > 0 && (
+                  <div>
+                    <span className="text-slate-500">Emails Found:</span>
+                    <span className="text-blue-400 ml-2">{companyResearch.emails.join(', ')}</span>
+                  </div>
+                )}
+                {companyResearch.social_links && Object.keys(companyResearch.social_links).length > 0 && (
+                  <div className="flex gap-2 mt-2">
+                    {Object.entries(companyResearch.social_links).map(([platform, url]) => (
+                      <a key={platform} href={url} target="_blank" rel="noopener noreferrer" 
+                         className="px-2 py-1 bg-slate-800 text-slate-400 text-xs rounded hover:text-white">
+                        {platform}
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Contact Information */}
           <div className="bg-slate-800/30 rounded-xl p-5">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider">Contact Information</h3>
-              <button
-                onClick={handleEnrich}
-                disabled={isEnriching}
-                className="px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-500 disabled:opacity-50 transition-colors"
-              >
-                {isEnriching ? 'Enriching...' : 'Enrich'}
-              </button>
-            </div>
+            <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-4">Contact Information</h3>
             
             <div className="space-y-3">
               <div className="flex items-center gap-3">
@@ -201,6 +328,100 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Outreach Log */}
+          <div className="bg-slate-800/30 rounded-xl p-5">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider">Outreach Log</h3>
+              <button
+                onClick={() => setShowAddOutreach(!showAddOutreach)}
+                className="px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-500 transition-colors"
+              >
+                + Log Attempt
+              </button>
+            </div>
+
+            {showAddOutreach && (
+              <div className="bg-slate-900/50 rounded-lg p-4 mb-4 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-slate-500 block mb-1">Method</label>
+                    <select
+                      value={newOutreach.method}
+                      onChange={(e) => setNewOutreach({ ...newOutreach, method: e.target.value })}
+                      className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded-lg text-sm text-slate-200"
+                    >
+                      {OUTREACH_METHODS.map((m) => (
+                        <option key={m} value={m}>{m.replace('_', ' ')}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500 block mb-1">Outcome</label>
+                    <select
+                      value={newOutreach.outcome}
+                      onChange={(e) => setNewOutreach({ ...newOutreach, outcome: e.target.value })}
+                      className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded-lg text-sm text-slate-200"
+                    >
+                      {OUTREACH_OUTCOMES.map((o) => (
+                        <option key={o} value={o}>{o.replace(/_/g, ' ')}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1">Notes</label>
+                  <input
+                    type="text"
+                    value={newOutreach.notes}
+                    onChange={(e) => setNewOutreach({ ...newOutreach, notes: e.target.value })}
+                    placeholder="Spoke with John, will follow up next week..."
+                    className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded-lg text-sm text-slate-200 placeholder-slate-600"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleAddOutreachAttempt}
+                    disabled={isSaving}
+                    className="px-4 py-2 bg-emerald-600 text-white text-xs font-medium rounded-lg hover:bg-emerald-500 disabled:opacity-50"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setShowAddOutreach(false)}
+                    className="px-4 py-2 bg-slate-700 text-slate-300 text-xs font-medium rounded-lg hover:bg-slate-600"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {outreachAttempts.length > 0 ? (
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {outreachAttempts.map((attempt, i) => (
+                  <div key={i} className="flex items-start gap-3 p-3 bg-slate-900/50 rounded-lg text-sm">
+                    <div className={`px-2 py-0.5 rounded text-xs font-medium ${
+                      attempt.method === 'phone' ? 'bg-emerald-900/50 text-emerald-400' :
+                      attempt.method === 'email' ? 'bg-blue-900/50 text-blue-400' :
+                      'bg-slate-800 text-slate-400'
+                    }`}>
+                      {attempt.method}
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-slate-300">{attempt.outcome.replace(/_/g, ' ')}</div>
+                      {attempt.notes && <div className="text-slate-500 text-xs mt-1">{attempt.notes}</div>}
+                    </div>
+                    <div className="text-slate-600 text-xs">
+                      {new Date(attempt.timestamp).toLocaleDateString()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-slate-600 text-sm">No outreach attempts logged yet.</p>
+            )}
           </div>
 
           {/* Notes */}

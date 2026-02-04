@@ -28,6 +28,7 @@ export interface ApiLead {
   enrichment_status: string;
   outreach_status: string;
   notes: string | null;
+  outreach_attempts?: OutreachAttempt[];
 }
 
 export interface PipelineStatus {
@@ -44,6 +45,26 @@ export interface EnrichmentResult {
   phone: string | null;
   email: string | null;
   status: string;
+}
+
+export interface CompanyResearch {
+  lead_id: string;
+  owner_names: string[] | null;
+  year_established: string | null;
+  service_areas: string[] | null;
+  description: string | null;
+  phones: string[] | null;
+  emails: string[] | null;
+  social_links: Record<string, string> | null;
+  scraped_at: string;
+}
+
+export interface OutreachAttempt {
+  id: string;
+  method: string;
+  outcome: string;
+  notes: string | null;
+  timestamp: string;
 }
 
 /**
@@ -226,6 +247,54 @@ export async function healthCheck(): Promise<{ status: string; service: string }
   
   if (!response.ok) {
     throw new Error(`API health check failed: ${response.statusText}`);
+  }
+  
+  return response.json();
+}
+
+/**
+ * Deep research a lead - scrapes company website for detailed info
+ */
+export async function researchLead(leadId: string): Promise<CompanyResearch> {
+  const response = await fetch(`${API_BASE_URL}/api/leads/${leadId}/research`, {
+    method: 'POST',
+  });
+  
+  if (!response.ok) {
+    throw new Error(`Failed to research lead: ${response.statusText}`);
+  }
+  
+  return response.json();
+}
+
+/**
+ * Add an outreach attempt to a lead
+ */
+export async function addOutreachAttempt(
+  leadId: string,
+  attempt: { method: string; outcome: string; notes?: string }
+): Promise<{ status: string; attempt: OutreachAttempt }> {
+  const response = await fetch(`${API_BASE_URL}/api/leads/${leadId}/outreach`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(attempt),
+  });
+  
+  if (!response.ok) {
+    throw new Error(`Failed to add outreach attempt: ${response.statusText}`);
+  }
+  
+  return response.json();
+}
+
+/**
+ * Get outreach attempts for a lead
+ */
+export async function getOutreachAttempts(leadId: string): Promise<OutreachAttempt[]> {
+  const response = await fetch(`${API_BASE_URL}/api/leads/${leadId}/outreach`);
+  
+  if (!response.ok) {
+    throw new Error(`Failed to get outreach attempts: ${response.statusText}`);
   }
   
   return response.json();
