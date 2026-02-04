@@ -7,10 +7,11 @@ Exposes REST endpoints for the frontend to:
 - Get pipeline status
 """
 import logging
+import threading
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict
 
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -45,6 +46,19 @@ app.add_middleware(
 # Global state - loaded from SQLite on startup
 _leads_cache: List[Lead] = []
 _last_refresh: Optional[datetime] = None
+
+# Background enrichment state
+_enrichment_state: Dict = {
+    "running": False,
+    "progress": 0,
+    "total": 0,
+    "completed": 0,
+    "failed": 0,
+    "current_lead": None,
+    "started_at": None,
+    "finished_at": None,
+}
+_enrichment_lock = threading.Lock()
 
 
 @app.on_event("startup")
@@ -427,45 +441,167 @@ async def enrich_leads(request: EnrichmentRequest):
     }
 
 
+def _run_background_enrichment(limit: int, min_score: Optional[float] = None):
+    """Background task to enrich leads."""
+    global _leads_cache, _enrichment_state
+    
+    with _enrichment_lock:
+        _enrichment_state["running"] = True
+        _enrichment_state["progress"] = 0
+        _enrichment_state["total"] = limit
+        _enrichment_state["completed"] = 0
+        _enrichment_state["failed"] = 0
+        _enrichment_state["started_at"] = datetime.now().isoformat()
+        _enrichment_state["finished_at"] = None
+    
+    try:
+        enricher = Enricher(use_cache=True)
+        
+        # Filter candidates
+        candidates = []
+        for lead in _leads_cache:
+            if lead.enrichment_status in ["complete", "partial"]:
+                continue
+            if min_score is not None and lead.score < min_score:
+                continue
+            candidates.append(lead)
+        
+        # Sort by score and limit
+        candidates.sort(key=lambda l: l.score, reverse=True)
+        batch = candidates[:limit]
+        
+        with _enrichment_lock:
+            _enrichment_state["total"] = len(batch)
+        
+        logger.info(f"Background enrichment started: {len(batch)} leads")
+        
+        db = get_database()
+        lead_index = {l.lead_id: i for i, l in enumerate(_leads_cache)}
+        
+        for i, lead in enumerate(batch):
+            with _enrichment_lock:
+                _enrichment_state["progress"] = i + 1
+                _enrichment_state["current_lead"] = lead.agent_name or lead.owner_name
+            
+            try:
+                logger.info(f"[{i+1}/{len(batch)}] Enriching: {lead.agent_name or lead.owner_name}")
+                enriched_lead = enricher.enrich_lead(lead)
+                
+                # Update cache
+                if lead.lead_id in lead_index:
+                    _leads_cache[lead_index[lead.lead_id]] = enriched_lead
+                
+                # Persist to database
+                db.save_leads([enriched_lead])
+                
+                if enriched_lead.enrichment_status in ["complete", "partial"]:
+                    with _enrichment_lock:
+                        _enrichment_state["completed"] += 1
+                else:
+                    with _enrichment_lock:
+                        _enrichment_state["failed"] += 1
+                        
+            except Exception as e:
+                logger.warning(f"Failed to enrich {lead.agent_name}: {e}")
+                with _enrichment_lock:
+                    _enrichment_state["failed"] += 1
+        
+        logger.info(f"Background enrichment complete: {_enrichment_state['completed']} successful, {_enrichment_state['failed']} failed")
+        
+    finally:
+        with _enrichment_lock:
+            _enrichment_state["running"] = False
+            _enrichment_state["current_lead"] = None
+            _enrichment_state["finished_at"] = datetime.now().isoformat()
+
+
 @app.post("/api/enrich/batch")
 async def enrich_batch(
-    limit: int = Query(10, le=50, description="Max leads to enrich"),
+    background_tasks: BackgroundTasks,
+    limit: int = Query(50, le=500, description="Max leads to enrich"),
     min_score: Optional[float] = Query(None, description="Only enrich leads with score >= this"),
+    background: bool = Query(True, description="Run in background (recommended)"),
 ):
     """
-    Enrich a batch of top leads automatically.
+    Enrich a batch of top leads.
+    
+    By default runs in background so you don't have to wait.
+    Check progress at GET /api/enrich/status
     
     Prioritizes high-score leads that haven't been enriched.
     """
-    global _leads_cache
+    global _leads_cache, _enrichment_state
     
-    enricher = Enricher(use_cache=True)
-    enriched = enricher.enrich_batch(
-        _leads_cache,
-        limit=limit,
-        skip_enriched=True,
-        min_score=min_score,
-    )
+    # Check if already running
+    with _enrichment_lock:
+        if _enrichment_state["running"]:
+            return {
+                "status": "already_running",
+                "message": "Background enrichment is already in progress",
+                "progress": _enrichment_state["progress"],
+                "total": _enrichment_state["total"],
+            }
     
-    # Update cache and persist to database
-    lead_index = {l.lead_id: i for i, l in enumerate(_leads_cache)}
-    updated_leads = []
-    db = get_database()
+    if not _leads_cache:
+        raise HTTPException(status_code=400, detail="No leads loaded. Run /api/refresh first.")
     
-    for lead in enriched:
-        if lead.lead_id in lead_index:
-            _leads_cache[lead_index[lead.lead_id]] = lead
-            updated_leads.append(lead)
+    if background:
+        # Run in background
+        background_tasks.add_task(_run_background_enrichment, limit, min_score)
+        return {
+            "status": "started",
+            "message": f"Background enrichment started for up to {limit} leads",
+            "check_progress": "/api/enrich/status",
+        }
+    else:
+        # Run synchronously (old behavior, may timeout)
+        enricher = Enricher(use_cache=True)
+        enriched = enricher.enrich_batch(
+            _leads_cache,
+            limit=limit,
+            skip_enriched=True,
+            min_score=min_score,
+        )
+        
+        # Update cache and persist to database
+        lead_index = {l.lead_id: i for i, l in enumerate(_leads_cache)}
+        updated_leads = []
+        db = get_database()
+        
+        for lead in enriched:
+            if lead.lead_id in lead_index:
+                _leads_cache[lead_index[lead.lead_id]] = lead
+                updated_leads.append(lead)
+        
+        if updated_leads:
+            db.save_leads(updated_leads)
+            logger.info(f"Persisted {len(updated_leads)} enriched leads to database")
+        
+        return {
+            "status": "success",
+            "enriched_count": len(enriched),
+        }
+
+
+@app.get("/api/enrich/status")
+async def get_enrichment_status():
+    """
+    Get the status of background enrichment.
     
-    # Persist enriched leads to SQLite
-    if updated_leads:
-        db.save_leads(updated_leads)
-        logger.info(f"Persisted {len(updated_leads)} enriched leads to database")
-    
-    return {
-        "status": "success",
-        "enriched_count": len(enriched),
-    }
+    Returns progress, current lead being processed, and completion stats.
+    """
+    with _enrichment_lock:
+        return {
+            "running": _enrichment_state["running"],
+            "progress": _enrichment_state["progress"],
+            "total": _enrichment_state["total"],
+            "completed": _enrichment_state["completed"],
+            "failed": _enrichment_state["failed"],
+            "current_lead": _enrichment_state["current_lead"],
+            "started_at": _enrichment_state["started_at"],
+            "finished_at": _enrichment_state["finished_at"],
+            "percent_complete": round(_enrichment_state["progress"] / _enrichment_state["total"] * 100, 1) if _enrichment_state["total"] > 0 else 0,
+        }
 
 
 @app.get("/api/dos/lookup")
