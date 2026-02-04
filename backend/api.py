@@ -115,6 +115,19 @@ class ScoreBreakdown(BaseModel):
     concentration: float = 0.0
 
 
+class BuildingTypeBreakdownResponse(BaseModel):
+    """Building type composition for a lead's portfolio."""
+    condo: int = 0
+    coop: int = 0
+    rental_elevator: int = 0
+    rental_walkup: int = 0
+    small_residential: int = 0
+    other: int = 0
+    unknown: int = 0
+    total: int = 0
+    total_rental: int = 0
+
+
 class ContactWithSource(BaseModel):
     """Contact info with source attribution."""
     value: str
@@ -146,6 +159,9 @@ class LeadResponse(BaseModel):
     address: Optional[str]
     boro: str
     boros: List[str]
+    # Building type composition from PLUTO
+    building_types: Optional[BuildingTypeBreakdownResponse] = None
+    building_classes: Dict[str, int] = {}  # Raw building class codes with counts
     score: float
     score_breakdown: Optional[ScoreBreakdown] = None
     tags: List[str]
@@ -355,6 +371,28 @@ async def get_stats():
         else:
             portfolio_dist["100+"] += 1
     
+    # Building type distribution (from PLUTO)
+    building_type_dist = {
+        "condo": 0,
+        "coop": 0,
+        "rental_elevator": 0, 
+        "rental_walkup": 0,
+        "small_residential": 0,
+        "other": 0,
+        "unknown": 0,
+    }
+    leads_with_pluto = 0
+    for lead in _leads_cache:
+        if lead.building_types and lead.building_types.total > 0:
+            leads_with_pluto += 1
+            building_type_dist["condo"] += lead.building_types.condo
+            building_type_dist["coop"] += lead.building_types.coop
+            building_type_dist["rental_elevator"] += lead.building_types.rental_elevator
+            building_type_dist["rental_walkup"] += lead.building_types.rental_walkup
+            building_type_dist["small_residential"] += lead.building_types.small_residential
+            building_type_dist["other"] += lead.building_types.other
+            building_type_dist["unknown"] += lead.building_types.unknown
+    
     return {
         "total_leads": len(_leads_cache),
         "total_buildings": sum(l.portfolio_size for l in _leads_cache),
@@ -365,6 +403,8 @@ async def get_stats():
         "with_phone": len([l for l in _leads_cache if l.phone]),
         "with_email": len([l for l in _leads_cache if l.email]),
         "with_website": len([l for l in _leads_cache if l.website]),
+        "building_type_distribution": building_type_dist,
+        "leads_with_pluto_data": leads_with_pluto,
     }
 
 
@@ -1388,6 +1428,177 @@ async def search_dos_entities(
     }
 
 
+# PLUTO building type enrichment state
+_pluto_enrichment_state: Dict = {
+    "running": False,
+    "progress": 0,
+    "total": 0,
+    "found": 0,
+    "started_at": None,
+    "finished_at": None,
+    "error": None,
+}
+_pluto_enrichment_lock = threading.Lock()
+
+
+def _run_pluto_enrichment(limit: Optional[int] = None):
+    """Background task to enrich leads with PLUTO building type data."""
+    global _leads_cache, _pluto_enrichment_state
+    
+    from src.ingest.pluto_client import PLUTOClient, classify_building
+    from src.transform.aggregate import BuildingTypeBreakdown
+    from collections import Counter
+    
+    with _pluto_enrichment_lock:
+        _pluto_enrichment_state["running"] = True
+        _pluto_enrichment_state["progress"] = 0
+        _pluto_enrichment_state["total"] = len(_leads_cache) if not limit else min(limit, len(_leads_cache))
+        _pluto_enrichment_state["found"] = 0
+        _pluto_enrichment_state["started_at"] = datetime.now().isoformat()
+        _pluto_enrichment_state["finished_at"] = None
+        _pluto_enrichment_state["error"] = None
+    
+    try:
+        pluto_client = PLUTOClient()
+        db = get_database()
+        
+        # Get leads to process
+        leads_to_process = _leads_cache[:limit] if limit else _leads_cache
+        
+        logger.info(f"PLUTO enrichment started for {len(leads_to_process)} leads")
+        
+        # We need building-level data with BBL info
+        # Get all unique building IDs and their BBL info
+        # First, let's enrich per lead by looking up their buildings
+        
+        for i, lead in enumerate(leads_to_process):
+            with _pluto_enrichment_lock:
+                _pluto_enrichment_state["progress"] = i + 1
+            
+            # Skip if already has building type data
+            if lead.building_types and lead.building_types.total > 0:
+                continue
+            
+            # We need to fetch building info from HPD to get BBL
+            # For now, we'll mark this as a limitation and note that a full refresh
+            # with PLUTO integration is needed
+            
+            # Initialize breakdown
+            breakdown = BuildingTypeBreakdown()
+            building_classes = Counter()
+            
+            # For each building ID, we'd need to look up the BBL
+            # This requires the original building data which we don't have in the lead
+            # We'll need to enhance the refresh pipeline to include PLUTO data
+            
+            # For now, set all as unknown
+            breakdown.unknown = lead.portfolio_size
+            
+            lead.building_types = breakdown
+            lead.building_classes = dict(building_classes)
+            
+            if i > 0 and i % 1000 == 0:
+                logger.info(f"PLUTO enrichment progress: {i}/{len(leads_to_process)}")
+        
+        # Note: This is a placeholder implementation
+        # Full PLUTO integration requires enhancing the refresh pipeline
+        # to fetch PLUTO data during building ingestion
+        
+        logger.info(f"PLUTO enrichment complete (placeholder - needs refresh pipeline integration)")
+        
+    except Exception as e:
+        logger.error(f"PLUTO enrichment failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        with _pluto_enrichment_lock:
+            _pluto_enrichment_state["error"] = str(e)
+    finally:
+        with _pluto_enrichment_lock:
+            _pluto_enrichment_state["running"] = False
+            _pluto_enrichment_state["finished_at"] = datetime.now().isoformat()
+
+
+@app.post("/api/enrich/pluto")
+async def enrich_pluto(
+    background_tasks: BackgroundTasks,
+    limit: Optional[int] = Query(None, description="Max leads to enrich (None = all)"),
+):
+    """
+    Enrich leads with PLUTO building type classifications.
+    
+    Adds building type breakdown (condo, coop, rental_elevator, rental_walkup, etc.)
+    to each lead based on NYC PLUTO data.
+    
+    NOTE: For full PLUTO integration, run a fresh /api/refresh which will
+    fetch PLUTO data during building ingestion. This endpoint is for
+    incremental updates.
+    """
+    with _pluto_enrichment_lock:
+        if _pluto_enrichment_state["running"]:
+            return {
+                "status": "already_running",
+                "progress": _pluto_enrichment_state["progress"],
+                "total": _pluto_enrichment_state["total"],
+            }
+    
+    if not _leads_cache:
+        raise HTTPException(status_code=400, detail="No leads loaded. Run /api/refresh first.")
+    
+    background_tasks.add_task(_run_pluto_enrichment, limit)
+    
+    return {
+        "status": "started",
+        "message": f"PLUTO enrichment started for {limit or len(_leads_cache)} leads",
+        "note": "For full PLUTO integration, run /api/refresh?full=true&pluto=true",
+    }
+
+
+@app.get("/api/enrich/pluto/status")
+async def get_pluto_enrichment_status():
+    """Get status of PLUTO enrichment."""
+    with _pluto_enrichment_lock:
+        return {
+            "running": _pluto_enrichment_state["running"],
+            "progress": _pluto_enrichment_state["progress"],
+            "total": _pluto_enrichment_state["total"],
+            "found": _pluto_enrichment_state["found"],
+            "started_at": _pluto_enrichment_state["started_at"],
+            "finished_at": _pluto_enrichment_state["finished_at"],
+            "error": _pluto_enrichment_state["error"],
+        }
+
+
+@app.get("/api/pluto/lookup")
+async def lookup_pluto(
+    boro_id: str = Query(..., description="Borough ID (1=Manhattan, 2=Bronx, 3=Brooklyn, 4=Queens, 5=SI)"),
+    block: str = Query(..., description="Tax block number"),
+    lot: str = Query(..., description="Tax lot number"),
+):
+    """
+    Look up a single property's PLUTO classification.
+    
+    Returns building type (condo, coop, rental, etc.) and other property details.
+    """
+    from src.ingest.pluto_client import PLUTOClient
+    
+    client = PLUTOClient()
+    result = client.get_classification(boro_id, block, lot)
+    
+    if not result:
+        raise HTTPException(status_code=404, detail=f"No PLUTO record found for BBL {boro_id}-{block}-{lot}")
+    
+    return {
+        "bbl": result.bbl,
+        "address": result.address,
+        "building_class": result.building_class,
+        "building_type": result.building_type,
+        "land_use": result.land_use,
+        "units_residential": result.units_res,
+        "units_total": result.units_total,
+        "year_built": result.year_built,
+    }
+
+
 class OutreachAttemptRequest(BaseModel):
     """Request to log an outreach attempt."""
     method: str  # phone, email, linkedin, in_person, other
@@ -1716,6 +1927,21 @@ def _lead_to_response(lead: Lead) -> LeadResponse:
                     verified=e.verified,
                 ))
     
+    # Build building types response
+    building_types_response = None
+    if lead.building_types:
+        building_types_response = BuildingTypeBreakdownResponse(
+            condo=lead.building_types.condo,
+            coop=lead.building_types.coop,
+            rental_elevator=lead.building_types.rental_elevator,
+            rental_walkup=lead.building_types.rental_walkup,
+            small_residential=lead.building_types.small_residential,
+            other=lead.building_types.other,
+            unknown=lead.building_types.unknown,
+            total=lead.building_types.total,
+            total_rental=lead.building_types.total_rental,
+        )
+    
     return LeadResponse(
         lead_id=lead.lead_id,
         agent_name=lead.agent_name,
@@ -1736,6 +1962,8 @@ def _lead_to_response(lead: Lead) -> LeadResponse:
         address=lead.address,
         boro=lead.boro,
         boros=lead.boros,
+        building_types=building_types_response,
+        building_classes=getattr(lead, 'building_classes', {}) or {},
         score=lead.score,
         score_breakdown=breakdown,
         tags=lead.tags,

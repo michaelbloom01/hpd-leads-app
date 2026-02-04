@@ -25,6 +25,40 @@ class ContactWithSource:
 
 
 @dataclass
+class BuildingTypeBreakdown:
+    """Breakdown of building types in a portfolio."""
+    condo: int = 0
+    coop: int = 0
+    rental_elevator: int = 0
+    rental_walkup: int = 0
+    small_residential: int = 0  # 1-2 family homes
+    other: int = 0
+    unknown: int = 0
+    
+    @property
+    def total(self) -> int:
+        return self.condo + self.coop + self.rental_elevator + self.rental_walkup + self.small_residential + self.other + self.unknown
+    
+    @property
+    def total_rental(self) -> int:
+        """Total rental buildings (elevator + walkup)."""
+        return self.rental_elevator + self.rental_walkup
+    
+    def to_dict(self) -> Dict:
+        return {
+            'condo': self.condo,
+            'coop': self.coop,
+            'rental_elevator': self.rental_elevator,
+            'rental_walkup': self.rental_walkup,
+            'small_residential': self.small_residential,
+            'other': self.other,
+            'unknown': self.unknown,
+            'total': self.total,
+            'total_rental': self.total_rental,
+        }
+
+
+@dataclass
 class Lead:
     """A lead represents an agent/owner managing multiple buildings."""
     lead_id: str
@@ -49,6 +83,9 @@ class Lead:
     address: Optional[str] = None
     boro: str = ""
     boros: List[str] = field(default_factory=list)  # All boroughs
+    # Building type composition from PLUTO
+    building_types: BuildingTypeBreakdown = field(default_factory=BuildingTypeBreakdown)
+    building_classes: Dict[str, int] = field(default_factory=dict)  # Raw class codes with counts
     reg_status: str = ""
     last_registration: Optional[date] = None
     dos_id: Optional[str] = None
@@ -309,6 +346,32 @@ def _create_lead_from_buildings(grouping_key: str, buildings: List[Building]) ->
                     "zip": c.business_zip,
                 })
     
+    # Aggregate building types from PLUTO data
+    building_type_counts = Counter()
+    building_class_counts = Counter()
+    total_units = 0
+    
+    for b in buildings:
+        if b.building_type:
+            building_type_counts[b.building_type] += 1
+        else:
+            building_type_counts['unknown'] += 1
+        
+        if b.building_class:
+            building_class_counts[b.building_class] += 1
+        
+        total_units += b.units_res
+    
+    building_types = BuildingTypeBreakdown(
+        condo=building_type_counts.get('condo', 0),
+        coop=building_type_counts.get('coop', 0),
+        rental_elevator=building_type_counts.get('rental_elevator', 0),
+        rental_walkup=building_type_counts.get('rental_walkup', 0),
+        small_residential=building_type_counts.get('small_residential', 0),
+        other=building_type_counts.get('other', 0),
+        unknown=building_type_counts.get('unknown', 0),
+    )
+    
     # Generate stable lead ID
     lead_id = _generate_lead_id(grouping_key)
     
@@ -318,13 +381,15 @@ def _create_lead_from_buildings(grouping_key: str, buildings: List[Building]) ->
         owner_name=owner_name,
         owner_type=owner_type,
         portfolio_size=len(buildings),
-        total_units=0,  # HPD data doesn't include unit count directly
+        total_units=total_units,
         buildings=building_addresses,
         building_ids=building_ids,
         contacts=contacts,
         address=address,
         boro=primary_boro,
         boros=unique_boros,
+        building_types=building_types,
+        building_classes=dict(building_class_counts),
         last_registration=last_reg,
     )
 

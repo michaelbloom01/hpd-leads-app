@@ -29,6 +29,21 @@ export interface ContactWithSource {
 }
 
 /**
+ * Building type breakdown from PLUTO data
+ */
+export interface BuildingTypeBreakdown {
+  condo: number;
+  coop: number;
+  rental_elevator: number;
+  rental_walkup: number;
+  small_residential: number;
+  other: number;
+  unknown: number;
+  total: number;
+  total_rental: number;
+}
+
+/**
  * Lead data from the backend API
  */
 export interface ApiLead {
@@ -51,6 +66,9 @@ export interface ApiLead {
   address: string | null;
   boro: string;
   boros: string[];
+  // Building type composition from PLUTO
+  building_types: BuildingTypeBreakdown | null;
+  building_classes: Record<string, number>;  // Raw building class codes with counts
   score: number;
   score_breakdown: ScoreBreakdown | null;
   tags: string[];

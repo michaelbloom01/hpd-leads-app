@@ -174,6 +174,126 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
             </div>
           </div>
 
+          {/* Building Type Composition */}
+          {enrichedLead.building_types && enrichedLead.building_types.total > 0 && (
+            <div className="bg-slate-800/30 rounded-xl p-5">
+              <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-4">Portfolio Composition</h3>
+              <div className="space-y-3">
+                {/* Visual breakdown bar */}
+                <div className="h-6 rounded-lg overflow-hidden flex bg-slate-700/50">
+                  {enrichedLead.building_types.condo > 0 && (
+                    <div 
+                      className="bg-blue-500 flex items-center justify-center text-[10px] text-white font-bold"
+                      style={{ width: `${(enrichedLead.building_types.condo / enrichedLead.building_types.total) * 100}%` }}
+                      title={`Condo: ${enrichedLead.building_types.condo}`}
+                    >
+                      {enrichedLead.building_types.condo >= 3 && enrichedLead.building_types.condo}
+                    </div>
+                  )}
+                  {enrichedLead.building_types.coop > 0 && (
+                    <div 
+                      className="bg-purple-500 flex items-center justify-center text-[10px] text-white font-bold"
+                      style={{ width: `${(enrichedLead.building_types.coop / enrichedLead.building_types.total) * 100}%` }}
+                      title={`Coop: ${enrichedLead.building_types.coop}`}
+                    >
+                      {enrichedLead.building_types.coop >= 3 && enrichedLead.building_types.coop}
+                    </div>
+                  )}
+                  {enrichedLead.building_types.rental_elevator > 0 && (
+                    <div 
+                      className="bg-emerald-500 flex items-center justify-center text-[10px] text-white font-bold"
+                      style={{ width: `${(enrichedLead.building_types.rental_elevator / enrichedLead.building_types.total) * 100}%` }}
+                      title={`Elevator Rental: ${enrichedLead.building_types.rental_elevator}`}
+                    >
+                      {enrichedLead.building_types.rental_elevator >= 3 && enrichedLead.building_types.rental_elevator}
+                    </div>
+                  )}
+                  {enrichedLead.building_types.rental_walkup > 0 && (
+                    <div 
+                      className="bg-amber-500 flex items-center justify-center text-[10px] text-white font-bold"
+                      style={{ width: `${(enrichedLead.building_types.rental_walkup / enrichedLead.building_types.total) * 100}%` }}
+                      title={`Walk-up Rental: ${enrichedLead.building_types.rental_walkup}`}
+                    >
+                      {enrichedLead.building_types.rental_walkup >= 3 && enrichedLead.building_types.rental_walkup}
+                    </div>
+                  )}
+                  {enrichedLead.building_types.small_residential > 0 && (
+                    <div 
+                      className="bg-cyan-500 flex items-center justify-center text-[10px] text-white font-bold"
+                      style={{ width: `${(enrichedLead.building_types.small_residential / enrichedLead.building_types.total) * 100}%` }}
+                      title={`1-2 Family: ${enrichedLead.building_types.small_residential}`}
+                    >
+                      {enrichedLead.building_types.small_residential >= 3 && enrichedLead.building_types.small_residential}
+                    </div>
+                  )}
+                  {(enrichedLead.building_types.other + enrichedLead.building_types.unknown) > 0 && (
+                    <div 
+                      className="bg-slate-600 flex items-center justify-center text-[10px] text-white font-bold"
+                      style={{ width: `${((enrichedLead.building_types.other + enrichedLead.building_types.unknown) / enrichedLead.building_types.total) * 100}%` }}
+                      title={`Other/Unknown: ${enrichedLead.building_types.other + enrichedLead.building_types.unknown}`}
+                    >
+                      {(enrichedLead.building_types.other + enrichedLead.building_types.unknown) >= 3 && (enrichedLead.building_types.other + enrichedLead.building_types.unknown)}
+                    </div>
+                  )}
+                </div>
+                
+                {/* Legend */}
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  {enrichedLead.building_types.condo > 0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="w-3 h-3 bg-blue-500 rounded"></span>
+                      <span className="text-slate-400">Condo</span>
+                      <span className="text-white font-bold ml-auto">{enrichedLead.building_types.condo}</span>
+                    </div>
+                  )}
+                  {enrichedLead.building_types.coop > 0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="w-3 h-3 bg-purple-500 rounded"></span>
+                      <span className="text-slate-400">Coop</span>
+                      <span className="text-white font-bold ml-auto">{enrichedLead.building_types.coop}</span>
+                    </div>
+                  )}
+                  {enrichedLead.building_types.rental_elevator > 0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="w-3 h-3 bg-emerald-500 rounded"></span>
+                      <span className="text-slate-400">Elevator</span>
+                      <span className="text-white font-bold ml-auto">{enrichedLead.building_types.rental_elevator}</span>
+                    </div>
+                  )}
+                  {enrichedLead.building_types.rental_walkup > 0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="w-3 h-3 bg-amber-500 rounded"></span>
+                      <span className="text-slate-400">Walk-up</span>
+                      <span className="text-white font-bold ml-auto">{enrichedLead.building_types.rental_walkup}</span>
+                    </div>
+                  )}
+                  {enrichedLead.building_types.small_residential > 0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="w-3 h-3 bg-cyan-500 rounded"></span>
+                      <span className="text-slate-400">1-2 Family</span>
+                      <span className="text-white font-bold ml-auto">{enrichedLead.building_types.small_residential}</span>
+                    </div>
+                  )}
+                  {(enrichedLead.building_types.other + enrichedLead.building_types.unknown) > 0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="w-3 h-3 bg-slate-600 rounded"></span>
+                      <span className="text-slate-400">Other</span>
+                      <span className="text-white font-bold ml-auto">{enrichedLead.building_types.other + enrichedLead.building_types.unknown}</span>
+                    </div>
+                  )}
+                </div>
+                
+                {/* Total Units */}
+                {enrichedLead.total_units > 0 && (
+                  <div className="pt-3 border-t border-white/5 flex justify-between items-center">
+                    <span className="text-slate-500 text-sm">Total Units</span>
+                    <span className="text-white font-bold">{enrichedLead.total_units.toLocaleString()}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Score Breakdown */}
           {enrichedLead.score_breakdown && (
             <div className="bg-slate-800/30 rounded-xl p-5">

@@ -49,6 +49,7 @@ class Building:
     registration_id: str
     address: str
     boro: str
+    boro_id: str  # 1=Manhattan, 2=Bronx, 3=Brooklyn, 4=Queens, 5=SI
     zip_code: str
     block: str
     lot: str
@@ -56,6 +57,11 @@ class Building:
     last_registration: Optional[date]
     registration_end: Optional[date]
     contacts: List[Contact] = field(default_factory=list)
+    # PLUTO data
+    building_class: str = ""  # e.g., "D4", "R1", "C0"
+    building_type: str = ""  # e.g., "condo", "coop", "rental_elevator"
+    units_res: int = 0
+    year_built: Optional[int] = None
     
     @property
     def agent(self) -> Optional[Contact]:
@@ -130,6 +136,7 @@ def normalize_building(raw: dict) -> Building:
         registration_id=raw.get("registrationid", ""),
         address=address,
         boro=raw.get("boro", ""),
+        boro_id=raw.get("boroid", ""),
         zip_code=raw.get("zip", ""),
         block=raw.get("block", ""),
         lot=raw.get("lot", ""),
@@ -137,6 +144,11 @@ def normalize_building(raw: dict) -> Building:
         last_registration=last_reg,
         registration_end=reg_end,
         contacts=contacts,
+        # PLUTO fields (populated during refresh if pluto=true)
+        building_class=raw.get("building_class", ""),
+        building_type=raw.get("building_type", ""),
+        units_res=int(raw.get("units_res", 0)) if raw.get("units_res") else 0,
+        year_built=int(raw.get("year_built")) if raw.get("year_built") else None,
     )
 
 
