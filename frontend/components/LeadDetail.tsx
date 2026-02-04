@@ -41,8 +41,14 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
         {/* Header */}
         <div className="sticky top-0 bg-slate-900 border-b border-white/10 p-6 flex justify-between items-start">
           <div>
+            <div className="text-xs text-blue-400 uppercase tracking-wider font-medium mb-1">
+              {enrichedLead.agent_name ? 'Management Company' : 'Owner (No Agent Listed)'}
+            </div>
             <h2 className="text-xl font-bold text-white">{enrichedLead.agent_name || enrichedLead.owner_name}</h2>
-            <p className="text-slate-500 text-sm mt-1">{enrichedLead.owner_type} • {enrichedLead.boro}</p>
+            {enrichedLead.agent_name && enrichedLead.owner_name && enrichedLead.agent_name !== enrichedLead.owner_name && (
+              <p className="text-slate-500 text-sm mt-1">Owner: {enrichedLead.owner_name}</p>
+            )}
+            <p className="text-slate-600 text-xs mt-1">{enrichedLead.owner_type} • {enrichedLead.boro}</p>
           </div>
           <button 
             onClick={onClose}

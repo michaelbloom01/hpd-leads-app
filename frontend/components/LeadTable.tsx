@@ -23,6 +23,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   const [filterHasPhone, setFilterHasPhone] = useState<boolean | null>(null);
   const [filterHasEmail, setFilterHasEmail] = useState<boolean | null>(null);
   const [filterHasWebsite, setFilterHasWebsite] = useState<boolean | null>(null);
+  const [filterHasMgmtCompany, setFilterHasMgmtCompany] = useState<boolean | null>(null);
   
   // Sorting
   const [sortField, setSortField] = useState<SortField>('score');
@@ -98,6 +99,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     if (filterHasWebsite === true) result = result.filter(lead => lead.website);
     if (filterHasWebsite === false) result = result.filter(lead => !lead.website);
     
+    // Management company filter (has agent vs only owner)
+    if (filterHasMgmtCompany === true) result = result.filter(lead => lead.agent_name);
+    if (filterHasMgmtCompany === false) result = result.filter(lead => !lead.agent_name);
+    
     // Sort
     result.sort((a, b) => {
       let aVal: any = a[sortField];
@@ -112,7 +117,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     });
     
     return result;
-  }, [leads, searchTerm, filterBorough, filterMinScore, filterMaxScore, filterMinPortfolio, filterHasPhone, filterHasEmail, filterHasWebsite, sortField, sortDir]);
+  }, [leads, searchTerm, filterBorough, filterMinScore, filterMaxScore, filterMinPortfolio, filterHasPhone, filterHasEmail, filterHasWebsite, filterHasMgmtCompany, sortField, sortDir]);
 
   // Paginated results
   const paginatedLeads = useMemo(() => {
@@ -180,6 +185,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     setFilterHasPhone(null);
     setFilterHasEmail(null);
     setFilterHasWebsite(null);
+    setFilterHasMgmtCompany(null);
   };
 
   const SortIcon = ({ field }: { field: SortField }) => (
@@ -262,6 +268,16 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
           {/* Contact Filters */}
           <div className="flex gap-2">
             <button
+              onClick={() => setFilterHasMgmtCompany(filterHasMgmtCompany === true ? null : true)}
+              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                filterHasMgmtCompany === true 
+                  ? 'bg-blue-600/30 text-blue-400 border border-blue-500/30' 
+                  : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
+              }`}
+            >
+              🏢 Mgmt Co
+            </button>
+            <button
               onClick={() => setFilterHasPhone(filterHasPhone === true ? null : true)}
               className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
                 filterHasPhone === true 
@@ -340,7 +356,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors"
                   onClick={() => handleSort('agent_name')}
                 >
-                  Name <SortIcon field="agent_name" />
+                  Management Company <SortIcon field="agent_name" />
                 </th>
                 <th 
                   className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors"
@@ -386,7 +402,12 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   </td>
                   <td className="px-4 py-3">
                     <div className="font-medium text-slate-200 text-sm">{lead.agent_name || lead.owner_name}</div>
-                    <div className="text-xs text-slate-600 truncate max-w-[200px]">{lead.buildings[0]}</div>
+                    <div className="text-xs text-slate-600 truncate max-w-[200px]">
+                      {lead.agent_name && lead.owner_name && lead.agent_name !== lead.owner_name && (
+                        <span className="text-slate-500">Owner: {lead.owner_name.slice(0, 30)}{lead.owner_name.length > 30 ? '...' : ''}</span>
+                      )}
+                      {!lead.agent_name && <span className="text-amber-600/70">No management agent</span>}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <span className="px-2 py-0.5 bg-slate-800 text-slate-400 text-xs rounded">
