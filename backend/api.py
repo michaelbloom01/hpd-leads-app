@@ -115,6 +115,16 @@ class ScoreBreakdown(BaseModel):
     concentration: float = 0.0
 
 
+class ContactWithSource(BaseModel):
+    """Contact info with source attribution."""
+    value: str
+    type: str  # "phone" or "email"
+    source: str  # "google_places", "hunter", "web_crawl", etc.
+    source_url: Optional[str] = None  # Clickable link to verify
+    confidence: int = 50  # 0-100
+    verified: bool = False
+
+
 class LeadResponse(BaseModel):
     """Lead data for API response."""
     lead_id: str
@@ -124,9 +134,12 @@ class LeadResponse(BaseModel):
     portfolio_size: int
     total_units: int
     buildings: List[str]
-    phone: Optional[str]
-    email: Optional[str]
+    phone: Optional[str]  # Best phone (for backwards compatibility)
+    email: Optional[str]  # Best email (for backwards compatibility)
+    phones: List[ContactWithSource] = []  # All phones with sources
+    emails: List[ContactWithSource] = []  # All emails with sources
     website: Optional[str]
+    website_source: Optional[str] = None  # Where we found the website
     business_summary: Optional[str]
     address: Optional[str]
     boro: str
@@ -1067,6 +1080,141 @@ class OutreachAttemptRequest(BaseModel):
     notes: Optional[str] = None
 
 
+@app.post("/api/leads/{lead_id}/enrich-contacts")
+async def enrich_lead_contacts(lead_id: str):
+    """
+    Enrich a single lead's contact info using multiple sources.
+    
+    Sources (in priority order):
+    1. Google Places API - Business phone numbers (if configured)
+    2. Web Crawl - Scrape company website
+    3. Hunter.io - Email finder (if configured and website found)
+    
+    Returns all found contacts with source attribution and confidence scores.
+    """
+    global _leads_cache
+    
+    # Find the lead
+    lead = None
+    lead_idx = None
+    for i, l in enumerate(_leads_cache):
+        if l.lead_id == lead_id:
+            lead = l
+            lead_idx = i
+            break
+    
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    company_name = lead.agent_name or lead.owner_name
+    
+    try:
+        from src.enrich.contact_sources import MultiSourceEnricher, ContactInfo as SourceContactInfo
+        from src.transform.aggregate import ContactWithSource
+        
+        enricher = MultiSourceEnricher()
+        result = enricher.enrich(
+            lead_id=lead_id,
+            company_name=company_name,
+            website=lead.website,
+            location=f"{lead.boro}, New York" if lead.boro else "New York, NY",
+        )
+        
+        # Update lead with results
+        if result.phones:
+            # Convert to Lead's ContactWithSource format
+            lead.phones = [
+                ContactWithSource(
+                    value=p.value,
+                    type=p.type,
+                    source=p.source,
+                    source_url=p.source_url,
+                    confidence=p.confidence,
+                    verified=p.verified,
+                    found_at=p.found_at,
+                )
+                for p in result.phones
+            ]
+            # Set best phone for backwards compatibility
+            best = result.best_phone()
+            if best:
+                lead.phone = best.value
+        
+        if result.emails:
+            lead.emails = [
+                ContactWithSource(
+                    value=e.value,
+                    type=e.type,
+                    source=e.source,
+                    source_url=e.source_url,
+                    confidence=e.confidence,
+                    verified=e.verified,
+                    found_at=e.found_at,
+                )
+                for e in result.emails
+            ]
+            best = result.best_email()
+            if best:
+                lead.email = best.value
+        
+        if result.website and not lead.website:
+            lead.website = result.website
+            lead.website_source = result.website_source
+        
+        # Update enrichment status
+        if result.phones or result.emails:
+            lead.enrichment_status = "complete" if (result.phones and result.emails) else "partial"
+        
+        lead.enrichment_sources = list(set(lead.enrichment_sources + result.sources_succeeded))
+        lead.last_enriched = datetime.now()
+        lead.updated_at = datetime.now()
+        
+        # Update cache
+        _leads_cache[lead_idx] = lead
+        
+        # Persist to database
+        db = get_database()
+        db.save_leads([lead])
+        
+        return {
+            "status": "success",
+            "lead_id": lead_id,
+            "company_name": company_name,
+            "phones": [p.to_dict() for p in result.phones],
+            "emails": [e.to_dict() for e in result.emails],
+            "website": result.website,
+            "website_source": result.website_source,
+            "sources_tried": result.sources_tried,
+            "sources_succeeded": result.sources_succeeded,
+            "errors": result.errors,
+            "api_status": enricher.get_api_status(),
+        }
+        
+    except Exception as e:
+        logger.error(f"Multi-source enrichment failed for {lead_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/enrichment/sources")
+async def get_enrichment_sources():
+    """
+    Get status of configured enrichment sources.
+    
+    Shows which APIs are configured and available.
+    """
+    try:
+        from src.enrich.contact_sources import MultiSourceEnricher
+        enricher = MultiSourceEnricher()
+        return enricher.get_api_status()
+    except Exception as e:
+        return {
+            "error": str(e),
+            "google_places": {"configured": False},
+            "hunter": {"configured": False},
+            "web_crawl": {"configured": True},
+        }
+
+
 @app.post("/api/leads/{lead_id}/research")
 async def research_lead(lead_id: str):
     """
@@ -1214,6 +1362,34 @@ def _lead_to_response(lead: Lead) -> LeadResponse:
             concentration=lead.score_breakdown.get("concentration", 0.0),
         )
     
+    # Convert phones with sources
+    phones_with_source = []
+    if hasattr(lead, 'phones') and lead.phones:
+        for p in lead.phones:
+            if hasattr(p, 'value'):
+                phones_with_source.append(ContactWithSource(
+                    value=p.value,
+                    type=p.type,
+                    source=p.source,
+                    source_url=p.source_url,
+                    confidence=p.confidence,
+                    verified=p.verified,
+                ))
+    
+    # Convert emails with sources
+    emails_with_source = []
+    if hasattr(lead, 'emails') and lead.emails:
+        for e in lead.emails:
+            if hasattr(e, 'value'):
+                emails_with_source.append(ContactWithSource(
+                    value=e.value,
+                    type=e.type,
+                    source=e.source,
+                    source_url=e.source_url,
+                    confidence=e.confidence,
+                    verified=e.verified,
+                ))
+    
     return LeadResponse(
         lead_id=lead.lead_id,
         agent_name=lead.agent_name,
@@ -1224,7 +1400,10 @@ def _lead_to_response(lead: Lead) -> LeadResponse:
         buildings=lead.buildings[:10],  # Limit for response size
         phone=lead.phone,
         email=lead.email,
+        phones=phones_with_source,
+        emails=emails_with_source,
         website=lead.website,
+        website_source=getattr(lead, 'website_source', None),
         business_summary=lead.business_summary[:200] if isinstance(lead.business_summary, str) else None,
         address=lead.address,
         boro=lead.boro,

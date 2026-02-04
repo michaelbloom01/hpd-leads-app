@@ -13,6 +13,18 @@ from .normalize import Building, Contact, normalize_name, normalize_name_for_gro
 
 
 @dataclass
+class ContactWithSource:
+    """Contact info with source attribution."""
+    value: str
+    type: str  # "phone" or "email"
+    source: str  # "google_places", "hunter", "web_crawl", etc.
+    source_url: Optional[str] = None  # Clickable link to verify
+    confidence: int = 50  # 0-100
+    verified: bool = False
+    found_at: Optional[str] = None
+
+
+@dataclass
 class Lead:
     """A lead represents an agent/owner managing multiple buildings."""
     lead_id: str
@@ -23,9 +35,12 @@ class Lead:
     total_units: int
     buildings: List[str]  # List of addresses
     building_ids: List[str]  # List of building IDs
-    phone: Optional[str] = None
-    email: Optional[str] = None
+    phone: Optional[str] = None  # Best phone (backwards compat)
+    email: Optional[str] = None  # Best email (backwards compat)
+    phones: List[ContactWithSource] = field(default_factory=list)  # All phones with sources
+    emails: List[ContactWithSource] = field(default_factory=list)  # All emails with sources
     website: Optional[str] = None
+    website_source: Optional[str] = None  # Where we found the website
     business_summary: Optional[str] = None
     owner_principal: Optional[str] = None
     contacts: List[Dict] = field(default_factory=list)

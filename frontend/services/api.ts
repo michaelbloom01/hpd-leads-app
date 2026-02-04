@@ -17,6 +17,18 @@ export interface ScoreBreakdown {
 }
 
 /**
+ * Contact info with source attribution
+ */
+export interface ContactWithSource {
+  value: string;
+  type: 'phone' | 'email';
+  source: string;  // "google_places", "hunter", "web_crawl", etc.
+  source_url: string | null;  // Clickable link to verify
+  confidence: number;  // 0-100
+  verified: boolean;
+}
+
+/**
  * Lead data from the backend API
  */
 export interface ApiLead {
@@ -27,9 +39,12 @@ export interface ApiLead {
   portfolio_size: number;
   total_units: number;
   buildings: string[];
-  phone: string | null;
-  email: string | null;
+  phone: string | null;  // Best phone (backwards compat)
+  email: string | null;  // Best email (backwards compat)
+  phones: ContactWithSource[];  // All phones with sources
+  emails: ContactWithSource[];  // All emails with sources
   website: string | null;
+  website_source: string | null;
   business_summary: string | null;
   address: string | null;
   boro: string;
@@ -274,6 +289,59 @@ export async function researchLead(leadId: string): Promise<CompanyResearch> {
   
   if (!response.ok) {
     throw new Error(`Failed to research lead: ${response.statusText}`);
+  }
+  
+  return response.json();
+}
+
+/**
+ * Multi-source contact enrichment result
+ */
+export interface ContactEnrichmentResult {
+  status: string;
+  lead_id: string;
+  company_name: string;
+  phones: ContactWithSource[];
+  emails: ContactWithSource[];
+  website: string | null;
+  website_source: string | null;
+  sources_tried: string[];
+  sources_succeeded: string[];
+  errors: string[];
+  api_status: {
+    google_places: { configured: boolean; calls: number };
+    hunter: { configured: boolean; calls: number };
+    web_crawl: { configured: boolean; calls: number };
+  };
+}
+
+/**
+ * Enrich a lead's contact info using multiple sources (Google Places, Hunter, Web Crawl)
+ */
+export async function enrichLeadContacts(leadId: string): Promise<ContactEnrichmentResult> {
+  const response = await fetch(`${API_BASE_URL}/api/leads/${leadId}/enrich-contacts`, {
+    method: 'POST',
+  });
+  
+  if (!response.ok) {
+    throw new Error(`Failed to enrich contacts: ${response.statusText}`);
+  }
+  
+  return response.json();
+}
+
+/**
+ * Get status of configured enrichment sources
+ */
+export async function getEnrichmentSources(): Promise<{
+  google_places: { configured: boolean; calls?: number };
+  hunter: { configured: boolean; calls?: number };
+  web_crawl: { configured: boolean; calls?: number };
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/enrichment/sources`);
+  
+  if (!response.ok) {
+    throw new Error(`Failed to get enrichment sources: ${response.statusText}`);
   }
   
   return response.json();
