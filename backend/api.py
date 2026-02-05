@@ -71,6 +71,7 @@ _enrichment_state: Dict = {
     "error": None,
 }
 _enrichment_lock = threading.Lock()  # Protects _enrichment_state
+_enrichment_stop_requested = False  # Flag to stop enrichment gracefully
 
 # Background refresh state
 _refresh_state: Dict = {
@@ -88,7 +89,7 @@ _refresh_lock = threading.Lock()  # Protects _refresh_state
 
 @app.on_event("startup")
 async def startup_load():
-    """Load leads from SQLite database on startup."""
+    """Load leads from SQLite database on startup and resume/start enrichment if needed."""
     global _leads_cache, _last_refresh
     
     db = get_database()
@@ -98,8 +99,86 @@ async def startup_load():
         _leads_cache = loaded
         _last_refresh = db.get_last_refresh_time()
         logger.info(f"Startup: Loaded {len(loaded)} leads from database")
+        
+        # Check if there's an incomplete enrichment job to resume
+        active_job = db.get_active_enrichment_job()
+        if active_job and active_job['status'] == 'running':
+            remaining = active_job.get('lead_ids_remaining', [])
+            if remaining:
+                logger.info(f"Startup: Found incomplete enrichment job {active_job['id']} with {len(remaining)} leads remaining")
+                # Resume in background
+                import asyncio
+                asyncio.create_task(_resume_enrichment_job(active_job))
+        else:
+            # Check if we need to auto-start enrichment
+            enrichment_stats = db.get_enrichment_stats()
+            enriched_count = enrichment_stats.get('with_phone', 0) + enrichment_stats.get('with_email', 0)
+            
+            if enriched_count < 100:
+                logger.info(f"Startup: Only {enriched_count} leads enriched, auto-starting batch enrichment")
+                # Start auto-enrichment in background
+                import asyncio
+                asyncio.create_task(_auto_start_enrichment())
     else:
         logger.info("Startup: No leads in database, run /api/refresh to populate")
+
+
+async def _auto_start_enrichment():
+    """Auto-start enrichment for top 500 leads if few are enriched."""
+    import asyncio
+    await asyncio.sleep(5)  # Wait for server to fully start
+    
+    global _leads_cache, _enrichment_state
+    
+    if not _leads_cache:
+        return
+    
+    with _enrichment_lock:
+        if _enrichment_state["running"]:
+            logger.info("Auto-enrich: Enrichment already running, skipping")
+            return
+    
+    logger.info("Auto-enrich: Starting batch enrichment for top 500 leads")
+    
+    # Run in thread to not block
+    import threading
+    thread = threading.Thread(target=_run_background_enrichment, args=(500, None))
+    thread.daemon = True
+    thread.start()
+
+
+async def _resume_enrichment_job(job: dict):
+    """Resume an incomplete enrichment job."""
+    import asyncio
+    await asyncio.sleep(5)  # Wait for server to fully start
+    
+    global _leads_cache, _enrichment_state
+    
+    if not _leads_cache:
+        return
+    
+    with _enrichment_lock:
+        if _enrichment_state["running"]:
+            logger.info("Resume enrichment: Enrichment already running, skipping")
+            return
+    
+    remaining_ids = set(job.get('lead_ids_remaining', []))
+    if not remaining_ids:
+        logger.info("Resume enrichment: No leads remaining, marking complete")
+        db = get_database()
+        db.update_enrichment_job(job['id'], status='completed')
+        return
+    
+    logger.info(f"Resume enrichment: Resuming job {job['id']} with {len(remaining_ids)} leads")
+    
+    # Run in thread to not block
+    import threading
+    thread = threading.Thread(
+        target=_run_background_enrichment_with_job, 
+        args=(job['id'], remaining_ids, job.get('config', {}).get('min_score'))
+    )
+    thread.daemon = True
+    thread.start()
 
 
 class OutreachAttemptResponse(BaseModel):
@@ -827,16 +906,57 @@ async def enrich_leads(request: EnrichmentRequest):
 
 
 def _run_background_enrichment(limit: int, min_score: Optional[float] = None):
-    """Background task to enrich leads (legacy sequential method)."""
+    """Background task to enrich leads with persistent job tracking."""
     global _leads_cache, _enrichment_state, _enrichment_stop_requested
     
     _enrichment_stop_requested = False  # Reset stop flag
+    
+    db = get_database()
+    
+    # Filter candidates
+    candidates = []
+    for lead in _leads_cache:
+        if lead.enrichment_status in ["complete", "partial"]:
+            continue
+        if min_score is not None and lead.score < min_score:
+            continue
+        candidates.append(lead)
+    
+    # Sort by score and limit
+    candidates.sort(key=lambda l: l.score, reverse=True)
+    batch = candidates[:limit]
+    
+    if not batch:
+        logger.info("Background enrichment: No candidates to enrich")
+        return
+    
+    # Create persistent job
+    lead_ids = [l.lead_id for l in batch]
+    job_id = db.create_enrichment_job(
+        job_type='batch',
+        lead_ids=lead_ids,
+        config={'min_score': min_score, 'limit': limit}
+    )
+    
+    # Run with job tracking
+    _run_background_enrichment_with_job(job_id, set(lead_ids), min_score)
+
+
+def _run_background_enrichment_with_job(
+    job_id: int, 
+    lead_ids_remaining: set, 
+    min_score: Optional[float] = None
+):
+    """Background enrichment with persistent job tracking (supports resume)."""
+    global _leads_cache, _enrichment_state, _enrichment_stop_requested
+    
+    _enrichment_stop_requested = False
     
     with _enrichment_lock:
         _enrichment_state["running"] = True
         _enrichment_state["phase"] = "sequential"
         _enrichment_state["progress"] = 0
-        _enrichment_state["total"] = limit
+        _enrichment_state["total"] = len(lead_ids_remaining)
         _enrichment_state["completed"] = 0
         _enrichment_state["failed"] = 0
         _enrichment_state["started_at"] = datetime.now().isoformat()
@@ -845,27 +965,19 @@ def _run_background_enrichment(limit: int, min_score: Optional[float] = None):
     
     try:
         enricher = Enricher(use_cache=True)
+        db = get_database()
         
-        # Filter candidates
-        candidates = []
-        for lead in _leads_cache:
-            if lead.enrichment_status in ["complete", "partial"]:
-                continue
-            if min_score is not None and lead.score < min_score:
-                continue
-            candidates.append(lead)
-        
-        # Sort by score and limit
-        candidates.sort(key=lambda l: l.score, reverse=True)
-        batch = candidates[:limit]
+        # Build lead lookup and batch
+        lead_index = {l.lead_id: i for i, l in enumerate(_leads_cache)}
+        batch = [l for l in _leads_cache if l.lead_id in lead_ids_remaining]
+        batch.sort(key=lambda l: l.score, reverse=True)
         
         with _enrichment_lock:
             _enrichment_state["total"] = len(batch)
         
-        logger.info(f"Background enrichment started: {len(batch)} leads")
+        logger.info(f"Background enrichment started: {len(batch)} leads (job {job_id})")
         
-        db = get_database()
-        lead_index = {l.lead_id: i for i, l in enumerate(_leads_cache)}
+        remaining = list(lead_ids_remaining)
         
         for i, lead in enumerate(batch):
             # Check for stop request
@@ -873,6 +985,16 @@ def _run_background_enrichment(limit: int, min_score: Optional[float] = None):
                 logger.info("Enrichment stopped by user request")
                 with _enrichment_lock:
                     _enrichment_state["error"] = "Stopped by user"
+                # Persist remaining leads
+                db.update_enrichment_job(
+                    job_id,
+                    status='paused',
+                    lead_ids_remaining=remaining,
+                    processed=i,
+                    completed=_enrichment_state["completed"],
+                    failed=_enrichment_state["failed"],
+                    error="Stopped by user"
+                )
                 break
             
             with _enrichment_lock:
@@ -883,7 +1005,7 @@ def _run_background_enrichment(limit: int, min_score: Optional[float] = None):
                 logger.info(f"[{i+1}/{len(batch)}] Enriching: {lead.agent_name or lead.owner_name}")
                 enriched_lead = enricher.enrich_lead(lead)
                 
-                # Update cache with lock to prevent race conditions
+                # Update cache with lock
                 with _leads_lock:
                     if lead.lead_id in lead_index:
                         _leads_cache[lead_index[lead.lead_id]] = enriched_lead
@@ -891,26 +1013,58 @@ def _run_background_enrichment(limit: int, min_score: Optional[float] = None):
                 # Persist to database
                 db.save_leads([enriched_lead])
                 
+                # Remove from remaining
+                if lead.lead_id in remaining:
+                    remaining.remove(lead.lead_id)
+                
                 if enriched_lead.enrichment_status in ["complete", "partial"]:
                     with _enrichment_lock:
                         _enrichment_state["completed"] += 1
                 else:
                     with _enrichment_lock:
                         _enrichment_state["failed"] += 1
+                
+                # Update job progress every 10 leads
+                if (i + 1) % 10 == 0:
+                    db.update_enrichment_job(
+                        job_id,
+                        processed=i + 1,
+                        completed=_enrichment_state["completed"],
+                        failed=_enrichment_state["failed"],
+                        lead_ids_remaining=remaining,
+                        current_lead=lead.agent_name or lead.owner_name
+                    )
                         
             except Exception as e:
                 logger.warning(f"Failed to enrich {lead.agent_name}: {e}")
                 with _enrichment_lock:
                     _enrichment_state["failed"] += 1
+                # Still remove from remaining (don't retry failed leads indefinitely)
+                if lead.lead_id in remaining:
+                    remaining.remove(lead.lead_id)
+        
+        # Mark job complete
+        db.update_enrichment_job(
+            job_id,
+            status='completed',
+            processed=len(batch),
+            completed=_enrichment_state["completed"],
+            failed=_enrichment_state["failed"],
+            lead_ids_remaining=[]
+        )
         
         logger.info(f"Background enrichment complete: {_enrichment_state['completed']} successful, {_enrichment_state['failed']} failed")
         
     except Exception as e:
         logger.error(f"Background enrichment failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         with _enrichment_lock:
             _enrichment_state["error"] = str(e)
+        # Mark job failed
+        db.update_enrichment_job(job_id, status='failed', error=str(e))
     finally:
-        _enrichment_stop_requested = False  # Reset
+        _enrichment_stop_requested = False
         with _enrichment_lock:
             _enrichment_state["running"] = False
             _enrichment_state["phase"] = "complete"

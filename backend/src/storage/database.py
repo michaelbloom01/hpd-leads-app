@@ -143,12 +143,33 @@ class LeadsDatabase:
                     FOREIGN KEY (lead_id) REFERENCES lead_user_data(lead_id)
                 );
                 
+                -- Enrichment job state (persists across restarts)
+                CREATE TABLE IF NOT EXISTS enrichment_jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_type TEXT NOT NULL,  -- 'batch', 'single'
+                    status TEXT NOT NULL,  -- 'running', 'completed', 'failed', 'paused'
+                    total_leads INTEGER DEFAULT 0,
+                    processed INTEGER DEFAULT 0,
+                    completed INTEGER DEFAULT 0,
+                    failed INTEGER DEFAULT 0,
+                    dos_found INTEGER DEFAULT 0,
+                    web_found INTEGER DEFAULT 0,
+                    current_lead TEXT,
+                    lead_ids_remaining TEXT,  -- JSON array of lead IDs not yet processed
+                    config TEXT,  -- JSON config for the job
+                    error TEXT,
+                    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    finished_at TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
                 -- Indexes for faster lookups
                 CREATE INDEX IF NOT EXISTS idx_lead_status ON lead_user_data(outreach_status);
                 CREATE INDEX IF NOT EXISTS idx_outreach_lead ON outreach_attempts(lead_id);
                 CREATE INDEX IF NOT EXISTS idx_leads_score ON leads(score DESC);
                 CREATE INDEX IF NOT EXISTS idx_leads_boro ON leads(boro);
                 CREATE INDEX IF NOT EXISTS idx_leads_enrichment ON leads(enrichment_status);
+                CREATE INDEX IF NOT EXISTS idx_enrichment_jobs_status ON enrichment_jobs(status);
             """)
             conn.commit()
             logger.info(f"Database initialized at {self.db_path}")
@@ -627,6 +648,144 @@ class LeadsDatabase:
                     'timestamp': row['timestamp'],
                 })
             return result
+
+
+    # === Enrichment Job Management ===
+    
+    def create_enrichment_job(
+        self, 
+        job_type: str, 
+        lead_ids: List[str], 
+        config: Optional[Dict] = None
+    ) -> int:
+        """Create a new enrichment job and return its ID."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """INSERT INTO enrichment_jobs 
+                   (job_type, status, total_leads, lead_ids_remaining, config)
+                   VALUES (?, 'running', ?, ?, ?)""",
+                (job_type, len(lead_ids), json.dumps(lead_ids), json.dumps(config or {}))
+            )
+            conn.commit()
+            job_id = cursor.lastrowid
+            logger.info(f"Created enrichment job {job_id} for {len(lead_ids)} leads")
+            return job_id
+    
+    def update_enrichment_job(
+        self,
+        job_id: int,
+        processed: Optional[int] = None,
+        completed: Optional[int] = None,
+        failed: Optional[int] = None,
+        dos_found: Optional[int] = None,
+        web_found: Optional[int] = None,
+        current_lead: Optional[str] = None,
+        lead_ids_remaining: Optional[List[str]] = None,
+        status: Optional[str] = None,
+        error: Optional[str] = None,
+    ):
+        """Update enrichment job progress."""
+        updates = []
+        params = []
+        
+        if processed is not None:
+            updates.append("processed = ?")
+            params.append(processed)
+        if completed is not None:
+            updates.append("completed = ?")
+            params.append(completed)
+        if failed is not None:
+            updates.append("failed = ?")
+            params.append(failed)
+        if dos_found is not None:
+            updates.append("dos_found = ?")
+            params.append(dos_found)
+        if web_found is not None:
+            updates.append("web_found = ?")
+            params.append(web_found)
+        if current_lead is not None:
+            updates.append("current_lead = ?")
+            params.append(current_lead)
+        if lead_ids_remaining is not None:
+            updates.append("lead_ids_remaining = ?")
+            params.append(json.dumps(lead_ids_remaining))
+        if status is not None:
+            updates.append("status = ?")
+            params.append(status)
+            if status in ('completed', 'failed'):
+                updates.append("finished_at = ?")
+                params.append(datetime.now().isoformat())
+        if error is not None:
+            updates.append("error = ?")
+            params.append(error)
+        
+        updates.append("updated_at = ?")
+        params.append(datetime.now().isoformat())
+        params.append(job_id)
+        
+        with self._get_connection() as conn:
+            conn.execute(
+                f"UPDATE enrichment_jobs SET {', '.join(updates)} WHERE id = ?",
+                params
+            )
+            conn.commit()
+    
+    def get_active_enrichment_job(self) -> Optional[Dict]:
+        """Get the currently running or paused enrichment job."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """SELECT * FROM enrichment_jobs 
+                   WHERE status IN ('running', 'paused') 
+                   ORDER BY id DESC LIMIT 1"""
+            ).fetchone()
+            if row:
+                data = dict(row)
+                data['lead_ids_remaining'] = json.loads(data.get('lead_ids_remaining') or '[]')
+                data['config'] = json.loads(data.get('config') or '{}')
+                return data
+            return None
+    
+    def get_enrichment_job(self, job_id: int) -> Optional[Dict]:
+        """Get a specific enrichment job by ID."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM enrichment_jobs WHERE id = ?",
+                (job_id,)
+            ).fetchone()
+            if row:
+                data = dict(row)
+                data['lead_ids_remaining'] = json.loads(data.get('lead_ids_remaining') or '[]')
+                data['config'] = json.loads(data.get('config') or '{}')
+                return data
+            return None
+    
+    def get_enrichment_stats(self) -> Dict:
+        """Get enrichment statistics from leads table."""
+        with self._get_connection() as conn:
+            # Count by enrichment status
+            status_counts = {}
+            for row in conn.execute(
+                "SELECT enrichment_status, COUNT(*) as count FROM leads GROUP BY enrichment_status"
+            ):
+                status_counts[row['enrichment_status'] or 'none'] = row['count']
+            
+            # Count with contact info
+            with_phone = conn.execute(
+                "SELECT COUNT(*) FROM leads WHERE phone IS NOT NULL AND phone != ''"
+            ).fetchone()[0]
+            with_email = conn.execute(
+                "SELECT COUNT(*) FROM leads WHERE email IS NOT NULL AND email != ''"
+            ).fetchone()[0]
+            with_website = conn.execute(
+                "SELECT COUNT(*) FROM leads WHERE website IS NOT NULL AND website != ''"
+            ).fetchone()[0]
+            
+            return {
+                "by_status": status_counts,
+                "with_phone": with_phone,
+                "with_email": with_email,
+                "with_website": with_website,
+            }
 
 
 # Singleton instance
