@@ -585,9 +585,13 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <span className="px-2 py-0.5 bg-slate-800 text-slate-400 text-xs rounded">
-                      {lead.boro}
-                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {(lead.boros?.length > 0 ? lead.boros : [lead.boro]).map((b, i) => (
+                        <span key={i} className="px-1.5 py-0.5 bg-slate-800 text-slate-400 text-[10px] rounded">
+                          {b.slice(0, 3).toUpperCase()}
+                        </span>
+                      ))}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-right">
                     <span className="text-slate-300 font-mono text-sm">{lead.portfolio_size}</span>
