@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ApiLead, enrichLeads, updateLead, researchLead, addOutreachAttempt, enrichLeadContacts, CompanyResearch, OutreachAttempt, DOSInfo } from '../services/api';
+import { ApiLead, updateLead, researchLead, addOutreachAttempt, enrichLeadContacts, generateAiSummary, CompanyResearch, OutreachAttempt, DOSInfo } from '../services/api';
 
 interface Props {
   lead: ApiLead;
@@ -20,12 +20,14 @@ const OUTREACH_OUTCOMES = ['no_answer', 'left_voicemail', 'spoke_with_contact', 
 const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
   const [isEnriching, setIsEnriching] = useState(false);
   const [isResearching, setIsResearching] = useState(false);
+  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [enrichedLead, setEnrichedLead] = useState(lead);
   const [notes, setNotes] = useState(lead.notes || '');
   const [outreachStatus, setOutreachStatus] = useState(lead.outreach_status || 'new');
   const [companyResearch, setCompanyResearch] = useState<CompanyResearch | null>(null);
   const [dosInfo, setDosInfo] = useState<DOSInfo | null>(null);
+  const [aiDescription, setAiDescription] = useState<string | null>(lead.business_summary || null);
   const [outreachAttempts, setOutreachAttempts] = useState<OutreachAttempt[]>(lead.outreach_attempts || []);
   const [showAddOutreach, setShowAddOutreach] = useState(false);
   const [newOutreach, setNewOutreach] = useState({ method: 'phone', outcome: 'no_answer', notes: '' });
@@ -36,30 +38,10 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
     setNotes(lead.notes || '');
     setOutreachStatus(lead.outreach_status || 'new');
     setOutreachAttempts(lead.outreach_attempts || []);
+    setAiDescription(lead.business_summary || null);
     setDosInfo(null);
     setCompanyResearch(null);
   }, [lead]);
-
-  const handleEnrich = async () => {
-    setIsEnriching(true);
-    try {
-      const result = await enrichLeads([lead.lead_id]);
-      if (result.results && result.results.length > 0) {
-        const enriched = result.results[0];
-        setEnrichedLead({
-          ...enrichedLead,
-          phone: enriched.phone || enrichedLead.phone,
-          email: enriched.email || enrichedLead.email,
-          website: enriched.website || enrichedLead.website,
-          enrichment_status: enriched.status,
-        });
-      }
-    } catch (err) {
-      console.error('Enrichment failed:', err);
-    } finally {
-      setIsEnriching(false);
-    }
-  };
 
   const handleSaveStatus = async (newStatus: string) => {
     setOutreachStatus(newStatus);
@@ -97,10 +79,32 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
           email: result.emails?.[0] || enrichedLead.email,
         });
       }
+      // Update AI description if generated
+      if (result.ai_description) {
+        setAiDescription(result.ai_description);
+      }
     } catch (err) {
       console.error('Research failed:', err);
     } finally {
       setIsResearching(false);
+    }
+  };
+  
+  const handleGenerateAI = async () => {
+    setIsGeneratingAI(true);
+    try {
+      const result = await generateAiSummary(lead.lead_id);
+      if (result.ai_description) {
+        setAiDescription(result.ai_description);
+        setEnrichedLead({
+          ...enrichedLead,
+          business_summary: result.ai_description,
+        });
+      }
+    } catch (err) {
+      console.error('AI summary generation failed:', err);
+    } finally {
+      setIsGeneratingAI(false);
     }
   };
 
@@ -431,16 +435,6 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
               </svg>
               {isResearching ? 'Researching...' : 'Deep Research'}
-            </button>
-            <button
-              onClick={handleEnrich}
-              disabled={isEnriching}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-500 disabled:opacity-50 transition-colors"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-              </svg>
-              {isEnriching ? 'Enriching...' : 'Enrich'}
             </button>
           </div>
 
@@ -910,20 +904,46 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
             />
           </div>
 
-          {/* Business Summary */}
-          {enrichedLead.business_summary && (
-            <div className="bg-slate-800/30 rounded-xl p-5">
-              <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-3">About</h3>
-              <p className="text-slate-400 text-sm leading-relaxed">{enrichedLead.business_summary}</p>
+          {/* AI Company Summary */}
+          <div className="bg-gradient-to-br from-indigo-900/20 to-purple-900/20 border border-indigo-500/20 rounded-xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-indigo-300 uppercase tracking-wider flex items-center gap-2">
+                <span>✨</span> AI Summary
+              </h3>
+              {!aiDescription && (
+                <button
+                  onClick={handleGenerateAI}
+                  disabled={isGeneratingAI}
+                  className="px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-500 disabled:opacity-50 transition-colors flex items-center gap-2"
+                >
+                  {isGeneratingAI ? (
+                    <>
+                      <svg className="w-3 h-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                      </svg>
+                      Generating...
+                    </>
+                  ) : (
+                    <>Generate</>
+                  )}
+                </button>
+              )}
             </div>
-          )}
+            {aiDescription ? (
+              <p className="text-slate-300 text-sm leading-relaxed">{aiDescription}</p>
+            ) : (
+              <p className="text-slate-500 text-sm italic">
+                Click "Generate" to create an AI-powered summary of this company based on portfolio data and research.
+              </p>
+            )}
+          </div>
 
           {/* Buildings List */}
           <div className="bg-slate-800/30 rounded-xl p-5">
             <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-3">
-              Buildings ({enrichedLead.buildings.length} shown of {enrichedLead.portfolio_size})
+              All Buildings ({enrichedLead.buildings.length})
             </h3>
-            <div className="space-y-2 max-h-48 overflow-y-auto">
+            <div className="space-y-2 max-h-64 overflow-y-auto">
               {enrichedLead.buildings.map((building, i) => (
                 <div key={i} className="text-sm text-slate-400 py-1 px-2 bg-slate-900/50 rounded">
                   {building}

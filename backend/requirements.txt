@@ -28,8 +28,8 @@ googlesearch-python>=1.2.3
 # Optional: paid APIs
 # serpapi>=0.1.5  # Uncomment if using SerpAPI
 
-# Optional: AI summaries
-# anthropic>=0.18.0  # Uncomment if using Claude for summaries
+# AI summaries
+anthropic>=0.18.0
 
 # Development
 pytest>=7.4.0

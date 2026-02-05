@@ -104,6 +104,7 @@ export interface CompanyResearch {
   emails: string[] | null;
   social_links: Record<string, string> | null;
   scraped_at: string;
+  ai_description?: string | null;  // AI-generated company summary
 }
 
 export interface OutreachAttempt {
@@ -309,6 +310,26 @@ export async function researchLead(leadId: string): Promise<CompanyResearch> {
   
   if (!response.ok) {
     throw new Error(`Failed to research lead: ${response.statusText}`);
+  }
+  
+  return response.json();
+}
+
+/**
+ * Generate AI summary for a lead
+ */
+export async function generateAiSummary(leadId: string): Promise<{
+  status: string;
+  lead_id: string;
+  ai_description: string | null;
+  message?: string;
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/leads/${leadId}/ai-summary`, {
+    method: 'POST',
+  });
+  
+  if (!response.ok) {
+    throw new Error(`Failed to generate AI summary: ${response.statusText}`);
   }
   
   return response.json();

@@ -1949,7 +1949,121 @@ async def research_lead(lead_id: str):
     except Exception as e:
         logger.error(f"DOS lookup failed: {e}")
     
+    # Generate AI summary if API key is configured
+    try:
+        from src.enrich.ai_summary import generate_company_description
+        
+        building_types_dict = None
+        if lead.building_types:
+            building_types_dict = {
+                'condo': lead.building_types.condo,
+                'coop': lead.building_types.coop,
+                'rental_elevator': lead.building_types.rental_elevator,
+                'rental_walkup': lead.building_types.rental_walkup,
+            }
+        
+        ai_description = generate_company_description(
+            company_name=company_name,
+            portfolio_size=lead.portfolio_size,
+            total_units=lead.total_units,
+            boroughs=lead.boros,
+            building_types=building_types_dict,
+            owner_names=research_result.get("owner_names"),
+            year_established=research_result.get("year_established"),
+            service_areas=research_result.get("service_areas"),
+            website_description=research_result.get("description"),
+        )
+        
+        if ai_description:
+            research_result["ai_description"] = ai_description
+            # Also save to lead
+            lead.business_summary = ai_description
+            for i, l in enumerate(_leads_cache):
+                if l.lead_id == lead_id:
+                    _leads_cache[i] = lead
+                    break
+            db = get_database()
+            db.update_lead(lead_id, {"business_summary": ai_description})
+    except Exception as e:
+        logger.error(f"AI summary generation failed: {e}")
+    
     return research_result
+
+
+@app.post("/api/leads/{lead_id}/ai-summary")
+async def generate_ai_summary(lead_id: str):
+    """
+    Generate an AI-powered description of the company.
+    
+    Uses Claude to create a succinct 2-3 sentence description based on
+    the company's portfolio, building types, and any research data.
+    
+    Requires ANTHROPIC_API_KEY environment variable to be set.
+    """
+    global _leads_cache
+    
+    # Find the lead
+    lead = None
+    for l in _leads_cache:
+        if l.lead_id == lead_id:
+            lead = l
+            break
+    
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    from src.enrich.ai_summary import generate_company_description
+    
+    company_name = lead.agent_name or lead.owner_name
+    
+    # Get building types dict if available
+    building_types_dict = None
+    if lead.building_types:
+        building_types_dict = {
+            'condo': lead.building_types.condo,
+            'coop': lead.building_types.coop,
+            'rental_elevator': lead.building_types.rental_elevator,
+            'rental_walkup': lead.building_types.rental_walkup,
+            'small_residential': lead.building_types.small_residential,
+            'other': lead.building_types.other,
+        }
+    
+    # Generate description
+    description = generate_company_description(
+        company_name=company_name,
+        portfolio_size=lead.portfolio_size,
+        total_units=lead.total_units,
+        boroughs=lead.boros,
+        building_types=building_types_dict,
+        website_description=lead.business_summary,
+    )
+    
+    if not description:
+        return {
+            "status": "skipped",
+            "lead_id": lead_id,
+            "message": "AI summary not available - ANTHROPIC_API_KEY not configured or anthropic package not installed",
+            "ai_description": None,
+        }
+    
+    # Save the description to the lead
+    lead.business_summary = description
+    
+    # Update in cache
+    for i, l in enumerate(_leads_cache):
+        if l.lead_id == lead_id:
+            _leads_cache[i] = lead
+            break
+    
+    # Persist to database
+    db = get_database()
+    db.update_lead(lead_id, {"business_summary": description})
+    
+    return {
+        "status": "generated",
+        "lead_id": lead_id,
+        "ai_description": description,
+    }
 
 
 @app.post("/api/leads/{lead_id}/outreach")
@@ -2069,7 +2183,7 @@ def _lead_to_response(lead: Lead) -> LeadResponse:
         owner_type=lead.owner_type,
         portfolio_size=lead.portfolio_size,
         total_units=lead.total_units,
-        buildings=lead.buildings[:10],  # Limit for response size
+        buildings=lead.buildings,  # Return all buildings
         phone=lead.phone,
         email=lead.email,
         phones=phones_with_source,
