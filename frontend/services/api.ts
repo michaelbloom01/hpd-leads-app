@@ -435,3 +435,56 @@ export async function getOutreachAttempts(leadId: string): Promise<OutreachAttem
   
   return response.json();
 }
+
+/**
+ * Enrichment progress status
+ */
+export interface EnrichmentProgress {
+  running: boolean;
+  phase: string;
+  progress: number;
+  total: number;
+  completed: number;
+  failed: number;
+  dos_completed: number;
+  dos_found: number;
+  web_completed: number;
+  web_found: number;
+  current_lead: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  percent_complete: number;
+}
+
+/**
+ * Get enrichment progress status
+ */
+export async function getEnrichmentProgress(): Promise<EnrichmentProgress> {
+  const response = await fetch(`${API_BASE_URL}/api/enrich/status`);
+  
+  if (!response.ok) {
+    throw new Error(`Failed to get enrichment status: ${response.statusText}`);
+  }
+  
+  return response.json();
+}
+
+/**
+ * Start batch enrichment of top leads
+ */
+export async function startBatchEnrichment(limit: number = 100): Promise<{
+  status: string;
+  message: string;
+  target_count: number;
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/enrich/batch?limit=${limit}`, {
+    method: 'POST',
+  });
+  
+  if (!response.ok) {
+    throw new Error(`Failed to start batch enrichment: ${response.statusText}`);
+  }
+  
+  return response.json();
+}
