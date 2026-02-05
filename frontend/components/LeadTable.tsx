@@ -309,7 +309,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
         <div className="text-rose-400 mb-4">{error}</div>
-        <p className="text-slate-500 text-sm">Click "Refresh from HPD" to load data</p>
+        <p className="text-slate-500 text-sm">Try refreshing the page or check the Dashboard for data status.</p>
       </div>
     );
   }

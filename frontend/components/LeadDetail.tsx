@@ -972,8 +972,8 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                     loading="lazy"
                     referrerPolicy="no-referrer-when-downgrade"
                     src={`https://www.google.com/maps/embed/v1/place?key=${import.meta.env.VITE_GOOGLE_MAPS_KEY}&q=${encodeURIComponent(
-                      enrichedLead.buildings[0] + ', ' + (enrichedLead.boros?.[0] || enrichedLead.boro) + ', New York, NY'
-                    )}&zoom=14`}
+                      enrichedLead.buildings[0] + ', ' + (enrichedLead.boros?.[0] || enrichedLead.boro) + ', NYC'
+                    )}&zoom=16`}
                   />
                 ) : (
                   <div className="h-[250px] bg-slate-800 flex items-center justify-center text-slate-500 text-sm">

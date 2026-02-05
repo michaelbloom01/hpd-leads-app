@@ -29,18 +29,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
   const loadData = useCallback(async () => {
     try {
       const [topLeadsData, statusData, statsData, enrichData] = await Promise.all([
-        fetchLeads({ limit: 50, min_portfolio: 10 }),
+        fetchLeads({ limit: 100, min_portfolio: 10 }), // Get more to ensure we have top 10
         fetchStatus(),
         fetchStats(),
         getEnrichmentProgress(),
       ]);
-      setTopLeads(topLeadsData);
+      
+      // Sort by portfolio size descending to get actual top leads
+      const sortedByPortfolio = [...topLeadsData].sort((a, b) => b.portfolio_size - a.portfolio_size);
+      setTopLeads(sortedByPortfolio);
       setStatus(statusData);
       setStats(statsData);
       setEnrichmentStatus(enrichData);
       
       // Find leads that are ready to contact (have contact info, not yet contacted)
-      const contactable = topLeadsData.filter(l => 
+      const contactable = sortedByPortfolio.filter(l => 
         (l.phone || l.email) && 
         l.outreach_status === 'new' &&
         l.portfolio_size >= 10
@@ -89,15 +92,27 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
     }
   };
 
-  const chartData = topLeads.slice(0, 10).map(lead => ({
-    name: (lead.agent_name || lead.owner_name || 'Unknown').split(' ')[0].slice(0, 8),
+  // Calculate units per building for top leads
+  const topLeadsWithMetrics = topLeads.slice(0, 10).map(lead => ({
+    ...lead,
+    unitsPerBuilding: lead.portfolio_size > 0 ? (lead.total_units / lead.portfolio_size).toFixed(1) : '0',
+  }));
+
+  // Chart data - sorted by portfolio size
+  const chartData = topLeadsWithMetrics.map(lead => ({
+    name: (lead.agent_name || lead.owner_name || 'Unknown').split(' ')[0].slice(0, 10),
     buildings: lead.portfolio_size,
-    score: lead.score
+    units: lead.total_units,
+    unitsPerBuilding: parseFloat(lead.unitsPerBuilding),
   }));
 
   const enrichedCount = stats?.with_phone || 0;
   const withEmail = stats?.with_email || 0;
-  const withWebsite = stats?.with_website || 0;
+
+  // Calculate total units and avg units per building across all top leads
+  const totalUnits = topLeads.reduce((sum, l) => sum + l.total_units, 0);
+  const totalBuildings = topLeads.reduce((sum, l) => sum + l.portfolio_size, 0);
+  const avgUnitsPerBuilding = totalBuildings > 0 ? (totalUnits / totalBuildings).toFixed(1) : '0';
 
   if (loading) {
     return (
@@ -146,8 +161,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
         </div>
       )}
 
-      {/* Key Metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      {/* Key Metrics - 6 columns now */}
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
         <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-5">
           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Total Leads</p>
           <p className="text-2xl font-mono font-bold text-white">{(status?.total_leads || 0).toLocaleString()}</p>
@@ -163,6 +178,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
               : 0}
           </p>
           <p className="text-[10px] text-slate-600 mt-1">10+ buildings</p>
+        </div>
+        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-5">
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Avg Units/Bldg</p>
+          <p className="text-2xl font-mono font-bold text-purple-400">{avgUnitsPerBuilding}</p>
+          <p className="text-[10px] text-slate-600 mt-1">Top 100 leads</p>
         </div>
         <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-5">
           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">With Phone</p>
@@ -228,7 +248,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                 >
                   <div>
                     <p className="text-white font-medium text-sm">{lead.agent_name || lead.owner_name}</p>
-                    <p className="text-slate-500 text-xs">{lead.portfolio_size} buildings • {lead.boros?.join(', ') || lead.boro}</p>
+                    <p className="text-slate-500 text-xs">{lead.portfolio_size} bldgs • {lead.total_units.toLocaleString()} units • {(lead.total_units / lead.portfolio_size).toFixed(1)} u/b</p>
                   </div>
                   <div className="flex items-center gap-2">
                     {lead.phone && (
@@ -253,17 +273,79 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
         )}
       </div>
 
-      {/* Charts Section */}
+      {/* Top 10 Largest Property Managers */}
+      <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Top 10 Largest Property Managers</h4>
+          <span className="text-[10px] text-slate-600">Sorted by portfolio size</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="text-[10px] text-slate-500 uppercase tracking-wider border-b border-white/5">
+                <th className="text-left py-2 px-3">#</th>
+                <th className="text-left py-2 px-3">Company</th>
+                <th className="text-right py-2 px-3">Buildings</th>
+                <th className="text-right py-2 px-3">Units</th>
+                <th className="text-right py-2 px-3">Units/Bldg</th>
+                <th className="text-left py-2 px-3">Boroughs</th>
+                <th className="text-center py-2 px-3">Contact</th>
+                <th className="text-right py-2 px-3">Score</th>
+              </tr>
+            </thead>
+            <tbody>
+              {topLeadsWithMetrics.map((lead, i) => (
+                <tr 
+                  key={lead.lead_id}
+                  onClick={() => onSelectLead?.(lead)}
+                  className="border-b border-white/5 hover:bg-slate-800/30 cursor-pointer transition-colors"
+                >
+                  <td className="py-3 px-3 text-slate-600 font-mono text-sm">{i + 1}</td>
+                  <td className="py-3 px-3">
+                    <p className="text-white font-medium text-sm truncate max-w-[200px]">{lead.agent_name || lead.owner_name}</p>
+                  </td>
+                  <td className="py-3 px-3 text-right font-mono text-sm text-blue-400">{lead.portfolio_size}</td>
+                  <td className="py-3 px-3 text-right font-mono text-sm text-slate-300">{lead.total_units.toLocaleString()}</td>
+                  <td className="py-3 px-3 text-right font-mono text-sm text-purple-400">{lead.unitsPerBuilding}</td>
+                  <td className="py-3 px-3">
+                    <div className="flex gap-1 flex-wrap">
+                      {(lead.boros || [lead.boro]).slice(0, 3).map((b, j) => (
+                        <span key={j} className="px-1.5 py-0.5 bg-slate-800 text-slate-400 text-[9px] rounded">
+                          {b?.slice(0, 3).toUpperCase()}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="py-3 px-3 text-center">
+                    <div className="flex gap-1 justify-center">
+                      {lead.phone && <span className="text-emerald-500">📞</span>}
+                      {lead.email && <span className="text-blue-500">✉️</span>}
+                      {!lead.phone && !lead.email && <span className="text-slate-700">—</span>}
+                    </div>
+                  </td>
+                  <td className="py-3 px-3 text-right">
+                    <span className={`font-mono font-bold ${lead.score >= 60 ? 'text-rose-400' : lead.score >= 40 ? 'text-amber-400' : 'text-slate-500'}`}>
+                      {lead.score.toFixed(0)}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Top Leads Chart */}
+        {/* Portfolio Size Chart */}
         <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-6">
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-6">Top 10 by Portfolio Size</h4>
+          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-6">Portfolio Size (Top 10)</h4>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#ffffff08" />
-                <XAxis dataKey="name" fontSize={10} tickLine={false} axisLine={false} tick={{fill: '#64748b'}} />
-                <YAxis fontSize={10} tickLine={false} axisLine={false} tick={{fill: '#64748b'}} />
+              <BarChart data={chartData} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#ffffff08" />
+                <XAxis type="number" fontSize={10} tickLine={false} axisLine={false} tick={{fill: '#64748b'}} />
+                <YAxis type="category" dataKey="name" fontSize={10} tickLine={false} axisLine={false} tick={{fill: '#64748b'}} width={80} />
                 <Tooltip 
                   contentStyle={{ 
                     backgroundColor: '#0f172a', 
@@ -272,58 +354,36 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                     fontSize: '11px',
                     color: '#f8fafc'
                   }}
+                  formatter={(value: number, name: string) => [value.toLocaleString(), name === 'buildings' ? 'Buildings' : 'Units']}
                 />
-                <Bar dataKey="buildings" radius={[6, 6, 0, 0]} barSize={40}>
-                  {chartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.buildings > 100 ? COLORS.primary : COLORS.accent} fillOpacity={0.8} />
-                  ))}
-                </Bar>
+                <Bar dataKey="buildings" fill={COLORS.primary} radius={[0, 6, 6, 0]} barSize={20} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Top Leads List */}
+        {/* Units per Building Chart */}
         <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-6">
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Top Leads by Score</h4>
-          <div className="space-y-3">
-            {[...topLeads].sort((a,b) => b.score - a.score).slice(0, 6).map((lead) => (
-              <div 
-                key={lead.lead_id} 
-                onClick={() => onSelectLead?.(lead)}
-                className="flex items-center justify-between p-4 bg-slate-950/50 border border-white/5 rounded-xl hover:border-blue-500/30 hover:bg-slate-900/50 transition-all cursor-pointer"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-bold text-slate-100 truncate">{lead.agent_name || lead.owner_name}</p>
-                  <p className="text-[10px] text-slate-600 mt-0.5">
-                    {lead.portfolio_size} buildings • {lead.boros?.join(', ') || lead.boro}
-                  </p>
-                </div>
-                <div className="flex items-center gap-4 ml-4">
-                  {/* Contact indicators */}
-                  <div className="flex gap-1">
-                    {lead.phone && (
-                      <span className="p-1 bg-emerald-900/50 rounded">
-                        <svg className="w-3 h-3 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
-                        </svg>
-                      </span>
-                    )}
-                    {lead.email && (
-                      <span className="p-1 bg-blue-900/50 rounded">
-                        <svg className="w-3 h-3 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
-                        </svg>
-                      </span>
-                    )}
-                  </div>
-                  {/* Score */}
-                  <div className={`text-lg font-mono font-bold ${lead.score >= 60 ? 'text-rose-400' : lead.score >= 40 ? 'text-amber-400' : 'text-slate-400'}`}>
-                    {lead.score.toFixed(0)}
-                  </div>
-                </div>
-              </div>
-            ))}
+          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-6">Units per Building (Top 10)</h4>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#ffffff08" />
+                <XAxis type="number" fontSize={10} tickLine={false} axisLine={false} tick={{fill: '#64748b'}} />
+                <YAxis type="category" dataKey="name" fontSize={10} tickLine={false} axisLine={false} tick={{fill: '#64748b'}} width={80} />
+                <Tooltip 
+                  contentStyle={{ 
+                    backgroundColor: '#0f172a', 
+                    borderRadius: '12px', 
+                    border: '1px solid rgba(255,255,255,0.1)', 
+                    fontSize: '11px',
+                    color: '#f8fafc'
+                  }}
+                  formatter={(value: number) => [value.toFixed(1), 'Units/Building']}
+                />
+                <Bar dataKey="unitsPerBuilding" fill="#a855f7" radius={[0, 6, 6, 0]} barSize={20} />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
       </div>
@@ -331,7 +391,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
       {/* Building Type Distribution */}
       {stats?.building_type_distribution && (
         <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-6">
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Building Type Distribution</h4>
+          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Building Type Distribution (All Leads)</h4>
           <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
             {Object.entries(stats.building_type_distribution).map(([type, count]) => (
               <div key={type} className="bg-slate-950/50 rounded-xl p-3 text-center">

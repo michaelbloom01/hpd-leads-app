@@ -90,7 +90,7 @@ Write only the description, no preamble or labels."""
         client = anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
             model="claude-3-haiku-20240307",  # Fast and cheap for short summaries
-            max_tokens=200,
+            max_tokens=500,  # Allow longer descriptions
             messages=[{"role": "user", "content": prompt}]
         )
         
