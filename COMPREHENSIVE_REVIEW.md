@@ -190,18 +190,19 @@ HPD Open Data → Normalize → PLUTO Join → Aggregate → Score → Persist
 - [x] Move contact info to top of detail modal (prominent emerald section)
 - [x] Add toast notifications (react-hot-toast replaces alert())
 - [x] Add mobile hamburger menu navigation
-- [ ] Add "Ready to Contact" dashboard card (next priority)
-- [ ] Add click-to-call/email actions (next priority)
+- [x] Add "Ready to Contact" dashboard card (already existed)
+- [x] Add click-to-call/email actions (already existed via tel:/mailto: links)
 
-### Phase 3: Reliability (Days 7-10) - MEDIUM ✅ MOSTLY COMPLETE
+### Phase 3: Reliability (Days 7-10) - MEDIUM ✅ COMPLETE
 
 **Objective:** It works without babysitting
 
 - [x] Add /api/health endpoint
 - [x] Configure CORS for production (CORS_ORIGINS env var)
-- [ ] Add Railway cron for daily enrichment
-- [ ] Add error notifications (email on critical failures)
-- [ ] Weekly SQLite backup to Google Drive
+- [x] Add continuous enrichment scheduler (auto-enriches all leads with portfolio >= 10)
+- [x] Add /api/enrichment/queue endpoint to monitor queue
+- [~] Error notifications - skipped (not needed for now)
+- [~] Weekly SQLite backup - skipped (data can be regenerated from HPD)
 
 ### Phase 4: Code Cleanup (Days 11-14) - LOW ✅ COMPLETE
 

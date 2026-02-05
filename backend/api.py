@@ -119,6 +119,11 @@ async def startup_load():
                 # Start auto-enrichment in background
                 import asyncio
                 asyncio.create_task(_auto_start_enrichment())
+        
+        # Start the continuous enrichment scheduler
+        import asyncio
+        asyncio.create_task(_continuous_enrichment_scheduler())
+        logger.info("Startup: Continuous enrichment scheduler started")
     else:
         logger.info("Startup: No leads in database, run /api/refresh to populate")
 
@@ -145,6 +150,62 @@ async def _auto_start_enrichment():
     thread = threading.Thread(target=_run_background_enrichment, args=(500, None))
     thread.daemon = True
     thread.start()
+
+
+async def _continuous_enrichment_scheduler():
+    """
+    Background scheduler that continuously enriches leads.
+    
+    Strategy:
+    - Enrich leads in batches of 500 (prioritized by score)
+    - Wait for current batch to complete before starting next
+    - Target: Enrich all leads with portfolio >= 10 buildings
+    - Runs every 30 minutes to check if more enrichment needed
+    """
+    import asyncio
+    
+    # Wait for initial startup to complete
+    await asyncio.sleep(60)
+    
+    while True:
+        try:
+            # Check if enrichment is already running
+            with _enrichment_lock:
+                if _enrichment_state["running"]:
+                    logger.debug("Scheduler: Enrichment already running, waiting...")
+                    await asyncio.sleep(300)  # Check again in 5 minutes
+                    continue
+            
+            # Get stats on what's been enriched
+            db = get_database()
+            stats = db.get_enrichment_stats()
+            
+            # Count leads that still need enrichment (portfolio >= 10, not yet enriched)
+            unenriched_count = 0
+            for lead in _leads_cache:
+                if lead.portfolio_size >= 10 and lead.enrichment_status in ['none', None, '']:
+                    unenriched_count += 1
+            
+            if unenriched_count > 0:
+                logger.info(f"Scheduler: {unenriched_count} high-value leads still need enrichment, starting batch")
+                
+                # Start next batch (up to 500)
+                batch_size = min(500, unenriched_count)
+                thread = threading.Thread(target=_run_background_enrichment, args=(batch_size, None))
+                thread.daemon = True
+                thread.start()
+                
+                # Wait for this batch to likely complete (estimate ~10 sec/lead)
+                estimated_time = batch_size * 12  # 12 seconds per lead with buffer
+                await asyncio.sleep(min(estimated_time, 7200))  # Max 2 hours wait
+            else:
+                logger.info("Scheduler: All high-value leads (portfolio >= 10) are enriched!")
+                # Check again in 6 hours (in case new leads were added)
+                await asyncio.sleep(21600)
+                
+        except Exception as e:
+            logger.error(f"Scheduler error: {e}")
+            await asyncio.sleep(300)  # Wait 5 minutes on error
 
 
 async def _resume_enrichment_job(job: dict):
@@ -188,12 +249,49 @@ async def health_check():
     db = get_database()
     lead_count = db.get_leads_count()
     
+    # Count unenriched high-value leads
+    unenriched_count = sum(1 for lead in _leads_cache 
+                          if lead.portfolio_size >= 10 and lead.enrichment_status in ['none', None, ''])
+    
     return {
         "status": "healthy",
         "leads_in_cache": len(_leads_cache),
         "leads_in_db": lead_count,
         "enrichment_running": _enrichment_state.get("running", False),
+        "unenriched_high_value": unenriched_count,
         "last_refresh": _last_refresh.isoformat() if _last_refresh else None,
+    }
+
+
+@app.get("/api/enrichment/queue")
+async def get_enrichment_queue():
+    """Get info about leads waiting for enrichment."""
+    # Count by enrichment status
+    status_counts = {"none": 0, "partial": 0, "complete": 0, "failed": 0}
+    high_value_unenriched = []
+    
+    for lead in _leads_cache:
+        status = lead.enrichment_status or "none"
+        if status in status_counts:
+            status_counts[status] += 1
+        
+        # Track high-value unenriched leads
+        if lead.portfolio_size >= 10 and status in ["none", ""]:
+            high_value_unenriched.append({
+                "lead_id": lead.lead_id,
+                "name": lead.agent_name or lead.owner_name,
+                "portfolio_size": lead.portfolio_size,
+                "score": lead.score,
+            })
+    
+    # Sort by score descending
+    high_value_unenriched.sort(key=lambda x: x["score"], reverse=True)
+    
+    return {
+        "total_leads": len(_leads_cache),
+        "status_counts": status_counts,
+        "high_value_unenriched_count": len(high_value_unenriched),
+        "next_in_queue": high_value_unenriched[:10],  # Top 10 waiting
     }
 
 
