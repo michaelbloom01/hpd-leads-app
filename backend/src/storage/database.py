@@ -305,6 +305,51 @@ class LeadsDatabase:
     
     # === Full Lead Persistence ===
     
+    def update_lead(self, lead_id: str, updates: Dict) -> bool:
+        """
+        Update specific fields of a lead in the database.
+        
+        Args:
+            lead_id: The lead ID to update
+            updates: Dict of field names to new values
+            
+        Returns:
+            True if the lead was found and updated, False otherwise.
+        """
+        if not updates:
+            return False
+        
+        # Only allow updating certain fields to prevent SQL injection
+        allowed_fields = {
+            'business_summary', 'phone', 'email', 'website', 
+            'enrichment_status', 'last_enriched', 'owner_principal',
+            'dos_id', 'dos_status', 'notes', 'outreach_status'
+        }
+        
+        # Filter to allowed fields
+        safe_updates = {k: v for k, v in updates.items() if k in allowed_fields}
+        if not safe_updates:
+            logger.warning(f"No valid fields to update for lead {lead_id}")
+            return False
+        
+        with self._get_connection() as conn:
+            # Build the SET clause
+            set_clause = ", ".join(f"{field} = ?" for field in safe_updates.keys())
+            values = list(safe_updates.values()) + [lead_id]
+            
+            cursor = conn.execute(
+                f"UPDATE leads SET {set_clause} WHERE lead_id = ?",
+                values
+            )
+            conn.commit()
+            
+            if cursor.rowcount > 0:
+                logger.info(f"Updated lead {lead_id}: {list(safe_updates.keys())}")
+                return True
+            else:
+                logger.warning(f"Lead {lead_id} not found in database")
+                return False
+    
     def save_leads(self, leads: List["Lead"]) -> int:
         """
         Save all leads to the database (bulk upsert).
