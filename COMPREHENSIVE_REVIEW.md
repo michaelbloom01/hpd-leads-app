@@ -210,9 +210,9 @@ HPD Open Data → Normalize → PLUTO Join → Aggregate → Score → Persist
 
 - [x] Remove dead code (PropertyMap.tsx deleted)
 - [x] Remove unused dependencies (@google/genai, leaflet removed)
-- [ ] Fix TypeScript any types
+- [x] Fix TypeScript any types (Dashboard.tsx, LeadTable.tsx)
 - [x] Add integration tests for enrichment pipeline
-- [ ] Update documentation
+- [x] Update documentation (README.md, backend/CLAUDE.md)
 
 ---
 

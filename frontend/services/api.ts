@@ -198,9 +198,9 @@ export async function refreshPipeline(full: boolean = false): Promise<{
 }
 
 /**
- * Get detailed statistics
+ * Statistics response from the API
  */
-export async function fetchStats(): Promise<{
+export interface PipelineStats {
   total_leads: number;
   total_buildings: number;
   by_borough: Record<string, number>;
@@ -210,7 +210,14 @@ export async function fetchStats(): Promise<{
   with_phone: number;
   with_email: number;
   with_website: number;
-}> {
+  building_type_distribution: Record<string, number>;
+  leads_with_pluto_data: number;
+}
+
+/**
+ * Get detailed statistics
+ */
+export async function fetchStats(): Promise<PipelineStats> {
   const response = await fetch(`${API_BASE_URL}/api/stats`);
   
   if (!response.ok) {

@@ -8,7 +8,8 @@ import {
   fetchStatus, 
   fetchStats,
   ApiLead, 
-  PipelineStatus, 
+  PipelineStatus,
+  PipelineStats,
   getEnrichmentProgress,
   startBatchEnrichment,
   EnrichmentProgress 
@@ -22,7 +23,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
   const [topLeads, setTopLeads] = useState<ApiLead[]>([]);
   const [readyToContact, setReadyToContact] = useState<ApiLead[]>([]);
   const [status, setStatus] = useState<PipelineStatus | null>(null);
-  const [stats, setStats] = useState<any>(null);
+  const [stats, setStats] = useState<PipelineStats | null>(null);
   const [enrichmentStatus, setEnrichmentStatus] = useState<EnrichmentProgress | null>(null);
   const [loading, setLoading] = useState(true);
   const [startingEnrichment, setStartingEnrichment] = useState(false);

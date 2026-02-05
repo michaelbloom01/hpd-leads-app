@@ -131,9 +131,15 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     
     // Sort
     result.sort((a, b) => {
-      let aVal: any = a[sortField];
-      let bVal: any = b[sortField];
+      let aVal: string | number | null = a[sortField];
+      let bVal: string | number | null = b[sortField];
       
+      // Handle nulls - push them to the end
+      if (aVal === null && bVal === null) return 0;
+      if (aVal === null) return 1;
+      if (bVal === null) return -1;
+      
+      // Normalize strings for comparison
       if (typeof aVal === 'string') aVal = aVal.toLowerCase();
       if (typeof bVal === 'string') bVal = bVal.toLowerCase();
       

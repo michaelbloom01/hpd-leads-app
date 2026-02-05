@@ -1,72 +1,100 @@
 # HPD Leads App
 
-NYC property management lead generation pipeline with web interface. Identifies **management companies** responsible for each building in the HPD database.
+NYC property management lead generation platform for acquisition targets. Identifies **management companies** from the HPD database, scores them, enriches with contact info, and provides a clean UI for outreach.
 
-**Live App:** https://frontend-nine-psi-58.vercel.app  
-**Backend API:** https://hpd-leads-api.onrender.com  
+**Live App:** https://hpd-leads-app.vercel.app  
+**Backend API:** https://hpd-leads-app-production.up.railway.app  
 **GitHub:** https://github.com/michaelbloom01/hpd-leads-app
 
 ## What It Does
 
-1. **Fetches ALL buildings** from NYC HPD database (201,282 buildings)
-2. **Identifies the management company** (Agent contact type) for each building
-3. **Groups buildings by management company** to create leads
-4. **Scores leads** based on portfolio size, professionalism indicators, contact completeness
-5. **Enriches leads** by web crawling to find phone, email, website
-6. **Displays in a filterable UI** similar to instances.vantage.sh
+1. **Fetches ALL buildings** from NYC HPD database (200k+ buildings)
+2. **Joins with PLUTO data** for building classification (condo, coop, rental, etc.)
+3. **Groups by management company** to create ~100k leads
+4. **Scores leads** based on portfolio size, building types, professional indicators
+5. **Auto-enriches** top leads with phone, email, website via web crawling
+6. **Displays in a filterable UI** with click-to-call/email functionality
 
-## Key Data Insight
+## Current Status (Feb 2026)
 
-The HPD "Agent" contact type = **Property Management Company**
+| Metric | Value |
+|--------|-------|
+| Total Leads | 102,505 |
+| High-Value Leads (10+ buildings) | ~1,300 |
+| With Phone | 70+ (growing via auto-enrichment) |
+| With Email | 100+ |
+| Building Type Coverage | 100% (PLUTO data) |
 
-| Contact Type | Count | Meaning |
-|--------------|-------|---------|
-| **Agent** | 153,418 | Property management company |
-| SiteManager | 160,905 | Building super |
-| CorporateOwner | 119,915 | Owner entity (LLC, Corp) |
-| HeadOfficer | 126,349 | Individual at owner |
+## Key Features
+
+### Dashboard
+- Key metrics at a glance (total leads, enriched count, top scores)
+- "Ready to Contact" quick-access card
+- Portfolio size and units/building charts
+- Building type distribution
+
+### Lead Table
+- Filter by borough, score, portfolio size, building type
+- Filter for leads with phone/email/website
+- Bulk selection and export to CSV
+- Click any lead to see full details
+
+### Lead Detail Modal
+- **Contact info front and center** - phone, email, website with one-click actions
+- Click-to-call (`tel:`) and click-to-email (`mailto:`)
+- Portfolio composition (condos, coops, rentals breakdown)
+- Map showing all building locations
+- AI-generated company summaries
+- Outreach tracking with status and notes
+
+### Auto-Enrichment
+- Continuous background scheduler enriches all high-value leads
+- Multi-source search: DuckDuckGo → Bing → Google (rate-limit resilient)
+- NY DOS registry lookup for corporation info
+- Progress persists across server restarts
 
 ## Architecture
 
 ```
 hpd-leads-app/
-├── backend/          # Python FastAPI server (Railway)
-│   ├── api.py        # REST API endpoints
-│   ├── src/          # Pipeline code
-│   │   ├── ingest/   # HPD API client
-│   │   ├── transform/# Normalize & aggregate
-│   │   ├── score/    # Scoring logic
-│   │   ├── enrich/   # Web crawl enrichment
-│   │   └── publish/  # Google Sheets export
-│   └── requirements.txt
-├── frontend/         # React + TypeScript (Vercel)
-│   ├── components/   # UI components
-│   ├── services/     # API client
+├── backend/              # Python FastAPI (Railway)
+│   ├── api.py            # REST API + enrichment scheduler
+│   ├── src/
+│   │   ├── ingest/       # HPD & PLUTO API clients
+│   │   ├── transform/    # Normalize & aggregate to leads
+│   │   ├── score/        # Scoring algorithm
+│   │   ├── enrich/       # Web crawl, NY DOS, AI summary
+│   │   └── storage/      # SQLite persistence
+│   └── tests/            # Integration tests
+├── frontend/             # React + TypeScript (Vercel)
+│   ├── components/       # Dashboard, LeadTable, LeadDetail
+│   ├── services/         # API client
 │   └── package.json
-└── README.md
+└── COMPREHENSIVE_REVIEW.md  # Full project review & roadmap
 ```
 
-## Backend API
+## API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/` | GET | Health check |
+| `/api/health` | GET | Health check with enrichment status |
 | `/api/leads` | GET | Get leads with filtering |
 | `/api/leads/{id}` | GET | Get single lead |
 | `/api/status` | GET | Pipeline status |
 | `/api/stats` | GET | Detailed statistics |
-| `/api/refresh?full=true` | POST | Refresh from HPD (full=true for all 200k+) |
-| `/api/enrich` | POST | Enrich specific leads |
-| `/api/enrich/batch` | POST | Auto-enrich top leads |
+| `/api/enrichment/queue` | GET | What's waiting for enrichment |
+| `/api/enrich/status` | GET | Current enrichment progress |
+| `/api/enrich/batch` | POST | Start batch enrichment |
+| `/api/refresh` | POST | Refresh from HPD |
 
 ### Query Parameters for `/api/leads`
 
 - `min_score` - Filter by minimum score
 - `min_portfolio` - Filter by minimum portfolio size
-- `boro` - Filter by borough (Manhattan, Brooklyn, Queens, Bronx, Staten Island)
-- `has_website` - Filter by website availability
+- `boro` - Filter by borough
+- `has_phone` - Filter by phone availability
 - `has_email` - Filter by email availability
-- `limit` - Max results (default 100, max 500)
+- `limit` - Max results (default 100)
 - `offset` - Pagination offset
 
 ## Local Development
@@ -76,9 +104,9 @@ hpd-leads-app/
 ```bash
 cd backend
 pip install -r requirements.txt
-python api.py
-# API runs at http://localhost:8000
-# Interactive docs at http://localhost:8000/docs
+python -m uvicorn api:app --reload --port 8000
+# API at http://localhost:8000
+# Docs at http://localhost:8000/docs
 ```
 
 ### Frontend
@@ -87,52 +115,54 @@ python api.py
 cd frontend
 npm install
 npm run dev
-# UI runs at http://localhost:3000
+# UI at http://localhost:5173
 ```
-
-## Frontend Features
-
-- **Vantage.sh-style data table** with inline filters
-- **Filters:** search, borough, score range, portfolio size, contact info, management company
-- **Sortable columns** (click headers)
-- **Pagination** (50 per page)
-- **Bulk selection and enrichment**
-- **Lead detail modal** with one-click enrichment
-- **Quick (10k) or Full (200k+)** data refresh toggle
-
-## Deployment
-
-The app is deployed and live:
-- **Frontend:** Vercel at https://frontend-nine-psi-58.vercel.app
-- **Backend:** Render at https://hpd-leads-api.onrender.com
-
-### Backend → Render (Free Tier)
-
-1. Connect Render to this repo (uses `render.yaml` Blueprint)
-2. Or manually: New Web Service → root directory `backend` → Python detected
-3. Start command: `gunicorn api:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT`
-
-### Frontend → Vercel
-
-1. Connect Vercel to this repo
-2. Set root directory to `frontend`
-3. Set environment variable `VITE_API_URL` to your backend URL
 
 ## Environment Variables
 
-### Backend (.env)
+### Backend (Railway)
 
 ```
-NYC_OPEN_DATA_APP_TOKEN=optional_for_higher_rate_limits
+ANTHROPIC_API_KEY=sk-ant-...     # For AI summaries
+CORS_ORIGINS=https://your-frontend.vercel.app  # Optional, defaults to *
 ```
 
-### Frontend (.env)
+### Frontend (Vercel)
 
 ```
-VITE_API_URL=https://your-backend.railway.app
+VITE_API_URL=https://hpd-leads-app-production.up.railway.app
+VITE_GOOGLE_MAPS_KEY=AIza...     # For building location maps
 ```
+
+## Deployment
+
+### Backend → Railway
+
+1. Connect Railway to GitHub repo
+2. Set root directory to `backend`
+3. Add environment variables
+4. Uses `Dockerfile` for build
+
+### Frontend → Vercel
+
+1. Connect Vercel to GitHub repo
+2. Set root directory to `frontend`
+3. Add environment variables
+4. Auto-deploys on push
 
 ## Data Sources
 
-- **Buildings:** `https://data.cityofnewyork.us/resource/tesw-yqqr.json` (201,282 records)
-- **Contacts:** `https://data.cityofnewyork.us/resource/feu5-w2e2.json` (774,616 records)
+- **HPD Buildings:** `https://data.cityofnewyork.us/resource/tesw-yqqr.json`
+- **HPD Contacts:** `https://data.cityofnewyork.us/resource/feu5-w2e2.json`
+- **PLUTO (Building Classes):** `https://data.cityofnewyork.us/resource/64uk-42ks.json`
+
+## Enrichment Sources
+
+1. **Web Search** - DuckDuckGo, Bing, Google (with rate limiting)
+2. **NY DOS** - Corporation registry for registered agent info
+3. **Website Scraping** - Extract phone, email from company websites
+4. **AI Summary** - Claude-generated company descriptions
+
+## License
+
+Private - Michael Bloom
