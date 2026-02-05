@@ -196,7 +196,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
         </div>
         <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-5">
           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Top Score</p>
-          <p className="text-2xl font-mono font-bold text-rose-400">{status?.top_score?.toFixed(1) || 0}</p>
+          <p className="text-2xl font-mono font-bold text-emerald-400">{status?.top_score?.toFixed(1) || 0}</p>
           <p className="text-[10px] text-slate-600 mt-1">Out of 100</p>
         </div>
       </div>
@@ -277,11 +277,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
       <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-6">
         <div className="flex items-center justify-between mb-4">
           <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Top 10 Largest Property Managers</h4>
-          <span className="text-[10px] text-slate-600">Sorted by portfolio size</span>
+          <span className="text-[10px] text-slate-600">Click any row to view details</span>
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
           <table className="w-full">
-            <thead>
+            <thead className="sticky top-0 bg-slate-900 z-10">
               <tr className="text-[10px] text-slate-500 uppercase tracking-wider border-b border-white/5">
                 <th className="text-left py-2 px-3">#</th>
                 <th className="text-left py-2 px-3">Company</th>
@@ -302,9 +302,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                 >
                   <td className="py-3 px-3 text-slate-600 font-mono text-sm">{i + 1}</td>
                   <td className="py-3 px-3">
-                    <p className="text-white font-medium text-sm truncate max-w-[200px]">{lead.agent_name || lead.owner_name}</p>
+                    <p className="text-white font-medium text-sm" title={lead.agent_name || lead.owner_name}>
+                      {lead.agent_name || lead.owner_name}
+                    </p>
                   </td>
-                  <td className="py-3 px-3 text-right font-mono text-sm text-blue-400">{lead.portfolio_size}</td>
+                  <td className="py-3 px-3 text-right font-mono text-sm text-blue-400 font-bold">{lead.portfolio_size}</td>
                   <td className="py-3 px-3 text-right font-mono text-sm text-slate-300">{lead.total_units.toLocaleString()}</td>
                   <td className="py-3 px-3 text-right font-mono text-sm text-purple-400">{lead.unitsPerBuilding}</td>
                   <td className="py-3 px-3">
@@ -314,6 +316,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                           {b?.slice(0, 3).toUpperCase()}
                         </span>
                       ))}
+                      {(lead.boros?.length || 0) > 3 && (
+                        <span className="px-1.5 py-0.5 bg-slate-800 text-slate-500 text-[9px] rounded">
+                          +{(lead.boros?.length || 0) - 3}
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td className="py-3 px-3 text-center">
@@ -324,7 +331,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                     </div>
                   </td>
                   <td className="py-3 px-3 text-right">
-                    <span className={`font-mono font-bold ${lead.score >= 60 ? 'text-rose-400' : lead.score >= 40 ? 'text-amber-400' : 'text-slate-500'}`}>
+                    <span className={`font-mono font-bold ${lead.score >= 60 ? 'text-emerald-400' : lead.score >= 40 ? 'text-amber-400' : 'text-slate-500'}`}>
                       {lead.score.toFixed(0)}
                     </span>
                   </td>
