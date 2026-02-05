@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { toast } from 'react-hot-toast';
 import { COLORS } from '../constants';
 import { 
   fetchLeads, 
@@ -86,7 +87,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
       setEnrichmentStatus(enrichData);
     } catch (err) {
       console.error('Failed to start enrichment:', err);
-      alert('Failed to start enrichment. Check console for details.');
+      toast.error('Failed to start enrichment. Check console for details.');
     } finally {
       setStartingEnrichment(false);
     }

@@ -181,6 +181,22 @@ async def _resume_enrichment_job(job: dict):
     thread.start()
 
 
+# Health check endpoint
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint for monitoring."""
+    db = get_database()
+    lead_count = db.get_leads_count()
+    
+    return {
+        "status": "healthy",
+        "leads_in_cache": len(_leads_cache),
+        "leads_in_db": lead_count,
+        "enrichment_running": _enrichment_state.get("running", False),
+        "last_refresh": _last_refresh.isoformat() if _last_refresh else None,
+    }
+
+
 class OutreachAttemptResponse(BaseModel):
     """Outreach attempt data for API response."""
     id: str

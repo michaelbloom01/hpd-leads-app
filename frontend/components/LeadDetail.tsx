@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { toast } from 'react-hot-toast';
 import { ApiLead, updateLead, researchLead, addOutreachAttempt, enrichLeadContacts, generateAiSummary, CompanyResearch, OutreachAttempt, DOSInfo } from '../services/api';
 
 interface Props {
@@ -159,6 +160,131 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
         </div>
 
         <div className="p-6 space-y-6">
+          {/* CONTACT INFO - FRONT AND CENTER */}
+          <div className="bg-gradient-to-br from-emerald-900/30 to-blue-900/30 border border-emerald-500/30 rounded-xl p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
+                <span>📞</span> Contact Information
+              </h3>
+              <button
+                onClick={async () => {
+                  setIsEnriching(true);
+                  try {
+                    const result = await enrichLeadContacts(lead.lead_id);
+                    setEnrichedLead({
+                      ...enrichedLead,
+                      phone: result.phones[0]?.value || enrichedLead.phone,
+                      email: result.emails[0]?.value || enrichedLead.email,
+                      phones: result.phones,
+                      emails: result.emails,
+                      website: result.website || enrichedLead.website,
+                      enrichment_status: (result.phones.length || result.emails.length) ? 'complete' : 'partial',
+                    });
+                    if (result.dos_info) setDosInfo(result.dos_info);
+                  } catch (err) {
+                    console.error('Contact enrichment failed:', err);
+                  } finally {
+                    setIsEnriching(false);
+                  }
+                }}
+                disabled={isEnriching}
+                className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-medium rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors flex items-center gap-2"
+              >
+                {isEnriching ? (
+                  <>
+                    <svg className="w-3 h-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                    </svg>
+                    Finding...
+                  </>
+                ) : (
+                  <>Find Contacts</>
+                )}
+              </button>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Phone */}
+              <div className="bg-slate-900/50 rounded-lg p-4">
+                <div className="text-xs text-slate-500 uppercase tracking-wider mb-2">Phone</div>
+                {enrichedLead.phone ? (
+                  <a 
+                    href={`tel:${enrichedLead.phone}`}
+                    className="text-lg font-mono text-emerald-400 hover:text-emerald-300 flex items-center gap-2"
+                  >
+                    <span>📞</span> {enrichedLead.phone}
+                  </a>
+                ) : (
+                  <span className="text-slate-600 text-sm">Not found</span>
+                )}
+              </div>
+              
+              {/* Email */}
+              <div className="bg-slate-900/50 rounded-lg p-4">
+                <div className="text-xs text-slate-500 uppercase tracking-wider mb-2">Email</div>
+                {enrichedLead.email ? (
+                  <a 
+                    href={`mailto:${enrichedLead.email}`}
+                    className="text-lg text-blue-400 hover:text-blue-300 flex items-center gap-2 truncate"
+                  >
+                    <span>✉️</span> {enrichedLead.email}
+                  </a>
+                ) : (
+                  <span className="text-slate-600 text-sm">Not found</span>
+                )}
+              </div>
+              
+              {/* Website */}
+              <div className="bg-slate-900/50 rounded-lg p-4">
+                <div className="text-xs text-slate-500 uppercase tracking-wider mb-2">Website</div>
+                {enrichedLead.website ? (
+                  <a 
+                    href={enrichedLead.website}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-lg text-purple-400 hover:text-purple-300 flex items-center gap-2 truncate"
+                  >
+                    <span>🌐</span> {new URL(enrichedLead.website).hostname}
+                  </a>
+                ) : (
+                  <span className="text-slate-600 text-sm">Not found</span>
+                )}
+              </div>
+            </div>
+            
+            {/* Quick Actions */}
+            <div className="flex gap-2 mt-4 pt-4 border-t border-white/10">
+              {enrichedLead.phone && (
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(enrichedLead.phone || '');
+                    toast.success('Phone copied to clipboard');
+                  }}
+                  className="flex-1 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm rounded-lg transition-colors"
+                >
+                  Copy Phone
+                </button>
+              )}
+              {enrichedLead.email && (
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(enrichedLead.email || '');
+                    toast.success('Email copied to clipboard');
+                  }}
+                  className="flex-1 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm rounded-lg transition-colors"
+                >
+                  Copy Email
+                </button>
+              )}
+              <button
+                onClick={openWebsite}
+                className="flex-1 px-3 py-2 bg-purple-600 hover:bg-purple-500 text-white text-sm rounded-lg transition-colors"
+              >
+                {enrichedLead.website ? 'Visit Website' : 'Search Google'}
+              </button>
+            </div>
+          </div>
+
           {/* Score & Portfolio */}
           <div className="grid grid-cols-3 gap-4">
             <div className="bg-slate-800/50 rounded-xl p-4 text-center">
@@ -175,8 +301,8 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               <div className="text-xs text-slate-500 mt-1 uppercase tracking-wider">Buildings</div>
             </div>
             <div className="bg-slate-800/50 rounded-xl p-4 text-center">
-              <div className="text-3xl font-bold font-mono text-purple-400">{enrichedLead.boros.length}</div>
-              <div className="text-xs text-slate-500 mt-1 uppercase tracking-wider">Boroughs</div>
+              <div className="text-3xl font-bold font-mono text-purple-400">{enrichedLead.total_units.toLocaleString()}</div>
+              <div className="text-xs text-slate-500 mt-1 uppercase tracking-wider">Units</div>
             </div>
           </div>
 

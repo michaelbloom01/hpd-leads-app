@@ -4,9 +4,10 @@ import React from 'react';
 interface Props {
   activeTab: 'dashboard' | 'leads';
   onTabChange: (tab: 'dashboard' | 'leads') => void;
+  isMobileOpen?: boolean;
 }
 
-const Sidebar: React.FC<Props> = ({ activeTab, onTabChange }) => {
+const Sidebar: React.FC<Props> = ({ activeTab, onTabChange, isMobileOpen = false }) => {
   const navItems = [
     { id: 'dashboard' as const, label: 'Dashboard', icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
@@ -17,7 +18,15 @@ const Sidebar: React.FC<Props> = ({ activeTab, onTabChange }) => {
   ];
 
   return (
-    <div className="hidden lg:flex flex-col w-72 bg-slate-950 border-r border-white/5 p-8 space-y-12" role="complementary">
+    <div 
+      className={`
+        ${isMobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+        fixed lg:relative inset-y-0 left-0 z-40
+        flex flex-col w-72 bg-slate-950 border-r border-white/5 p-8 space-y-12
+        transition-transform duration-300 ease-in-out
+      `} 
+      role="complementary"
+    >
       <div className="flex items-center gap-4 px-2">
         <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-900/40">
            <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z"></path></svg>
