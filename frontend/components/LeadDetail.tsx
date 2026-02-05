@@ -945,11 +945,11 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
             <div className="bg-slate-800/30 rounded-xl p-5">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
-                  <span>🗺️</span> Building Locations
+                  <span>🗺️</span> Portfolio Footprint
                 </h3>
                 <a
                   href={`https://www.google.com/maps/search/${encodeURIComponent(
-                    enrichedLead.buildings.slice(0, 10).map(b => b + ', New York, NY').join(' | ')
+                    (enrichedLead.agent_name || enrichedLead.owner_name) + ' buildings ' + (enrichedLead.boros?.[0] || enrichedLead.boro) + ', NYC'
                   )}`}
                   target="_blank"
                   rel="noopener noreferrer"
@@ -958,22 +958,22 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
                   </svg>
-                  Open in Google Maps
+                  View All on Maps
                 </a>
               </div>
-              {/* Embedded Map using iframe */}
+              {/* Static Map showing multiple building markers */}
               <div className="rounded-lg overflow-hidden border border-white/10">
                 {import.meta.env.VITE_GOOGLE_MAPS_KEY ? (
-                  <iframe
-                    title="Building locations"
-                    width="100%"
-                    height="250"
-                    style={{ border: 0 }}
+                  <img
+                    src={`https://maps.googleapis.com/maps/api/staticmap?size=600x300&scale=2&maptype=roadmap${
+                      // Add markers for up to 25 buildings (API limit is ~8KB URL)
+                      enrichedLead.buildings.slice(0, 25).map((addr, i) => 
+                        `&markers=color:${i === 0 ? 'red' : 'blue'}%7Csize:small%7C${encodeURIComponent(addr + ', New York, NY')}`
+                      ).join('')
+                    }&key=${import.meta.env.VITE_GOOGLE_MAPS_KEY}`}
+                    alt={`Map showing ${Math.min(enrichedLead.buildings.length, 25)} building locations`}
+                    className="w-full h-[250px] object-cover"
                     loading="lazy"
-                    referrerPolicy="no-referrer-when-downgrade"
-                    src={`https://www.google.com/maps/embed/v1/place?key=${import.meta.env.VITE_GOOGLE_MAPS_KEY}&q=${encodeURIComponent(
-                      enrichedLead.buildings[0] + ', ' + (enrichedLead.boros?.[0] || enrichedLead.boro) + ', NYC'
-                    )}&zoom=16`}
                   />
                 ) : (
                   <div className="h-[250px] bg-slate-800 flex items-center justify-center text-slate-500 text-sm">
@@ -982,7 +982,11 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                 )}
               </div>
               <p className="text-slate-500 text-xs mt-2">
-                Showing approximate locations for {enrichedLead.buildings.length} buildings across {enrichedLead.boros?.join(', ') || enrichedLead.boro}
+                {enrichedLead.buildings.length <= 25 ? (
+                  <>Showing all {enrichedLead.buildings.length} buildings across {enrichedLead.boros?.join(', ') || enrichedLead.boro}</>
+                ) : (
+                  <>Showing 25 of {enrichedLead.buildings.length} buildings across {enrichedLead.boros?.join(', ') || enrichedLead.boro} (first marker in red)</>
+                )}
               </p>
             </div>
           )}
