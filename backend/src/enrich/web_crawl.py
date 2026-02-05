@@ -271,16 +271,21 @@ class WebCrawler:
         Returns:
             Website URL or None
         """
-        # Try Google first (if available)
+        # Try DuckDuckGo first (more reliable, less rate limiting)
+        result = self._search_duckduckgo(company_name)
+        if result:
+            return result
+        
+        # Try Bing as second fallback
+        result = self._search_bing(company_name)
+        if result:
+            return result
+        
+        # Try Google last (most likely to rate limit)
         if GOOGLE_SEARCH_AVAILABLE:
             result = self._search_google(company_name)
             if result:
                 return result
-        
-        # Fallback to DuckDuckGo
-        result = self._search_duckduckgo(company_name)
-        if result:
-            return result
         
         logger.info(f"No website found for {company_name}")
         return None
@@ -336,7 +341,7 @@ class WebCrawler:
         return result
     
     def _search_google(self, company_name: str) -> Optional[str]:
-        """Search Google for company website."""
+        """Search Google for company website with exponential backoff."""
         search_queries = [
             f'"{company_name}" property management NYC site',
             f'"{company_name}" NYC real estate',
@@ -344,28 +349,40 @@ class WebCrawler:
         ]
         
         for query in search_queries:
-            try:
-                logger.debug(f"Google search: {query}")
-                
-                # Add random delay to avoid rate limiting
-                time.sleep(self.delay + random.uniform(0.5, 1.5))
-                
-                # Search Google (limit to 10 results)
-                results = list(google_search(query, num_results=10, sleep_interval=2))
-                
-                if not results:
-                    logger.debug(f"Google returned no results for: {query}")
-                    continue
-                
-                # Find first result that's not an excluded domain
-                for url in results:
-                    if self._is_valid_company_url(url):
-                        logger.info(f"Found website via Google for {company_name}: {url}")
-                        return self._normalize_url(url)
-                
-            except Exception as e:
-                logger.warning(f"Google search failed for query '{query}': {e}")
-                time.sleep(5)
+            # Retry with exponential backoff
+            for attempt in range(3):
+                try:
+                    logger.debug(f"Google search (attempt {attempt + 1}): {query}")
+                    
+                    # Exponential backoff delay
+                    backoff_delay = self.delay * (2 ** attempt) + random.uniform(0.5, 1.5)
+                    time.sleep(backoff_delay)
+                    
+                    # Search Google (limit to 10 results)
+                    results = list(google_search(query, num_results=10, sleep_interval=3))
+                    
+                    if not results:
+                        logger.debug(f"Google returned no results for: {query}")
+                        break  # No results, try next query
+                    
+                    # Find first result that's not an excluded domain
+                    for url in results:
+                        if self._is_valid_company_url(url):
+                            logger.info(f"Found website via Google for {company_name}: {url}")
+                            return self._normalize_url(url)
+                    
+                    break  # Got results but none valid, try next query
+                    
+                except Exception as e:
+                    error_str = str(e).lower()
+                    if "429" in error_str or "too many requests" in error_str or "rate" in error_str:
+                        # Rate limited - exponential backoff
+                        wait_time = 10 * (2 ** attempt)
+                        logger.warning(f"Google rate limited, waiting {wait_time}s (attempt {attempt + 1}/3)")
+                        time.sleep(wait_time)
+                    else:
+                        logger.warning(f"Google search failed for query '{query}': {e}")
+                        break  # Non-rate-limit error, try next query
         
         return None
     
@@ -444,6 +461,54 @@ class WebCrawler:
                         
             except Exception as e:
                 logger.warning(f"DuckDuckGo search failed for query '{query}': {e}")
+                time.sleep(2)
+        
+        return None
+    
+    def _search_bing(self, company_name: str) -> Optional[str]:
+        """Search Bing for company website (additional fallback)."""
+        import urllib.parse
+        
+        search_queries = [
+            f'{company_name} property management NYC',
+            f'{company_name} real estate NYC',
+        ]
+        
+        for query in search_queries:
+            try:
+                logger.debug(f"Bing search: {query}")
+                
+                time.sleep(self.delay + random.uniform(0.5, 1.0))
+                
+                # Bing search URL
+                encoded_query = urllib.parse.quote_plus(query)
+                bing_url = f"https://www.bing.com/search?q={encoded_query}"
+                
+                response = self.session.get(bing_url, timeout=10)
+                
+                if response.status_code != 200:
+                    logger.debug(f"Bing returned status {response.status_code}")
+                    continue
+                
+                soup = BeautifulSoup(response.text, "lxml")
+                
+                # Bing results are in <li class="b_algo"> with <a> tags
+                for result in soup.select("li.b_algo a"):
+                    href = result.get("href", "")
+                    
+                    # Skip Bing internal links
+                    if not href or "bing.com" in href or "microsoft.com" in href:
+                        continue
+                    
+                    if not href.startswith("http"):
+                        continue
+                    
+                    if self._is_valid_company_url(href):
+                        logger.info(f"Found website via Bing for {company_name}: {href}")
+                        return self._normalize_url(href)
+                        
+            except Exception as e:
+                logger.warning(f"Bing search failed for query '{query}': {e}")
                 time.sleep(2)
         
         return None
