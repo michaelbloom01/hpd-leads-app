@@ -963,17 +963,23 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               </div>
               {/* Embedded Map using iframe */}
               <div className="rounded-lg overflow-hidden border border-white/10">
-                <iframe
-                  title="Building locations"
-                  width="100%"
-                  height="250"
-                  style={{ border: 0 }}
-                  loading="lazy"
-                  referrerPolicy="no-referrer-when-downgrade"
-                  src={`https://www.google.com/maps/embed/v1/search?key=AIzaSyC9XhT9PIKkAElO17LIRi-ETwObcu3a-S0&q=${encodeURIComponent(
-                    (enrichedLead.agent_name || enrichedLead.owner_name) + ' properties ' + (enrichedLead.boros?.join(' ') || enrichedLead.boro) + ' New York'
-                  )}`}
-                />
+                {import.meta.env.VITE_GOOGLE_MAPS_KEY ? (
+                  <iframe
+                    title="Building locations"
+                    width="100%"
+                    height="250"
+                    style={{ border: 0 }}
+                    loading="lazy"
+                    referrerPolicy="no-referrer-when-downgrade"
+                    src={`https://www.google.com/maps/embed/v1/search?key=${import.meta.env.VITE_GOOGLE_MAPS_KEY}&q=${encodeURIComponent(
+                      (enrichedLead.agent_name || enrichedLead.owner_name) + ' properties ' + (enrichedLead.boros?.join(' ') || enrichedLead.boro) + ' New York'
+                    )}`}
+                  />
+                ) : (
+                  <div className="h-[250px] bg-slate-800 flex items-center justify-center text-slate-500 text-sm">
+                    Map unavailable - API key not configured
+                  </div>
+                )}
               </div>
               <p className="text-slate-500 text-xs mt-2">
                 Showing approximate locations for {enrichedLead.buildings.length} buildings across {enrichedLead.boros?.join(', ') || enrichedLead.boro}
