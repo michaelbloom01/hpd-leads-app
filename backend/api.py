@@ -1473,6 +1473,69 @@ async def reset_enrichment():
     }
 
 
+@app.post("/api/classify-entities")
+async def classify_entities():
+    """
+    Run entity classification on all existing leads in the database.
+    
+    This is a one-time migration to populate entity_type, company_name,
+    primary_contact, and primary_contact_title for leads that were saved
+    before entity classification was added.
+    """
+    import json as _json
+    from src.transform.aggregate import _classify_entity
+    
+    db = get_database()
+    classified = 0
+    
+    with db._get_connection() as conn:
+        rows = conn.execute(
+            "SELECT lead_id, agent_name, owner_name, owner_type, contacts "
+            "FROM leads WHERE entity_type IS NULL OR entity_type = 'unknown'"
+        ).fetchall()
+        
+        for row in rows:
+            contacts = _json.loads(row['contacts'] or '[]')
+            entity_info = _classify_entity(
+                row['agent_name'] or '',
+                row['owner_name'] or '',
+                row['owner_type'] or '',
+                contacts
+            )
+            
+            conn.execute(
+                "UPDATE leads SET entity_type=?, company_name=?, primary_contact=?, "
+                "primary_contact_title=? WHERE lead_id=?",
+                (
+                    entity_info['entity_type'],
+                    entity_info['company_name'],
+                    entity_info['primary_contact'],
+                    entity_info['primary_contact_title'],
+                    row['lead_id'],
+                )
+            )
+            classified += 1
+        
+        conn.commit()
+    
+    # Also update in-memory cache
+    for lead in _leads_cache:
+        if lead.entity_type in (None, 'unknown'):
+            entity_info = _classify_entity(
+                lead.agent_name, lead.owner_name, lead.owner_type, lead.contacts
+            )
+            lead.entity_type = entity_info['entity_type']
+            lead.company_name = entity_info['company_name']
+            lead.primary_contact = entity_info['primary_contact']
+            lead.primary_contact_title = entity_info['primary_contact_title']
+    
+    return {
+        "status": "complete",
+        "classified": classified,
+        "message": f"Classified {classified} leads into entity types.",
+    }
+
+
 def _run_api_enrichment(limit: int, min_portfolio: int = 5, boro: Optional[str] = None):
     """
     API-only batch enrichment using Google Places + NY DOS.
