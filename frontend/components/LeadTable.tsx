@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchLeads, ApiLead, enrichLeads } from '../services/api';
 
 interface Props {
@@ -8,162 +8,103 @@ interface Props {
 
 type SortField = 'agent_name' | 'portfolio_size' | 'total_units' | 'score' | 'boro' | 'enrichment_status';
 type SortDir = 'asc' | 'desc';
-type BuildingTypeFilter = 'condo' | 'coop' | 'rental' | null;
+
+const BOROUGHS = ['MANHATTAN', 'BROOKLYN', 'QUEENS', 'BRONX', 'STATEN ISLAND'];
 
 const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   const [leads, setLeads] = useState<ApiLead[]>([]);
+  const [totalLeads, setTotalLeads] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
-  // Filters
+  // Server-side filters
   const [searchTerm, setSearchTerm] = useState('');
   const [filterBorough, setFilterBorough] = useState<string>('');
   const [filterMinScore, setFilterMinScore] = useState<string>('');
-  const [filterMaxScore, setFilterMaxScore] = useState<string>('');
-  const [filterMinPortfolio, setFilterMinPortfolio] = useState<string>('10'); // Default to high-value leads
+  const [filterMinPortfolio, setFilterMinPortfolio] = useState<string>('10');
   const [filterHasPhone, setFilterHasPhone] = useState<boolean | null>(null);
   const [filterHasEmail, setFilterHasEmail] = useState<boolean | null>(null);
   const [filterHasWebsite, setFilterHasWebsite] = useState<boolean | null>(null);
-  const [filterHasMgmtCompany, setFilterHasMgmtCompany] = useState<boolean | null>(null);
+  const [filterEntityType, setFilterEntityType] = useState<string>('');
   const [filterOutreachStatus, setFilterOutreachStatus] = useState<string>('');
-  const [filterBuildingType, setFilterBuildingType] = useState<BuildingTypeFilter>(null);
   const [filterMinUnits, setFilterMinUnits] = useState<string>('');
   
   // Sorting
   const [sortField, setSortField] = useState<SortField>('score');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   
-  // Pagination
+  // Server-side pagination
   const [page, setPage] = useState(0);
   const pageSize = 50;
   
   // Selection for bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [enriching, setEnriching] = useState(false);
+  
+  // Debounce timer for search
+  const searchTimer = useRef<ReturnType<typeof setTimeout>>();
 
-  // Fetch leads
+  // Fetch leads from server with current filters
+  const loadLeads = useCallback(async (currentPage: number = 0) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params: Record<string, any> = {
+        limit: pageSize,
+        offset: currentPage * pageSize,
+      };
+      
+      const minScore = parseFloat(filterMinScore);
+      if (!isNaN(minScore) && minScore > 0) params.min_score = minScore;
+      
+      const minPortfolio = parseInt(filterMinPortfolio);
+      if (!isNaN(minPortfolio) && minPortfolio > 0) params.min_portfolio = minPortfolio;
+      
+      if (filterBorough) params.boro = filterBorough;
+      if (filterHasPhone !== null) params.has_phone = filterHasPhone;
+      if (filterHasEmail !== null) params.has_email = filterHasEmail;
+      if (filterHasWebsite !== null) params.has_website = filterHasWebsite;
+      if (filterEntityType) params.entity_type = filterEntityType;
+      if (filterOutreachStatus) params.outreach_status = filterOutreachStatus;
+      
+      const minUnits = parseInt(filterMinUnits);
+      if (!isNaN(minUnits) && minUnits > 0) params.min_units = minUnits;
+      
+      const response = await fetchLeads(params);
+      setLeads(response.leads);
+      setTotalLeads(response.total);
+    } catch (err) {
+      console.error('Failed to fetch leads:', err);
+      setError('Failed to load leads. Make sure the backend is running.');
+    } finally {
+      setLoading(false);
+    }
+  }, [filterMinScore, filterMinPortfolio, filterBorough, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterMinUnits]);
+
+  // Initial load + reload on filter change
   useEffect(() => {
-    async function loadLeads() {
-      setLoading(true);
-      setError(null);
-      try {
-        const apiLeads = await fetchLeads({ limit: 500 });
-        setLeads(apiLeads);
-      } catch (err) {
-        console.error('Failed to fetch leads:', err);
-        setError('Failed to load leads. Make sure the backend is running and data is loaded.');
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadLeads();
-  }, []);
+    setPage(0);
+    loadLeads(0);
+  }, [loadLeads]);
 
-  // Filter and sort leads
-  const filteredLeads = useMemo(() => {
-    let result = [...leads];
-    
-    // Text search
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      result = result.filter(lead => 
-        (lead.agent_name || '').toLowerCase().includes(term) ||
-        (lead.owner_name || '').toLowerCase().includes(term) ||
-        (lead.address || '').toLowerCase().includes(term) ||
-        lead.buildings.some(b => b.toLowerCase().includes(term))
-      );
-    }
-    
-    // Borough filter
-    if (filterBorough) {
-      result = result.filter(lead => lead.boro.toUpperCase() === filterBorough.toUpperCase());
-    }
-    
-    // Score filters
-    if (filterMinScore) {
-      const min = parseFloat(filterMinScore);
-      if (!isNaN(min)) result = result.filter(lead => lead.score >= min);
-    }
-    if (filterMaxScore) {
-      const max = parseFloat(filterMaxScore);
-      if (!isNaN(max)) result = result.filter(lead => lead.score <= max);
-    }
-    
-    // Portfolio filter
-    if (filterMinPortfolio) {
-      const min = parseInt(filterMinPortfolio);
-      if (!isNaN(min)) result = result.filter(lead => lead.portfolio_size >= min);
-    }
-    
-    // Contact filters
-    if (filterHasPhone === true) result = result.filter(lead => lead.phone);
-    if (filterHasPhone === false) result = result.filter(lead => !lead.phone);
-    if (filterHasEmail === true) result = result.filter(lead => lead.email);
-    if (filterHasEmail === false) result = result.filter(lead => !lead.email);
-    if (filterHasWebsite === true) result = result.filter(lead => lead.website);
-    if (filterHasWebsite === false) result = result.filter(lead => !lead.website);
-    
-    // Management company filter (has agent vs only owner)
-    if (filterHasMgmtCompany === true) result = result.filter(lead => lead.agent_name);
-    if (filterHasMgmtCompany === false) result = result.filter(lead => !lead.agent_name);
-    
-    // Outreach status filter
-    if (filterOutreachStatus) {
-      result = result.filter(lead => lead.outreach_status === filterOutreachStatus);
-    }
-    
-    // Building type filter
-    if (filterBuildingType) {
-      result = result.filter(lead => {
-        if (!lead.building_types) return false;
-        if (filterBuildingType === 'condo') return lead.building_types.condo > 0;
-        if (filterBuildingType === 'coop') return lead.building_types.coop > 0;
-        if (filterBuildingType === 'rental') return (lead.building_types.rental_elevator + lead.building_types.rental_walkup) > 0;
-        return false;
-      });
-    }
-    
-    // Min units filter
-    if (filterMinUnits) {
-      const min = parseInt(filterMinUnits);
-      if (!isNaN(min)) result = result.filter(lead => lead.total_units >= min);
-    }
-    
-    // Sort
-    result.sort((a, b) => {
-      let aVal: string | number | null = a[sortField];
-      let bVal: string | number | null = b[sortField];
-      
-      // Handle nulls - push them to the end
-      if (aVal === null && bVal === null) return 0;
-      if (aVal === null) return 1;
-      if (bVal === null) return -1;
-      
-      // Normalize strings for comparison
-      if (typeof aVal === 'string') aVal = aVal.toLowerCase();
-      if (typeof bVal === 'string') bVal = bVal.toLowerCase();
-      
-      if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
-      if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
-      return 0;
-    });
-    
-    return result;
-  }, [leads, searchTerm, filterBorough, filterMinScore, filterMaxScore, filterMinPortfolio, filterHasPhone, filterHasEmail, filterHasWebsite, filterHasMgmtCompany, filterOutreachStatus, filterBuildingType, filterMinUnits, sortField, sortDir]);
+  // Page change
+  useEffect(() => {
+    loadLeads(page);
+  }, [page]);
 
-  // Paginated results
-  const paginatedLeads = useMemo(() => {
-    const start = page * pageSize;
-    return filteredLeads.slice(start, start + pageSize);
-  }, [filteredLeads, page, pageSize]);
+  const totalPages = Math.ceil(totalLeads / pageSize);
 
-  const totalPages = Math.ceil(filteredLeads.length / pageSize);
-
-  // Get unique boroughs for filter
-  const boroughs = useMemo(() => {
-    const boroSet = new Set(leads.map(l => l.boro).filter(Boolean));
-    return Array.from(boroSet).sort();
-  }, [leads]);
+  // Client-side search filter (search within current page results since it's a text search)
+  const displayLeads = searchTerm 
+    ? leads.filter(lead => {
+        const term = searchTerm.toLowerCase();
+        return (lead.agent_name || '').toLowerCase().includes(term) ||
+          (lead.owner_name || '').toLowerCase().includes(term) ||
+          (lead.company_name || '').toLowerCase().includes(term) ||
+          (lead.primary_contact || '').toLowerCase().includes(term) ||
+          (lead.address || '').toLowerCase().includes(term);
+      })
+    : leads;
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -185,10 +126,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   };
 
   const selectAll = () => {
-    if (selectedIds.size === paginatedLeads.length) {
+    if (selectedIds.size === displayLeads.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(paginatedLeads.map(l => l.lead_id)));
+      setSelectedIds(new Set(displayLeads.map(l => l.lead_id)));
     }
   };
 
@@ -197,9 +138,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     setEnriching(true);
     try {
       await enrichLeads(Array.from(selectedIds));
-      // Reload data
-      const apiLeads = await fetchLeads({ limit: 500 });
-      setLeads(apiLeads);
+      loadLeads(page);
       setSelectedIds(new Set());
     } catch (err) {
       console.error('Enrichment failed:', err);
@@ -212,30 +151,27 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     setSearchTerm('');
     setFilterBorough('');
     setFilterMinScore('');
-    setFilterMaxScore('');
-    setFilterMinPortfolio('');
+    setFilterMinPortfolio('10');
     setFilterHasPhone(null);
     setFilterHasEmail(null);
     setFilterHasWebsite(null);
-    setFilterHasMgmtCompany(null);
+    setFilterEntityType('');
     setFilterOutreachStatus('');
-    setFilterBuildingType(null);
     setFilterMinUnits('');
   };
 
   const exportToCsv = () => {
-    // Create CSV content from filtered leads
     const headers = [
       'Management Company',
+      'Company Name',
+      'Entity Type',
+      'Primary Contact',
+      'Contact Title',
       'Owner Name',
       'Owner Type',
       'All Boroughs',
       'Buildings',
       'Total Units',
-      'Condos',
-      'Coops',
-      'Elevator Rentals',
-      'Walk-up Rentals',
       'Score',
       'Phone',
       'Email',
@@ -248,17 +184,17 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       'Building Addresses'
     ];
     
-    const rows = filteredLeads.map(lead => [
+    const rows = displayLeads.map(lead => [
       lead.agent_name || '',
+      lead.company_name || '',
+      lead.entity_type || '',
+      lead.primary_contact || '',
+      lead.primary_contact_title || '',
       lead.owner_name || '',
       lead.owner_type || '',
       lead.boros?.join(', ') || lead.boro || '',
       lead.portfolio_size,
       lead.total_units,
-      lead.building_types?.condo || 0,
-      lead.building_types?.coop || 0,
-      lead.building_types?.rental_elevator || 0,
-      lead.building_types?.rental_walkup || 0,
       lead.score.toFixed(1),
       lead.phone || '',
       lead.email || '',
@@ -271,7 +207,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       lead.buildings.slice(0, 5).join('; ') + (lead.buildings.length > 5 ? '...' : '')
     ]);
     
-    // Escape CSV values
     const escapeValue = (val: string | number) => {
       const str = String(val);
       if (str.includes(',') || str.includes('"') || str.includes('\n')) {
@@ -285,7 +220,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       ...rows.map(row => row.map(escapeValue).join(','))
     ].join('\n');
     
-    // Download
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -322,17 +256,17 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
 
   return (
     <div className="space-y-4">
-      {/* Filter Bar - Vantage.sh style */}
+      {/* Filter Bar */}
       <div className="bg-slate-900/60 border border-white/5 rounded-xl p-4">
         <div className="flex flex-wrap gap-3 items-center">
           {/* Search */}
           <div className="flex-1 min-w-[200px]">
             <input
               type="text"
-              placeholder="Search name, address..."
+              placeholder="Search name, company, address..."
               className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
               value={searchTerm}
-              onChange={(e) => { setSearchTerm(e.target.value); setPage(0); }}
+              onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
           
@@ -340,17 +274,29 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
           <select
             className="px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
             value={filterBorough}
-            onChange={(e) => { setFilterBorough(e.target.value); setPage(0); }}
+            onChange={(e) => setFilterBorough(e.target.value)}
           >
             <option value="">All Boroughs</option>
-            {boroughs.map(b => <option key={b} value={b}>{b}</option>)}
+            {BOROUGHS.map(b => <option key={b} value={b}>{b}</option>)}
+          </select>
+          
+          {/* Entity Type */}
+          <select
+            className="px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            value={filterEntityType}
+            onChange={(e) => setFilterEntityType(e.target.value)}
+          >
+            <option value="">All Entity Types</option>
+            <option value="company">Company</option>
+            <option value="individual_agent">Individual Agent</option>
+            <option value="owner_operator">Owner-Operator</option>
           </select>
           
           {/* Outreach Status */}
           <select
             className="px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
             value={filterOutreachStatus}
-            onChange={(e) => { setFilterOutreachStatus(e.target.value); setPage(0); }}
+            onChange={(e) => setFilterOutreachStatus(e.target.value)}
           >
             <option value="">All Statuses</option>
             <option value="new">New</option>
@@ -360,24 +306,14 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
             <option value="closed">Closed</option>
           </select>
           
-          {/* Score Range */}
-          <div className="flex items-center gap-1">
-            <input
-              type="number"
-              placeholder="Min Score"
-              className="w-24 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              value={filterMinScore}
-              onChange={(e) => { setFilterMinScore(e.target.value); setPage(0); }}
-            />
-            <span className="text-slate-600">-</span>
-            <input
-              type="number"
-              placeholder="Max"
-              className="w-20 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              value={filterMaxScore}
-              onChange={(e) => { setFilterMaxScore(e.target.value); setPage(0); }}
-            />
-          </div>
+          {/* Min Score */}
+          <input
+            type="number"
+            placeholder="Min Score"
+            className="w-24 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            value={filterMinScore}
+            onChange={(e) => setFilterMinScore(e.target.value)}
+          />
           
           {/* Portfolio Size */}
           <input
@@ -385,7 +321,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
             placeholder="Min Buildings"
             className="w-28 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
             value={filterMinPortfolio}
-            onChange={(e) => { setFilterMinPortfolio(e.target.value); setPage(0); }}
+            onChange={(e) => setFilterMinPortfolio(e.target.value)}
           />
           
           {/* Min Units */}
@@ -394,55 +330,11 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
             placeholder="Min Units"
             className="w-24 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
             value={filterMinUnits}
-            onChange={(e) => { setFilterMinUnits(e.target.value); setPage(0); }}
+            onChange={(e) => setFilterMinUnits(e.target.value)}
           />
-          
-          {/* Building Type Filters */}
-          <div className="flex gap-2">
-            <button
-              onClick={() => setFilterBuildingType(filterBuildingType === 'condo' ? null : 'condo')}
-              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
-                filterBuildingType === 'condo' 
-                  ? 'bg-blue-600/30 text-blue-400 border border-blue-500/30' 
-                  : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
-              }`}
-            >
-              🏢 Condo
-            </button>
-            <button
-              onClick={() => setFilterBuildingType(filterBuildingType === 'coop' ? null : 'coop')}
-              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
-                filterBuildingType === 'coop' 
-                  ? 'bg-purple-600/30 text-purple-400 border border-purple-500/30' 
-                  : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
-              }`}
-            >
-              🏠 Coop
-            </button>
-            <button
-              onClick={() => setFilterBuildingType(filterBuildingType === 'rental' ? null : 'rental')}
-              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
-                filterBuildingType === 'rental' 
-                  ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' 
-                  : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
-              }`}
-            >
-              🏬 Rental
-            </button>
-          </div>
           
           {/* Contact Filters */}
           <div className="flex gap-2">
-            <button
-              onClick={() => setFilterHasMgmtCompany(filterHasMgmtCompany === true ? null : true)}
-              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
-                filterHasMgmtCompany === true 
-                  ? 'bg-blue-600/30 text-blue-400 border border-blue-500/30' 
-                  : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
-              }`}
-            >
-              🏢 Mgmt Co
-            </button>
             <button
               onClick={() => setFilterHasPhone(filterHasPhone === true ? null : true)}
               className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
@@ -451,7 +343,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
               }`}
             >
-              📞 Phone
+              Phone
             </button>
             <button
               onClick={() => setFilterHasEmail(filterHasEmail === true ? null : true)}
@@ -461,7 +353,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
               }`}
             >
-              ✉️ Email
+              Email
             </button>
             <button
               onClick={() => setFilterHasWebsite(filterHasWebsite === true ? null : true)}
@@ -471,7 +363,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
               }`}
             >
-              🌐 Website
+              Website
             </button>
           </div>
           
@@ -480,13 +372,13 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
             onClick={clearFilters}
             className="px-3 py-2 text-xs text-slate-500 hover:text-slate-300 transition-colors"
           >
-            Clear Filters
+            Clear
           </button>
           
           {/* Export CSV */}
           <button
             onClick={exportToCsv}
-            disabled={filteredLeads.length === 0}
+            disabled={displayLeads.length === 0}
             className="px-3 py-2 bg-slate-800 border border-white/10 rounded-lg text-xs text-slate-300 hover:bg-slate-700 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -499,7 +391,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
         {/* Results count and bulk actions */}
         <div className="flex justify-between items-center mt-3 pt-3 border-t border-white/5">
           <div className="text-sm text-slate-500">
-            Showing <span className="text-slate-300 font-medium">{filteredLeads.length}</span> of {leads.length} leads
+            Showing <span className="text-slate-300 font-medium">{displayLeads.length}</span> of <span className="text-slate-300 font-medium">{totalLeads.toLocaleString()}</span> matching leads
             {selectedIds.size > 0 && (
               <span className="ml-3 text-blue-400">({selectedIds.size} selected)</span>
             )}
@@ -525,7 +417,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                 <th className="px-4 py-3 w-8">
                   <input
                     type="checkbox"
-                    checked={selectedIds.size === paginatedLeads.length && paginatedLeads.length > 0}
+                    checked={selectedIds.size === displayLeads.length && displayLeads.length > 0}
                     onChange={selectAll}
                     className="rounded bg-slate-800 border-slate-600"
                   />
@@ -573,7 +465,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {paginatedLeads.map((lead) => (
+              {displayLeads.map((lead) => (
                 <tr 
                   key={lead.lead_id}
                   className="hover:bg-slate-800/50 transition-colors cursor-pointer"
@@ -588,12 +480,21 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                     />
                   </td>
                   <td className="px-4 py-3">
-                    <div className="font-medium text-slate-200 text-sm">{lead.agent_name || lead.owner_name}</div>
-                    <div className="text-xs text-slate-600 truncate max-w-[200px]">
-                      {lead.agent_name && lead.owner_name && lead.agent_name !== lead.owner_name && (
-                        <span className="text-slate-500">Owner: {lead.owner_name.slice(0, 30)}{lead.owner_name.length > 30 ? '...' : ''}</span>
+                    <div className="font-medium text-slate-200 text-sm">{lead.company_name || lead.agent_name || lead.owner_name}</div>
+                    <div className="text-xs text-slate-600 truncate max-w-[250px] flex items-center gap-1.5">
+                      <span className={`px-1 py-0 rounded text-[9px] font-bold uppercase ${
+                        lead.entity_type === 'company' ? 'bg-blue-900/40 text-blue-400' :
+                        lead.entity_type === 'individual_agent' ? 'bg-amber-900/40 text-amber-400' :
+                        lead.entity_type === 'owner_operator' ? 'bg-purple-900/40 text-purple-400' :
+                        'bg-slate-800 text-slate-600'
+                      }`}>
+                        {lead.entity_type === 'company' ? 'CO' : 
+                         lead.entity_type === 'individual_agent' ? 'AGT' : 
+                         lead.entity_type === 'owner_operator' ? 'OWN' : '?'}
+                      </span>
+                      {lead.primary_contact && (
+                        <span className="text-slate-500 truncate">{lead.primary_contact}</span>
                       )}
-                      {!lead.agent_name && <span className="text-amber-600/70">No management agent</span>}
                     </div>
                   </td>
                   <td className="px-4 py-3">

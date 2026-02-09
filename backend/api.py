@@ -367,6 +367,12 @@ class LeadResponse(BaseModel):
     outreach_status: str
     notes: Optional[str]
     outreach_attempts: List[OutreachAttemptResponse] = []
+    # Entity classification (Phase 0)
+    contacts: List[Dict] = []  # HPD contact records
+    entity_type: str = "unknown"
+    company_name: Optional[str] = None
+    primary_contact: Optional[str] = None
+    primary_contact_title: Optional[str] = None
 
 
 class PipelineStatus(BaseModel):
@@ -394,93 +400,113 @@ async def root():
     return {"status": "ok", "service": "hpd-leads-api"}
 
 
-@app.get("/api/leads", response_model=List[LeadResponse])
+class LeadsListResponse(BaseModel):
+    """Paginated leads response with total count."""
+    leads: List[LeadResponse]
+    total: int
+    offset: int
+    limit: int
+
+
+def _row_to_lead(row_dict: Dict) -> Lead:
+    """Convert a raw DB row dict to a Lead object (lightweight, no full deserialization)."""
+    import json as _json
+    from src.transform.aggregate import Lead, BuildingTypeBreakdown
+    
+    buildings = _json.loads(row_dict.get('buildings') or '[]')
+    building_ids = _json.loads(row_dict.get('building_ids') or '[]')
+    contacts = _json.loads(row_dict.get('contacts') or '[]')
+    boros = _json.loads(row_dict.get('boros') or '[]')
+    enrichment_sources = _json.loads(row_dict.get('enrichment_sources') or '[]')
+    score_breakdown = _json.loads(row_dict.get('score_breakdown') or '{}')
+    tags = _json.loads(row_dict.get('tags') or '[]')
+    
+    building_types = BuildingTypeBreakdown()
+    if row_dict.get('building_types'):
+        try:
+            bt_data = _json.loads(row_dict['building_types'])
+            building_types = BuildingTypeBreakdown(
+                condo=bt_data.get('condo', 0), coop=bt_data.get('coop', 0),
+                rental_elevator=bt_data.get('rental_elevator', 0),
+                rental_walkup=bt_data.get('rental_walkup', 0),
+                small_residential=bt_data.get('small_residential', 0),
+                other=bt_data.get('other', 0), unknown=bt_data.get('unknown', 0),
+            )
+        except (ValueError, TypeError):
+            pass
+    
+    building_classes = {}
+    if row_dict.get('building_classes'):
+        try:
+            building_classes = _json.loads(row_dict['building_classes'])
+        except (ValueError, TypeError):
+            pass
+    
+    return Lead(
+        lead_id=row_dict['lead_id'],
+        agent_name=row_dict.get('agent_name') or '',
+        owner_name=row_dict.get('owner_name') or '',
+        owner_type=row_dict.get('owner_type') or '',
+        portfolio_size=row_dict.get('portfolio_size') or 0,
+        total_units=row_dict.get('total_units') or 0,
+        buildings=buildings, building_ids=building_ids, contacts=contacts,
+        address=row_dict.get('address'), boro=row_dict.get('boro') or '', boros=boros,
+        building_types=building_types, building_classes=building_classes,
+        reg_status=row_dict.get('reg_status') or '',
+        dos_id=row_dict.get('dos_id'), dos_status=row_dict.get('dos_status'),
+        phone=row_dict.get('phone'), email=row_dict.get('email'),
+        website=row_dict.get('website'),
+        business_summary=row_dict.get('business_summary'),
+        owner_principal=row_dict.get('owner_principal'),
+        enrichment_status=row_dict.get('enrichment_status') or 'none',
+        enrichment_sources=enrichment_sources,
+        score=row_dict.get('score') or 0.0, score_breakdown=score_breakdown,
+        tags=tags, opportunity_note=row_dict.get('opportunity_note'),
+        outreach_status=row_dict.get('outreach_status') or 'new',
+        notes=row_dict.get('notes'),
+        entity_type=row_dict.get('entity_type') or 'unknown',
+        company_name=row_dict.get('company_name'),
+        primary_contact=row_dict.get('primary_contact'),
+        primary_contact_title=row_dict.get('primary_contact_title'),
+    )
+
+
+@app.get("/api/leads", response_model=LeadsListResponse)
 async def get_leads(
     min_score: Optional[float] = Query(None, description="Minimum score filter"),
     min_portfolio: Optional[int] = Query(None, description="Minimum portfolio size"),
     boro: Optional[str] = Query(None, description="Filter by borough"),
-    has_website: Optional[bool] = Query(None, description="Filter by website availability"),
+    has_phone: Optional[bool] = Query(None, description="Filter by phone availability"),
     has_email: Optional[bool] = Query(None, description="Filter by email availability"),
-    # Building type filters
-    building_type: Optional[str] = Query(None, description="Filter by primary building type (condo, coop, rental_elevator, rental_walkup, small_residential)"),
-    min_condo: Optional[int] = Query(None, description="Minimum number of condo buildings"),
-    min_coop: Optional[int] = Query(None, description="Minimum number of coop buildings"),
-    min_rental: Optional[int] = Query(None, description="Minimum number of rental buildings (elevator + walkup)"),
+    has_website: Optional[bool] = Query(None, description="Filter by website availability"),
+    entity_type: Optional[str] = Query(None, description="Filter by entity type (company, individual_agent, owner_operator)"),
+    enrichment_status: Optional[str] = Query(None, description="Filter by enrichment status"),
+    outreach_status: Optional[str] = Query(None, description="Filter by outreach status"),
     min_units: Optional[int] = Query(None, description="Minimum total residential units"),
-    limit: int = Query(100, le=500, description="Max results to return"),
+    limit: int = Query(50, le=200, description="Max results to return"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
 ):
     """
-    Get leads with optional filtering.
-    
-    Returns leads sorted by score descending.
-    
-    Building Type Filters:
-    - building_type: Filter by the primary (most common) building type
-    - min_condo, min_coop, min_rental: Minimum counts for specific types
-    - min_units: Minimum total residential units in portfolio
+    Get leads with SQL-based filtering (fast, indexed).
+    Returns paginated results with total count.
     """
-    if not _leads_cache:
-        return []  # Return empty list instead of 404 for better frontend handling
+    db = get_database()
+    rows, total = db.get_leads_filtered(
+        min_score=min_score, min_portfolio=min_portfolio, boro=boro,
+        has_phone=has_phone, has_email=has_email, has_website=has_website,
+        entity_type=entity_type, min_units=min_units,
+        enrichment_status=enrichment_status, outreach_status=outreach_status,
+        limit=limit, offset=offset,
+    )
     
-    # Apply filters
-    filtered = _leads_cache
+    leads = [_row_to_lead(r) for r in rows]
     
-    if min_score is not None:
-        filtered = [l for l in filtered if l.score >= min_score]
-    
-    if min_portfolio is not None:
-        filtered = [l for l in filtered if l.portfolio_size >= min_portfolio]
-    
-    if boro is not None:
-        filtered = [l for l in filtered if boro.upper() in [b.upper() for b in l.boros]]
-    
-    if has_website is not None:
-        if has_website:
-            filtered = [l for l in filtered if l.website]
-        else:
-            filtered = [l for l in filtered if not l.website]
-    
-    if has_email is not None:
-        if has_email:
-            filtered = [l for l in filtered if l.email]
-        else:
-            filtered = [l for l in filtered if not l.email]
-    
-    # Building type filters
-    if building_type is not None:
-        building_type_lower = building_type.lower()
-        def get_primary_type(lead):
-            if not lead.building_types:
-                return None
-            types = {
-                'condo': lead.building_types.condo,
-                'coop': lead.building_types.coop,
-                'rental_elevator': lead.building_types.rental_elevator,
-                'rental_walkup': lead.building_types.rental_walkup,
-                'small_residential': lead.building_types.small_residential,
-            }
-            if max(types.values()) == 0:
-                return None
-            return max(types, key=types.get)
-        filtered = [l for l in filtered if get_primary_type(l) == building_type_lower]
-    
-    if min_condo is not None:
-        filtered = [l for l in filtered if l.building_types and l.building_types.condo >= min_condo]
-    
-    if min_coop is not None:
-        filtered = [l for l in filtered if l.building_types and l.building_types.coop >= min_coop]
-    
-    if min_rental is not None:
-        filtered = [l for l in filtered if l.building_types and l.building_types.total_rental >= min_rental]
-    
-    if min_units is not None:
-        filtered = [l for l in filtered if l.total_units >= min_units]
-    
-    # Paginate
-    paginated = filtered[offset:offset + limit]
-    
-    return [_lead_to_response(l) for l in paginated]
+    return LeadsListResponse(
+        leads=[_lead_to_response(l) for l in leads],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @app.get("/api/leads/{lead_id}", response_model=LeadResponse)
@@ -556,106 +582,11 @@ async def get_status():
 
 @app.get("/api/stats")
 async def get_stats():
-    """Get detailed statistics about the loaded leads."""
-    if not _leads_cache:
-        return {
-            "total_leads": 0,
-            "total_buildings": 0,
-            "by_borough": {},
-            "by_enrichment_status": {},
-            "score_distribution": {},
-            "portfolio_distribution": {},
-            "with_phone": 0,
-            "with_email": 0,
-            "with_website": 0,
-            "building_type_distribution": {},
-            "leads_with_pluto_data": 0,
-        }
-    
-    # Single-pass aggregation for performance (O(n) instead of O(5n))
-    by_borough = {}
-    by_status = {}
-    score_dist = {"0-20": 0, "20-40": 0, "40-60": 0, "60-80": 0, "80-100": 0}
-    portfolio_dist = {"1-5": 0, "6-10": 0, "11-25": 0, "26-50": 0, "51-100": 0, "100+": 0}
-    building_type_dist = {
-        "condo": 0, "coop": 0, "rental_elevator": 0, "rental_walkup": 0,
-        "small_residential": 0, "other": 0, "unknown": 0,
-    }
-    
-    total_buildings = 0
-    with_phone = 0
-    with_email = 0
-    with_website = 0
-    leads_with_pluto = 0
-    
-    for lead in _leads_cache:
-        # Borough
-        boro = lead.boro or "Unknown"
-        by_borough[boro] = by_borough.get(boro, 0) + 1
-        
-        # Enrichment status
-        status = lead.enrichment_status
-        by_status[status] = by_status.get(status, 0) + 1
-        
-        # Score distribution
-        if lead.score < 20:
-            score_dist["0-20"] += 1
-        elif lead.score < 40:
-            score_dist["20-40"] += 1
-        elif lead.score < 60:
-            score_dist["40-60"] += 1
-        elif lead.score < 80:
-            score_dist["60-80"] += 1
-        else:
-            score_dist["80-100"] += 1
-        
-        # Portfolio distribution
-        if lead.portfolio_size <= 5:
-            portfolio_dist["1-5"] += 1
-        elif lead.portfolio_size <= 10:
-            portfolio_dist["6-10"] += 1
-        elif lead.portfolio_size <= 25:
-            portfolio_dist["11-25"] += 1
-        elif lead.portfolio_size <= 50:
-            portfolio_dist["26-50"] += 1
-        elif lead.portfolio_size <= 100:
-            portfolio_dist["51-100"] += 1
-        else:
-            portfolio_dist["100+"] += 1
-        
-        # Totals
-        total_buildings += lead.portfolio_size
-        if lead.phone:
-            with_phone += 1
-        if lead.email:
-            with_email += 1
-        if lead.website:
-            with_website += 1
-        
-        # Building types (PLUTO)
-        if lead.building_types and lead.building_types.total > 0:
-            leads_with_pluto += 1
-            building_type_dist["condo"] += lead.building_types.condo
-            building_type_dist["coop"] += lead.building_types.coop
-            building_type_dist["rental_elevator"] += lead.building_types.rental_elevator
-            building_type_dist["rental_walkup"] += lead.building_types.rental_walkup
-            building_type_dist["small_residential"] += lead.building_types.small_residential
-            building_type_dist["other"] += lead.building_types.other
-            building_type_dist["unknown"] += lead.building_types.unknown
-    
-    return {
-        "total_leads": len(_leads_cache),
-        "total_buildings": total_buildings,
-        "by_borough": by_borough,
-        "by_enrichment_status": by_status,
-        "score_distribution": score_dist,
-        "portfolio_distribution": portfolio_dist,
-        "with_phone": with_phone,
-        "with_email": with_email,
-        "with_website": with_website,
-        "building_type_distribution": building_type_dist,
-        "leads_with_pluto_data": leads_with_pluto,
-    }
+    """Get detailed statistics using SQL aggregation (fast, no Python iteration)."""
+    db = get_database()
+    stats = db.get_stats_sql()
+    stats["last_refresh"] = _last_refresh.isoformat() if _last_refresh else None
+    return stats
 
 
 def _run_background_refresh(limit: Optional[int], include_pluto: bool = True):
@@ -1483,6 +1414,65 @@ async def stop_enrichment():
         }
 
 
+@app.post("/api/enrich/reset")
+async def reset_enrichment():
+    """
+    Reset all stuck enrichment jobs and optionally reset failed leads.
+    
+    This is useful when:
+    - A batch job got stuck in 'running' state
+    - Leads are stuck in 'failed' status and you want to retry
+    """
+    global _enrichment_state, _enrichment_stop_requested
+    
+    db = get_database()
+    
+    # Force-stop any in-memory enrichment state
+    with _enrichment_lock:
+        was_running = _enrichment_state["running"]
+        _enrichment_state = {
+            "running": False, "phase": "", "progress": 0, "total": 0,
+            "completed": 0, "failed": 0, "dos_completed": 0, "dos_found": 0,
+            "web_completed": 0, "web_found": 0, "current_lead": None,
+            "started_at": None, "finished_at": None, "error": None,
+        }
+        _enrichment_stop_requested = False
+    
+    # Mark all 'running' DB jobs as 'failed'
+    with db._get_connection() as conn:
+        stuck_jobs = conn.execute(
+            "SELECT id FROM enrichment_jobs WHERE status = 'running'"
+        ).fetchall()
+        for job in stuck_jobs:
+            conn.execute(
+                "UPDATE enrichment_jobs SET status = 'failed', error = 'Force reset', "
+                "finished_at = ?, updated_at = ? WHERE id = ?",
+                (datetime.now().isoformat(), datetime.now().isoformat(), job['id'])
+            )
+        
+        # Reset 'failed' leads back to 'none' so they can be re-enriched
+        failed_count = conn.execute(
+            "SELECT COUNT(*) FROM leads WHERE enrichment_status = 'failed'"
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE leads SET enrichment_status = 'none' WHERE enrichment_status = 'failed'"
+        )
+        conn.commit()
+    
+    # Also update the in-memory cache
+    for lead in _leads_cache:
+        if lead.enrichment_status == 'failed':
+            lead.enrichment_status = 'none'
+    
+    return {
+        "status": "reset_complete",
+        "was_running": was_running,
+        "stuck_jobs_cleared": len(stuck_jobs),
+        "failed_leads_reset": failed_count,
+        "message": f"Reset complete. {failed_count} failed leads can now be re-enriched.",
+    }
+
+
 def _run_api_enrichment(limit: int, min_portfolio: int = 5, boro: Optional[str] = None):
     """
     API-only batch enrichment using Google Places + NY DOS.
@@ -2033,6 +2023,8 @@ async def enrich_lead_contacts(lead_id: str):
             company_name=company_name,
             website=lead.website,
             location=f"{lead.boro}, New York" if lead.boro else "New York, NY",
+            address=lead.address,
+            contacts=lead.contacts,
         )
         
         # Update lead with results
@@ -2473,6 +2465,11 @@ def _lead_to_response(lead: Lead) -> LeadResponse:
         outreach_status=lead.outreach_status,
         notes=lead.notes,
         outreach_attempts=_get_outreach_attempts_for_lead(lead.lead_id),
+        contacts=lead.contacts if lead.contacts else [],
+        entity_type=getattr(lead, 'entity_type', 'unknown'),
+        company_name=getattr(lead, 'company_name', None),
+        primary_contact=getattr(lead, 'primary_contact', None),
+        primary_contact_title=getattr(lead, 'primary_contact_title', None),
     )
 
 

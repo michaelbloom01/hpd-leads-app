@@ -11,19 +11,21 @@ NYC property management lead generation platform for acquisition targets. Identi
 1. **Fetches ALL buildings** from NYC HPD database (200k+ buildings)
 2. **Joins with PLUTO data** for building classification (condo, coop, rental, etc.)
 3. **Groups by management company** to create ~100k leads
-4. **Scores leads** based on portfolio size, building types, professional indicators
-5. **Auto-enriches** top leads with phone, email, website via web crawling
-6. **Displays in a filterable UI** with click-to-call/email functionality
+4. **Classifies entities** as Company, Individual Agent, or Owner-Operator
+5. **Scores leads** based on portfolio size, building types, professional indicators
+6. **Enriches contacts** using 4-tier cascade: Google Places (address-based) → NY DOS → Web Crawl → Hunter.io
+7. **Displays in a filterable UI** with server-side pagination, entity badges, and click-to-call/email
 
-## Current Status (Feb 2026)
+## Current Status (Feb 9, 2026)
 
 | Metric | Value |
 |--------|-------|
 | Total Leads | 102,505 |
 | High-Value Leads (10+ buildings) | ~1,300 |
-| With Phone | 70+ (growing via auto-enrichment) |
-| With Email | 100+ |
+| Entity Classification | Company / Individual Agent / Owner-Operator |
 | Building Type Coverage | 100% (PLUTO data) |
+| Enrichment Sources | Google Places, NY DOS, Web Crawl, Hunter.io |
+| Performance | SQL-indexed queries, server-side pagination |
 
 ## Key Features
 

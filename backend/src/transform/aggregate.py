@@ -99,6 +99,11 @@ class Lead:
     opportunity_note: Optional[str] = None
     outreach_status: str = "new"  # new, contacted, interested, not_interested, closed
     notes: Optional[str] = None
+    # Entity classification (Phase 0)
+    entity_type: str = "unknown"  # company, individual_agent, owner_operator, unknown
+    company_name: Optional[str] = None  # Resolved company name (esp. for person-named leads)
+    primary_contact: Optional[str] = None  # Best person name to contact
+    primary_contact_title: Optional[str] = None  # Their role/title
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
 
@@ -375,6 +380,9 @@ def _create_lead_from_buildings(grouping_key: str, buildings: List[Building]) ->
     # Generate stable lead ID
     lead_id = _generate_lead_id(grouping_key)
     
+    # Entity classification
+    entity_info = _classify_entity(agent_name, owner_name, owner_type, contacts)
+    
     return Lead(
         lead_id=lead_id,
         agent_name=agent_name,
@@ -391,7 +399,104 @@ def _create_lead_from_buildings(grouping_key: str, buildings: List[Building]) ->
         building_types=building_types,
         building_classes=dict(building_class_counts),
         last_registration=last_reg,
+        entity_type=entity_info['entity_type'],
+        company_name=entity_info['company_name'],
+        primary_contact=entity_info['primary_contact'],
+        primary_contact_title=entity_info['primary_contact_title'],
     )
+
+
+def _classify_entity(agent_name: str, owner_name: str, owner_type: str, contacts: List[Dict]) -> Dict:
+    """
+    Classify a lead as company, individual_agent, or owner_operator.
+    
+    Returns dict with: entity_type, company_name, primary_contact, primary_contact_title
+    """
+    COMPANY_INDICATORS = [
+        'LLC', 'INC', 'CORP', 'CO.', 'CO ', 'LTD', 'LP', 'L.P.', 'L.L.C.',
+        'MANAGEMENT', 'MGMT', 'PROPERTIES', 'PROPERTY', 'REALTY', 'REAL ESTATE',
+        'ASSOCIATES', 'GROUP', 'HOLDINGS', 'SERVICES', 'ENTERPRISES',
+        'HOUSING', 'DEVELOPMENT', 'DEVELOPERS', 'INVESTMENTS', 'CAPITAL',
+        'PARTNERS', 'PARTNERSHIP', 'EQUITIES', 'ADVISORS', 'CONSULTING',
+        'VENTURES', 'TRUST', 'FUND', 'AGENCY',
+    ]
+    
+    name_upper = (agent_name or '').upper().strip()
+    owner_upper = (owner_name or '').upper().strip()
+    
+    is_company_name = any(ind in name_upper for ind in COMPANY_INDICATORS)
+    is_owner_company = any(ind in owner_upper for ind in COMPANY_INDICATORS)
+    
+    # Check if name looks like a person (First Last pattern, no company indicators)
+    def looks_like_person(name: str) -> bool:
+        if not name or len(name) < 3:
+            return False
+        # If it has company indicators, it's not a person
+        upper = name.upper()
+        if any(ind in upper for ind in COMPANY_INDICATORS):
+            return False
+        # Simple heuristic: 2-3 words, all alpha
+        parts = name.split()
+        if 2 <= len(parts) <= 4 and all(p.replace("'", "").replace("-", "").isalpha() for p in parts):
+            return True
+        return False
+    
+    # Find the best company name from contacts
+    corporate_owner = None
+    agent_contact = None
+    for c in contacts:
+        ct = (c.get('type') or '').lower()
+        cn = c.get('name') or ''
+        if ct == 'corporateowner' and cn:
+            if any(ind in cn.upper() for ind in COMPANY_INDICATORS):
+                corporate_owner = c
+        if ct == 'agent' and cn:
+            agent_contact = c
+    
+    result = {
+        'entity_type': 'unknown',
+        'company_name': None,
+        'primary_contact': None,
+        'primary_contact_title': None,
+    }
+    
+    if is_company_name:
+        # Lead name itself is a company
+        result['entity_type'] = 'company'
+        result['company_name'] = agent_name or owner_name
+        # Find a person to contact from contacts
+        for c in contacts:
+            ct = (c.get('type') or '').lower()
+            cn = c.get('name') or ''
+            if ct in ('agent', 'officer', 'sitemanager') and looks_like_person(cn):
+                result['primary_contact'] = cn
+                result['primary_contact_title'] = c.get('title') or ct.title()
+                break
+    elif looks_like_person(agent_name):
+        # Lead is a person name acting as agent
+        result['entity_type'] = 'individual_agent'
+        result['primary_contact'] = agent_name
+        result['primary_contact_title'] = 'Managing Agent'
+        # Try to resolve their company from CorporateOwner contacts
+        if corporate_owner:
+            result['company_name'] = corporate_owner.get('name')
+        elif is_owner_company:
+            result['company_name'] = owner_name
+    elif looks_like_person(owner_name) and not agent_name:
+        # Owner-operator (no agent, just an owner name)
+        result['entity_type'] = 'owner_operator'
+        result['primary_contact'] = owner_name
+        result['primary_contact_title'] = owner_type or 'Owner'
+    else:
+        # Fallback - try to determine from owner
+        if is_owner_company:
+            result['entity_type'] = 'company'
+            result['company_name'] = owner_name
+        elif owner_name:
+            result['entity_type'] = 'owner_operator'
+            result['primary_contact'] = owner_name if looks_like_person(owner_name) else None
+    
+    return result
 
 
 def _generate_lead_id(name: str) -> str:
@@ -538,6 +643,9 @@ class StreamingLeadAggregator:
                 unknown=type_counts.get('unknown', 0),
             )
             
+            contacts_list = list(data["contacts"].values())
+            entity_info = _classify_entity(agent_name, owner_name, owner_type, contacts_list)
+            
             lead = Lead(
                 lead_id=data["lead_id"],
                 agent_name=agent_name,
@@ -547,13 +655,17 @@ class StreamingLeadAggregator:
                 total_units=data["total_units"],
                 buildings=data["building_addresses"],
                 building_ids=data["building_ids"],
-                contacts=list(data["contacts"].values()),
+                contacts=contacts_list,
                 address=data["business_address"],
                 boro=primary_boro,
                 boros=unique_boros,
                 building_types=building_types,
                 building_classes=dict(data["building_classes"]),
                 last_registration=data["last_registration"],
+                entity_type=entity_info['entity_type'],
+                company_name=entity_info['company_name'],
+                primary_contact=entity_info['primary_contact'],
+                primary_contact_title=entity_info['primary_contact_title'],
             )
             leads.append(lead)
         

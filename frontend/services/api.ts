@@ -76,6 +76,22 @@ export interface ApiLead {
   outreach_status: string;
   notes: string | null;
   outreach_attempts?: OutreachAttempt[];
+  // Entity classification
+  contacts: Array<{ type: string; name: string; title: string; address?: string }>;
+  entity_type: string;  // company, individual_agent, owner_operator, unknown
+  company_name: string | null;
+  primary_contact: string | null;
+  primary_contact_title: string | null;
+}
+
+/**
+ * Paginated leads response
+ */
+export interface LeadsListResponse {
+  leads: ApiLead[];
+  total: number;
+  offset: number;
+  limit: number;
 }
 
 export interface PipelineStatus {
@@ -116,25 +132,35 @@ export interface OutreachAttempt {
 }
 
 /**
- * Fetch leads from the backend with optional filtering
+ * Fetch leads from the backend with server-side filtering and pagination
  */
 export async function fetchLeads(params?: {
   min_score?: number;
   min_portfolio?: number;
   boro?: string;
-  has_website?: boolean;
+  has_phone?: boolean;
   has_email?: boolean;
+  has_website?: boolean;
+  entity_type?: string;
+  enrichment_status?: string;
+  outreach_status?: string;
+  min_units?: number;
   limit?: number;
   offset?: number;
-}): Promise<ApiLead[]> {
+}): Promise<LeadsListResponse> {
   const searchParams = new URLSearchParams();
   
   if (params) {
     if (params.min_score !== undefined) searchParams.set('min_score', params.min_score.toString());
     if (params.min_portfolio !== undefined) searchParams.set('min_portfolio', params.min_portfolio.toString());
     if (params.boro) searchParams.set('boro', params.boro);
-    if (params.has_website !== undefined) searchParams.set('has_website', params.has_website.toString());
+    if (params.has_phone !== undefined) searchParams.set('has_phone', params.has_phone.toString());
     if (params.has_email !== undefined) searchParams.set('has_email', params.has_email.toString());
+    if (params.has_website !== undefined) searchParams.set('has_website', params.has_website.toString());
+    if (params.entity_type) searchParams.set('entity_type', params.entity_type);
+    if (params.enrichment_status) searchParams.set('enrichment_status', params.enrichment_status);
+    if (params.outreach_status) searchParams.set('outreach_status', params.outreach_status);
+    if (params.min_units !== undefined) searchParams.set('min_units', params.min_units.toString());
     if (params.limit !== undefined) searchParams.set('limit', params.limit.toString());
     if (params.offset !== undefined) searchParams.set('offset', params.offset.toString());
   }
@@ -203,15 +229,19 @@ export async function refreshPipeline(full: boolean = false): Promise<{
 export interface PipelineStats {
   total_leads: number;
   total_buildings: number;
+  total_units: number;
   by_borough: Record<string, number>;
   by_enrichment_status: Record<string, number>;
+  by_outreach_status: Record<string, number>;
+  by_entity_type: Record<string, number>;
   score_distribution: Record<string, number>;
   portfolio_distribution: Record<string, number>;
   with_phone: number;
   with_email: number;
   with_website: number;
-  building_type_distribution: Record<string, number>;
-  leads_with_pluto_data: number;
+  top_score: number;
+  avg_score: number;
+  last_refresh: string | null;
 }
 
 /**

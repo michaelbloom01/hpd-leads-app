@@ -1,168 +1,70 @@
 # HPD Leads — Task List
 
-## Current Sprint
+## Completed (Feb 9, 2026 Session)
 
-- [x] **Build NY DOS registry lookup** — DONE Feb 4, 2026
-  - New `/api/dos/lookup` and `/api/dos/search` endpoints
-  - Integrated into enrichment pipeline
-- [ ] Add Apollo API integration
-- [ ] Set up Google Sheets output (needs credentials)
-- [x] **Deploy to Railway (backend) + Vercel (frontend)** — DONE Feb 4, 2026
-  - Frontend: https://frontend-nine-psi-58.vercel.app
-  - Backend: https://hpd-leads-app-production.up.railway.app
-  - Migrated from Render to Railway for longer timeouts (5min vs 30s)
-- [x] **Add CSV export to frontend** — DONE Feb 4, 2026
-- [x] **Add lead status/notes tracking** — DONE Feb 4, 2026
-  - Outreach statuses: new, contacted, interested, not_interested, closed
-  - Notes field per lead
-  - Status filter in table
-- [x] **Improve scoring with geographic concentration** — DONE Feb 4, 2026
-  - Single-borough operators get bonus (easier acquisition targets)
-  - New tags: single_borough_focus, concentrated
+- [x] **Phase 0: Entity Classification** — Classify leads as company/individual_agent/owner_operator
+  - Added entity_type, company_name, primary_contact, primary_contact_title to Lead model
+  - Classification logic in aggregate.py using company indicators + person name heuristics
+  - Exposed contacts array and entity fields in API response
+  - Frontend shows entity badges (CO/AGT/OWN) and primary contact
+- [x] **Phase 1: Performance** — SQL-based filtering and stats
+  - Added 7 new DB indexes (portfolio, phone, email, website, outreach, score+portfolio, entity_type)
+  - New `get_leads_filtered()` method with SQL WHERE clauses
+  - New `get_stats_sql()` method with SQL GROUP BY aggregation
+  - /api/leads returns `{leads, total, offset, limit}` paginated response
+  - /api/stats uses SQL aggregation instead of Python iteration over 102k leads
+- [x] **Phase 2: Enrichment Rewrite** — Address-first cascade
+  - New `/api/enrich/reset` endpoint to clear stuck jobs and failed leads
+  - Google Places now searches by business address first (higher confidence)
+  - 4-tier cascade: Address Places → Name Places → Web Crawl → Person Email (Hunter)
+  - Person-based email discovery using HPD contact names with Hunter.io
+  - enricher.py updated to use MultiSourceEnricher
+- [x] **Phase 3: UX** — Frontend improvements
+  - Server-side pagination (no more loading 500 leads into memory)
+  - Entity type filter dropdown
+  - Entity info badges (CO/AGT/OWN) in lead table
+  - HPD contacts section in lead detail modal
+  - Updated CSV export with entity fields
+  - Dashboard uses SQL stats (fast load)
 
-## Backlog
+## Previously Completed
 
-- [ ] Set up daily scheduler (cron job for refresh)
-- [ ] Add failure alerting (email on errors)
-- [x] **Persistent database (SQLite)** — DONE Feb 4, 2026
-  - Notes, status, enrichment data now persists across restarts
-  - New `src/storage/database.py` module
-- [ ] Add building-level detail view
-- [ ] Violation history from HPD (another dataset)
+- [x] Build NY DOS registry lookup — Feb 4, 2026
+- [x] Deploy to Railway (backend) + Vercel (frontend) — Feb 4, 2026
+- [x] Add CSV export to frontend — Feb 4, 2026
+- [x] Add lead status/notes tracking — Feb 4, 2026
+- [x] Improve scoring with geographic concentration — Feb 4, 2026
+- [x] Persistent database (SQLite) — Feb 4, 2026
+- [x] LinkedIn enrichment + deduplication — Feb 4, 2026
+- [x] Multi-source enrichment (Google Places, Hunter.io, Web Crawl) — Feb 4, 2026
+- [x] PLUTO building classification integration — Feb 4, 2026
 
-## Done
+## Backlog (Future Sessions)
 
-- [x] Create project structure
-- [x] Write knowledge base docs
-- [x] Define data model
-- [x] Define scoring rules
-- [x] **Build HPD ingest module** — Two endpoints: buildings (tesw-yqqr) + contacts (feu5-w2e2)
-- [x] **Build normalization module** — Building and Contact dataclasses with proper field mapping
-- [x] **Build aggregation module** — Groups by agent name, computes portfolio metrics
-- [x] **Implement scoring logic** — Portfolio size weighted scoring with tiers
-- [x] **Build Google Sheets publisher** — Full refresh + incremental update + CSV export
-- [x] **Test end-to-end** — 5000 buildings → 2542 leads in 15s
-- [x] **Build web crawl enrichment** — Google search + DuckDuckGo fallback + website scraping + caching
-- [x] **Build FastAPI backend** — REST API with CORS, pagination, filtering
-- [x] **Build React frontend** — From Google AI Studio, Vantage.sh-style data table
-- [x] **Connect frontend to backend** — API service with full CRUD
-- [x] **Full HPD data support** — 201,282 buildings available, quick (10k) or full (200k+) refresh
-- [x] **Management company identification** — Agent contact type = property management company
+- [ ] Revenue estimation per lead (units x avg_rent x mgmt_fee)
+- [ ] HPD Violations dataset integration (distress signal)
+- [ ] Proper outreach pipeline (Kanban stages, follow-up dates)
+- [ ] Weekly auto-refresh from HPD with change alerts
+- [ ] One-click due diligence snapshot (export to Google Doc)
+- [ ] Scoring V2 (revenue, entity quality, distress, growth, deal fit)
+- [ ] Apollo.io integration for deeper contact discovery
+- [ ] Building-level detail view
 
 ---
 
-## Notes
-
-### Management Company Identification (Feb 4, 2026)
-
-**Key insight:** The "Agent" contact type in HPD data is the **property management company**.
-
-**Contact Types in HPD Database:**
-| Type | Count | Meaning |
-|------|-------|---------|
-| Agent | 153,418 | **Property management company** |
-| SiteManager | 160,905 | Building super |
-| HeadOfficer | 126,349 | Individual at owner entity |
-| CorporateOwner | 119,915 | Owner entity (LLC, Corp) |
-| Officer | 72,791 | Other officers |
-| IndividualOwner | 48,054 | Individual owner |
-| JointOwner | 44,161 | Joint owner |
-| Shareholder | 40,172 | Shareholders |
-| Lessee | 8,851 | Lessees |
-
-**Data flow:**
-1. Fetch buildings from HPD (tesw-yqqr) — 201,282 total
-2. Fetch contacts for each building (feu5-w2e2)
-3. Extract "Agent" contact type as management company
-4. Group by Agent name (normalized) to create leads
-5. Buildings without Agent fall back to Owner
-
-### Frontend/Backend Integration (Feb 4, 2026)
+## Architecture Notes
 
 **GitHub Repo:** https://github.com/michaelbloom01/hpd-leads-app
 
-**Structure:**
-```
-hpd-leads-app/
-├── backend/          # Python FastAPI (port 8000)
-│   ├── api.py        # REST endpoints
-│   ├── src/          # Pipeline code
-│   └── requirements.txt
-└── frontend/         # React + TypeScript (port 3000)
-    ├── services/api.ts
-    ├── components/
-    └── package.json
-```
+**Deployments:**
+- Frontend: Vercel (frontend-nine-psi-58.vercel.app)
+- Backend: Railway (hpd-leads-app-production.up.railway.app)
 
-**Backend API Endpoints:**
+**Key API Endpoints:**
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/` | GET | Health check |
-| `/api/leads` | GET | Get leads with filtering |
-| `/api/leads/{id}` | GET | Get single lead |
-| `/api/status` | GET | Pipeline status |
-| `/api/stats` | GET | Detailed statistics |
-| `/api/refresh` | POST | Refresh from HPD (quick or full) |
-| `/api/enrich` | POST | Enrich specific leads |
-| `/api/enrich/batch` | POST | Auto-enrich top leads |
-
-**Frontend Features:**
-- Vantage.sh-style filterable data table
-- Filters: search, borough, score, portfolio size, contact info, management company
-- Sortable columns
-- Pagination (50 per page)
-- Bulk selection and enrichment
-- Lead detail modal with one-click enrichment
-- Quick (10k) or Full (200k+) data refresh toggle
-
-### Web Crawl Enrichment (Feb 4, 2026)
-
-**Implementation:**
-- `src/enrich/web_crawl.py` - WebCrawler class with:
-  - Google search (via `googlesearch-python`) with DuckDuckGo fallback
-  - Website scraping to extract phone, email, address, summary, owner
-  - File-based caching with 30-day TTL
-  - Excluded domains list (Yelp, LinkedIn, Zillow, etc.)
-  - Rate limiting (1s delay + random jitter)
-
-- `src/enrich/enricher.py` - Enricher orchestrator with:
-  - Tier-based enrichment (web_crawl implemented, NY DOS and Apollo stubbed)
-  - Batch processing with filtering by score/portfolio size
-  - Automatic tag updates (has_website, has_phone, has_email)
-
-**Test Results:**
-- Douglas Elliman → Found ellimanpm.com, phone (212) 370-9200
-- Corcoran Group → Found corcoran.com, phone (800) 544-4055
-- Enrichment completes in ~20-30s per lead (includes rate limiting)
-
-**Known Limitations:**
-- `googlesearch-python` often gets rate-limited by Google (returns 0 results)
-- DuckDuckGo fallback works reliably
-- Email extraction skips generic addresses (info@, support@, noreply@)
-
-### API Endpoints (Feb 3, 2026)
-- Buildings: `https://data.cityofnewyork.us/resource/tesw-yqqr.json`
-- Contacts: `https://data.cityofnewyork.us/resource/feu5-w2e2.json`
-- The original endpoint in docs (vx8i-nprf) was wrong
-
-### Test Results
-- 5000 buildings → 2542 leads
-- Top lead: GRINBERG MANAGEMENT & DEVELOPMENT LLC (125 buildings, score 59.5)
-- Pipeline runs in ~15s for 5000 buildings
-
----
-
-## Review
-
-### Feb 4, 2026 — Frontend Integration & Full Data Support
-- Connected Google AI Studio frontend to Python backend
-- Added full HPD database support (201,282 buildings)
-- Clarified management company (Agent) vs owner distinction
-- Vantage.sh-style UI with powerful filtering
-- GitHub repo: https://github.com/michaelbloom01/hpd-leads-app
-
-### Feb 3, 2026 — Initial Implementation
-- Core pipeline working: ingest → normalize → aggregate → score → export
-- CSV export works; Google Sheets needs credentials
-- Enrichment module stubbed but not implemented
-- Next: Add enrichment to get contact info (phone, email, website)
+| `/api/leads` | GET | SQL-filtered leads with pagination |
+| `/api/stats` | GET | SQL-aggregated statistics |
+| `/api/enrich/reset` | POST | Reset stuck enrichment jobs |
+| `/api/enrich/batch` | POST | Batch enrich top leads |
+| `/api/leads/{id}/enrich-contacts` | POST | Single-lead multi-source enrichment |

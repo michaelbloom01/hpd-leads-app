@@ -5,7 +5,6 @@ import { toast } from 'react-hot-toast';
 import { COLORS } from '../constants';
 import { 
   fetchLeads, 
-  fetchStatus, 
   fetchStats,
   ApiLead, 
   PipelineStatus,
@@ -30,17 +29,23 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
 
   const loadData = useCallback(async () => {
     try {
-      const [topLeadsData, statusData, statsData, enrichData] = await Promise.all([
-        fetchLeads({ limit: 100, min_portfolio: 10 }), // Get more to ensure we have top 10
-        fetchStatus(),
+      const [topLeadsResp, statsData, enrichData] = await Promise.all([
+        fetchLeads({ limit: 50, min_portfolio: 10 }),
         fetchStats(),
         getEnrichmentProgress(),
       ]);
       
       // Sort by portfolio size descending to get actual top leads
-      const sortedByPortfolio = [...topLeadsData].sort((a, b) => b.portfolio_size - a.portfolio_size);
+      const sortedByPortfolio = [...topLeadsResp.leads].sort((a, b) => b.portfolio_size - a.portfolio_size);
       setTopLeads(sortedByPortfolio);
-      setStatus(statusData);
+      
+      // Build a pseudo status from stats (since /api/stats now returns everything)
+      setStatus({
+        total_leads: statsData.total_leads,
+        last_refresh: statsData.last_refresh,
+        enriched_count: statsData.with_phone + statsData.with_email,
+        top_score: statsData.top_score || 0,
+      });
       setStats(statsData);
       setEnrichmentStatus(enrichData);
       
@@ -397,12 +402,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
         </div>
       </div>
 
-      {/* Building Type Distribution */}
-      {stats?.building_type_distribution && (
+      {/* Entity Type Distribution */}
+      {stats?.by_entity_type && (
         <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-6">
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Building Type Distribution (All Leads)</h4>
-          <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
-            {Object.entries(stats.building_type_distribution).map(([type, count]) => (
+          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Entity Type Distribution</h4>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {Object.entries(stats.by_entity_type).map(([type, count]) => (
               <div key={type} className="bg-slate-950/50 rounded-xl p-3 text-center">
                 <p className="text-lg font-mono font-bold text-slate-300">{(count as number).toLocaleString()}</p>
                 <p className="text-[10px] text-slate-600 uppercase">{type.replace('_', ' ')}</p>

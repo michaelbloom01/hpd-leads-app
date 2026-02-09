@@ -107,6 +107,19 @@ class LeadsDatabase:
             except sqlite3.OperationalError:
                 pass  # Column already exists
             
+            # Migration: Add entity classification columns (Phase 0)
+            for col, col_type in [
+                ("entity_type", "TEXT DEFAULT 'unknown'"),
+                ("company_name", "TEXT"),
+                ("primary_contact", "TEXT"),
+                ("primary_contact_title", "TEXT"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE leads ADD COLUMN {col} {col_type}")
+                    logger.info(f"Added {col} column to leads table")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+            
             conn.executescript("""
                 
                 -- Lead user data (notes, status, etc.) - kept for backward compatibility
@@ -170,6 +183,15 @@ class LeadsDatabase:
                 CREATE INDEX IF NOT EXISTS idx_leads_boro ON leads(boro);
                 CREATE INDEX IF NOT EXISTS idx_leads_enrichment ON leads(enrichment_status);
                 CREATE INDEX IF NOT EXISTS idx_enrichment_jobs_status ON enrichment_jobs(status);
+                
+                -- Performance indexes for filtering (Phase 1)
+                CREATE INDEX IF NOT EXISTS idx_leads_portfolio ON leads(portfolio_size DESC);
+                CREATE INDEX IF NOT EXISTS idx_leads_phone ON leads(phone);
+                CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email);
+                CREATE INDEX IF NOT EXISTS idx_leads_website ON leads(website);
+                CREATE INDEX IF NOT EXISTS idx_leads_outreach ON leads(outreach_status);
+                CREATE INDEX IF NOT EXISTS idx_leads_score_portfolio ON leads(score DESC, portfolio_size DESC);
+                CREATE INDEX IF NOT EXISTS idx_leads_entity_type ON leads(entity_type);
             """)
             conn.commit()
             logger.info(f"Database initialized at {self.db_path}")
@@ -344,7 +366,9 @@ class LeadsDatabase:
         allowed_fields = {
             'business_summary', 'phone', 'email', 'website', 
             'enrichment_status', 'last_enriched', 'owner_principal',
-            'dos_id', 'dos_status', 'notes', 'outreach_status'
+            'dos_id', 'dos_status', 'notes', 'outreach_status',
+            'entity_type', 'company_name', 'primary_contact', 'primary_contact_title',
+            'enrichment_sources', 'score', 'score_breakdown',
         }
         
         # Filter to allowed fields
@@ -398,8 +422,10 @@ class LeadsDatabase:
                         website, business_summary, owner_principal, enrichment_status,
                         enrichment_sources, last_enriched, score, score_breakdown,
                         tags, opportunity_note, outreach_status, notes, 
-                        building_types, building_classes, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        building_types, building_classes,
+                        entity_type, company_name, primary_contact, primary_contact_title,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         lead.lead_id,
                         lead.agent_name,
@@ -433,6 +459,10 @@ class LeadsDatabase:
                         lead.notes,
                         building_types_json,
                         json.dumps(lead.building_classes) if lead.building_classes else None,
+                        getattr(lead, 'entity_type', 'unknown'),
+                        getattr(lead, 'company_name', None),
+                        getattr(lead, 'primary_contact', None),
+                        getattr(lead, 'primary_contact_title', None),
                         datetime.now().isoformat(),
                     )
                 )
@@ -558,6 +588,10 @@ class LeadsDatabase:
                     opportunity_note=row_dict.get('opportunity_note'),
                     outreach_status=row_dict.get('outreach_status') or 'new',
                     notes=row_dict.get('notes'),
+                    entity_type=row_dict.get('entity_type') or 'unknown',
+                    company_name=row_dict.get('company_name'),
+                    primary_contact=row_dict.get('primary_contact'),
+                    primary_contact_title=row_dict.get('primary_contact_title'),
                     created_at=created_at,
                     updated_at=updated_at,
                 )
@@ -565,6 +599,171 @@ class LeadsDatabase:
             
             logger.info(f"Loaded {len(leads)} leads from database")
             return leads
+    
+    def get_leads_filtered(
+        self,
+        min_score: Optional[float] = None,
+        min_portfolio: Optional[int] = None,
+        boro: Optional[str] = None,
+        has_phone: Optional[bool] = None,
+        has_email: Optional[bool] = None,
+        has_website: Optional[bool] = None,
+        entity_type: Optional[str] = None,
+        min_units: Optional[int] = None,
+        enrichment_status: Optional[str] = None,
+        outreach_status: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple:
+        """
+        Get filtered leads using SQL WHERE clauses (fast, uses indexes).
+        
+        Returns:
+            Tuple of (list of row dicts, total count matching filters)
+        """
+        where_clauses = []
+        params = []
+        
+        if min_score is not None:
+            where_clauses.append("score >= ?")
+            params.append(min_score)
+        if min_portfolio is not None:
+            where_clauses.append("portfolio_size >= ?")
+            params.append(min_portfolio)
+        if boro is not None:
+            # boro field is primary borough; also check boros JSON array
+            where_clauses.append("(UPPER(boro) = UPPER(?) OR boros LIKE ?)")
+            params.extend([boro, f'%"{boro.upper()}"%'])
+        if has_phone is True:
+            where_clauses.append("phone IS NOT NULL AND phone != ''")
+        elif has_phone is False:
+            where_clauses.append("(phone IS NULL OR phone = '')")
+        if has_email is True:
+            where_clauses.append("email IS NOT NULL AND email != ''")
+        elif has_email is False:
+            where_clauses.append("(email IS NULL OR email = '')")
+        if has_website is True:
+            where_clauses.append("website IS NOT NULL AND website != ''")
+        elif has_website is False:
+            where_clauses.append("(website IS NULL OR website = '')")
+        if entity_type is not None:
+            where_clauses.append("entity_type = ?")
+            params.append(entity_type)
+        if min_units is not None:
+            where_clauses.append("total_units >= ?")
+            params.append(min_units)
+        if enrichment_status is not None:
+            where_clauses.append("enrichment_status = ?")
+            params.append(enrichment_status)
+        if outreach_status is not None:
+            where_clauses.append("outreach_status = ?")
+            params.append(outreach_status)
+        
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+        
+        with self._get_connection() as conn:
+            # Get total count
+            count_row = conn.execute(
+                f"SELECT COUNT(*) FROM leads WHERE {where_sql}", params
+            ).fetchone()
+            total = count_row[0]
+            
+            # Get paginated results
+            rows = conn.execute(
+                f"SELECT * FROM leads WHERE {where_sql} ORDER BY score DESC LIMIT ? OFFSET ?",
+                params + [limit, offset]
+            ).fetchall()
+            
+            return [dict(r) for r in rows], total
+    
+    def get_stats_sql(self) -> Dict:
+        """
+        Get comprehensive stats using SQL aggregation (fast, no Python iteration).
+        """
+        with self._get_connection() as conn:
+            # Core counts
+            core = conn.execute("""
+                SELECT 
+                    COUNT(*) as total_leads,
+                    SUM(portfolio_size) as total_buildings,
+                    SUM(total_units) as total_units,
+                    COUNT(CASE WHEN phone IS NOT NULL AND phone != '' THEN 1 END) as with_phone,
+                    COUNT(CASE WHEN email IS NOT NULL AND email != '' THEN 1 END) as with_email,
+                    COUNT(CASE WHEN website IS NOT NULL AND website != '' THEN 1 END) as with_website,
+                    MAX(score) as top_score,
+                    AVG(score) as avg_score
+                FROM leads
+            """).fetchone()
+            
+            # Borough distribution
+            by_borough = {}
+            for row in conn.execute("SELECT boro, COUNT(*) as cnt FROM leads GROUP BY boro"):
+                by_borough[row['boro'] or 'Unknown'] = row['cnt']
+            
+            # Enrichment status distribution
+            by_enrichment = {}
+            for row in conn.execute("SELECT enrichment_status, COUNT(*) as cnt FROM leads GROUP BY enrichment_status"):
+                by_enrichment[row['enrichment_status'] or 'none'] = row['cnt']
+            
+            # Outreach status distribution
+            by_outreach = {}
+            for row in conn.execute("SELECT outreach_status, COUNT(*) as cnt FROM leads GROUP BY outreach_status"):
+                by_outreach[row['outreach_status'] or 'new'] = row['cnt']
+            
+            # Entity type distribution
+            by_entity = {}
+            for row in conn.execute("SELECT entity_type, COUNT(*) as cnt FROM leads GROUP BY entity_type"):
+                by_entity[row['entity_type'] or 'unknown'] = row['cnt']
+            
+            # Score distribution
+            score_dist = {}
+            for row in conn.execute("""
+                SELECT 
+                    CASE 
+                        WHEN score < 20 THEN '0-20'
+                        WHEN score < 40 THEN '20-40'
+                        WHEN score < 60 THEN '40-60'
+                        WHEN score < 80 THEN '60-80'
+                        ELSE '80-100'
+                    END as bucket,
+                    COUNT(*) as cnt
+                FROM leads GROUP BY bucket
+            """):
+                score_dist[row['bucket']] = row['cnt']
+            
+            # Portfolio distribution
+            portfolio_dist = {}
+            for row in conn.execute("""
+                SELECT 
+                    CASE 
+                        WHEN portfolio_size <= 5 THEN '1-5'
+                        WHEN portfolio_size <= 10 THEN '6-10'
+                        WHEN portfolio_size <= 25 THEN '11-25'
+                        WHEN portfolio_size <= 50 THEN '26-50'
+                        WHEN portfolio_size <= 100 THEN '51-100'
+                        ELSE '100+'
+                    END as bucket,
+                    COUNT(*) as cnt
+                FROM leads GROUP BY bucket
+            """):
+                portfolio_dist[row['bucket']] = row['cnt']
+            
+            return {
+                "total_leads": core['total_leads'] or 0,
+                "total_buildings": core['total_buildings'] or 0,
+                "total_units": core['total_units'] or 0,
+                "with_phone": core['with_phone'] or 0,
+                "with_email": core['with_email'] or 0,
+                "with_website": core['with_website'] or 0,
+                "top_score": core['top_score'] or 0.0,
+                "avg_score": round(core['avg_score'] or 0.0, 1),
+                "by_borough": by_borough,
+                "by_enrichment_status": by_enrichment,
+                "by_outreach_status": by_outreach,
+                "by_entity_type": by_entity,
+                "score_distribution": score_dist,
+                "portfolio_distribution": portfolio_dist,
+            }
     
     def get_leads_count(self) -> int:
         """Get the number of leads stored in the database."""

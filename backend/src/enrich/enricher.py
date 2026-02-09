@@ -31,70 +31,92 @@ class Enricher:
     
     def enrich_lead(self, lead: Lead, tiers: Optional[List[str]] = None) -> Lead:
         """
-        Run enrichment tiers on a single lead.
+        Run enrichment using the 4-tier cascade with address-first strategy.
         
-        Tiers:
-        1. web_crawl: Google search → website → scrape
-        2. ny_dos: NY DOS registry lookup (not yet implemented)
-        3. apollo: Apollo API (not yet implemented)
+        Cascade:
+        1. Google Places (address-based, then name-based)
+        2. NY DOS Registry (corporation info)
+        3. Web Crawl (website scraping)
+        4. Hunter.io / Person-based email
         
-        Args:
-            lead: Lead to enrich
-            tiers: List of tier names to run. None = all available tiers.
-            
-        Returns:
-            Enriched lead with updated fields
+        Falls back through tiers for best coverage.
         """
-        if tiers is None:
-            tiers = ["ny_dos", "web_crawl"]  # NY DOS first (fast), then web crawl
-        
         logger.info(f"Enriching lead: {lead.agent_name or lead.owner_name}")
         
-        enrichment_sources = []
+        # Use the new MultiSourceEnricher for the full cascade
+        from src.enrich.contact_sources import MultiSourceEnricher
         
-        # Tier 1: Web Crawl
-        if "web_crawl" in tiers:
+        enricher = MultiSourceEnricher()
+        company_name = lead.agent_name or lead.owner_name
+        location = f"{lead.boro}, New York" if lead.boro else "New York, NY"
+        
+        result = enricher.enrich(
+            lead_id=lead.lead_id,
+            company_name=company_name,
+            website=lead.website,
+            location=location,
+            address=lead.address,
+            contacts=lead.contacts,
+        )
+        
+        # Apply results to lead
+        if result.phones:
+            best = result.best_phone()
+            if best and not lead.phone:
+                lead.phone = best.value
+        
+        if result.emails:
+            best = result.best_email()
+            if best and not lead.email:
+                lead.email = best.value
+        
+        if result.website and not lead.website:
+            lead.website = result.website
+            lead.website_source = result.website_source
+        
+        # Apply NY DOS results
+        if result.dos_id:
+            lead.dos_id = result.dos_id
+            lead.dos_status = result.dos_entity_type
+            if result.dos_registered_agent and not lead.owner_principal:
+                lead.owner_principal = result.dos_registered_agent
+            if not lead.business_summary:
+                parts = []
+                if result.dos_entity_type:
+                    parts.append(f"Entity: {result.dos_entity_type}")
+                if result.dos_formation_date:
+                    parts.append(f"Formed: {result.dos_formation_date[:10]}")
+                if result.dos_registered_agent:
+                    parts.append(f"Agent: {result.dos_registered_agent}")
+                if parts:
+                    lead.business_summary = " | ".join(parts)
+        
+        # Also run legacy web crawl if the multi-source didn't find enough
+        if not lead.phone and not lead.email and not lead.website:
             name = lead.agent_name or lead.owner_name
             if name:
-                result = self.web_crawler.enrich(name)
-                lead = self._apply_web_result(lead, result)
-                if result.success:
-                    enrichment_sources.append("web_crawl")
-        
-        # Tier 2: NY DOS Corporation Registry
-        if "ny_dos" in tiers:
-            # Look up owner/agent in NY DOS registry
-            name_to_lookup = lead.owner_name or lead.agent_name
-            if name_to_lookup and self._is_corporation(name_to_lookup):
-                dos_result = self.ny_dos.lookup_entity(name_to_lookup)
-                if dos_result:
-                    lead = self._apply_dos_result(lead, dos_result)
-                    enrichment_sources.append("ny_dos")
-        
-        # Tier 3: Apollo (not yet implemented)
-        if "apollo" in tiers:
-            logger.debug("Apollo enrichment not yet implemented")
-            # TODO: Implement
+                web_result = self.web_crawler.enrich(name)
+                lead = self._apply_web_result(lead, web_result)
+                if web_result.success:
+                    result.sources_succeeded.append("web_crawl_fallback")
         
         # Update enrichment metadata
-        lead.enrichment_sources = enrichment_sources
+        lead.enrichment_sources = result.sources_succeeded
         lead.last_enriched = datetime.now()
         
         # Determine enrichment status
-        if enrichment_sources:
-            # Check if we got substantial data
-            has_contact = bool(lead.phone or lead.email)
-            has_website = bool(lead.website)
-            if has_contact and has_website:
-                lead.enrichment_status = "complete"
-            elif has_contact or has_website:
-                lead.enrichment_status = "partial"
-            else:
-                lead.enrichment_status = "partial"
+        has_contact = bool(lead.phone or lead.email)
+        has_website = bool(lead.website)
+        if has_contact and has_website:
+            lead.enrichment_status = "complete"
+        elif has_contact or has_website:
+            lead.enrichment_status = "partial"
+        elif result.sources_succeeded:
+            lead.enrichment_status = "partial"
         else:
             lead.enrichment_status = "failed"
         
-        # Update tags based on enrichment
+        # Update tags
         lead = self._update_tags(lead)
         
         return lead

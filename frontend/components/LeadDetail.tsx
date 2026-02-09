@@ -138,12 +138,27 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
         {/* Header */}
         <div className="sticky top-0 bg-slate-900 border-b border-white/10 p-6 flex justify-between items-start">
           <div>
-            <div className="text-xs text-blue-400 uppercase tracking-wider font-medium mb-1">
-              {enrichedLead.agent_name ? 'Management Company' : 'Owner (No Agent Listed)'}
+            <div className="flex items-center gap-2 mb-1">
+              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
+                enrichedLead.entity_type === 'company' ? 'bg-blue-900/50 text-blue-400' :
+                enrichedLead.entity_type === 'individual_agent' ? 'bg-amber-900/50 text-amber-400' :
+                enrichedLead.entity_type === 'owner_operator' ? 'bg-purple-900/50 text-purple-400' :
+                'bg-slate-800 text-slate-500'
+              }`}>
+                {enrichedLead.entity_type === 'company' ? 'Company' : 
+                 enrichedLead.entity_type === 'individual_agent' ? 'Individual Agent' : 
+                 enrichedLead.entity_type === 'owner_operator' ? 'Owner-Operator' : 'Unknown'}
+              </span>
             </div>
-            <h2 className="text-xl font-bold text-white">{enrichedLead.agent_name || enrichedLead.owner_name}</h2>
+            <h2 className="text-xl font-bold text-white">{enrichedLead.company_name || enrichedLead.agent_name || enrichedLead.owner_name}</h2>
+            {enrichedLead.primary_contact && (
+              <p className="text-emerald-400 text-sm mt-1">
+                {enrichedLead.primary_contact}
+                {enrichedLead.primary_contact_title && <span className="text-slate-500"> - {enrichedLead.primary_contact_title}</span>}
+              </p>
+            )}
             {enrichedLead.agent_name && enrichedLead.owner_name && enrichedLead.agent_name !== enrichedLead.owner_name && (
-              <p className="text-slate-500 text-sm mt-1">Owner: {enrichedLead.owner_name}</p>
+              <p className="text-slate-500 text-sm mt-0.5">Owner: {enrichedLead.owner_name}</p>
             )}
             <p className="text-slate-600 text-xs mt-1">
               {enrichedLead.owner_type} • {enrichedLead.boros?.length > 0 ? enrichedLead.boros.join(', ') : enrichedLead.boro}
@@ -1114,6 +1129,34 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                   <>Showing 25 of {enrichedLead.buildings.length} buildings across {enrichedLead.boros?.join(', ') || enrichedLead.boro} (first marker in red)</>
                 )}
               </p>
+            </div>
+          )}
+
+          {/* HPD Contacts */}
+          {enrichedLead.contacts && enrichedLead.contacts.length > 0 && (
+            <div className="bg-slate-800/30 rounded-xl p-5">
+              <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-3">
+                HPD Registered Contacts ({enrichedLead.contacts.length})
+              </h3>
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {enrichedLead.contacts.map((contact, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm py-1.5 px-3 bg-slate-900/50 rounded">
+                    <div>
+                      <span className="text-slate-300">{contact.name}</span>
+                      {contact.title && <span className="text-slate-600 ml-2 text-xs">{contact.title}</span>}
+                    </div>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                      contact.type === 'Agent' ? 'bg-blue-900/40 text-blue-400' :
+                      contact.type === 'CorporateOwner' ? 'bg-purple-900/40 text-purple-400' :
+                      contact.type === 'IndividualOwner' ? 'bg-amber-900/40 text-amber-400' :
+                      contact.type === 'SiteManager' ? 'bg-emerald-900/40 text-emerald-400' :
+                      'bg-slate-800 text-slate-500'
+                    }`}>
+                      {contact.type}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
