@@ -3867,6 +3867,86 @@ async def export_leads_csv(
     )
 
 
+# ===========================================================================
+# Agent Endpoints (AI Agent feature)
+# ===========================================================================
+
+from sse_starlette.sse import EventSourceResponse
+from src.agent.types import AgentChatRequest
+from src.agent.orchestrator import run_agent
+from src.agent import memory as agent_memory
+from src.agent.email_service import get_briefing, send_briefing_email
+
+
+@app.post("/api/agent/chat")
+async def agent_chat(request: AgentChatRequest):
+    """SSE streaming endpoint for agent chat."""
+    has_msg = bool(request.message and request.message.strip())
+    has_conf = request.confirmation is not None
+    if not has_msg and not has_conf:
+        raise HTTPException(400, "Provide either a message or a confirmation")
+    if has_msg and has_conf:
+        raise HTTPException(400, "Provide either a message or a confirmation, not both")
+
+    async def event_generator():
+        async for event in run_agent(
+            message=request.message,
+            conversation_id=request.conversation_id,
+            confirmation=request.confirmation,
+        ):
+            yield event
+
+    return EventSourceResponse(event_generator())
+
+
+@app.get("/api/agent/conversations")
+async def list_agent_conversations():
+    """Returns list of past conversations."""
+    conversations = agent_memory.list_conversations(limit=20)
+    return {"conversations": conversations}
+
+
+@app.get("/api/agent/conversations/{conversation_id}")
+async def get_agent_conversation(conversation_id: str):
+    """Returns full message history for a conversation."""
+    if not agent_memory.conversation_exists(conversation_id):
+        raise HTTPException(404, "Conversation not found")
+    messages = agent_memory.get_messages(conversation_id)
+    return {"conversation_id": conversation_id, "messages": messages}
+
+
+@app.delete("/api/agent/conversations/{conversation_id}")
+async def delete_agent_conversation(conversation_id: str):
+    """Delete a conversation and all its messages."""
+    deleted = agent_memory.delete_conversation(conversation_id)
+    if not deleted:
+        raise HTTPException(404, "Conversation not found")
+    return {"status": "deleted"}
+
+
+@app.get("/api/agent/briefing/{briefing_id}")
+async def get_agent_briefing(briefing_id: str):
+    """Serve a saved HTML briefing for download."""
+    html = get_briefing(briefing_id)
+    if not html:
+        raise HTTPException(404, "Briefing not found")
+    from starlette.responses import HTMLResponse
+    return HTMLResponse(content=html)
+
+
+@app.post("/api/agent/briefing/{briefing_id}/send")
+async def send_agent_briefing(briefing_id: str, recipient: Optional[str] = Query(None)):
+    """Send a saved briefing via email."""
+    html = get_briefing(briefing_id)
+    if not html:
+        raise HTTPException(404, "Briefing not found")
+    to = recipient or os.environ.get("EMAIL_TO_DEFAULT", "")
+    if not to:
+        raise HTTPException(400, "No recipient email provided and no default configured")
+    result = send_briefing_email(f"HPD Leads Briefing", html, to)
+    return result
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

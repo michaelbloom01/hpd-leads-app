@@ -297,6 +297,35 @@ class LeadsDatabase:
                     model TEXT,
                     cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
+                
+                -- Agent conversation memory (AI Agent feature)
+                CREATE TABLE IF NOT EXISTS agent_conversations (
+                    conversation_id TEXT PRIMARY KEY,
+                    title TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                CREATE TABLE IF NOT EXISTS agent_messages (
+                    message_id TEXT PRIMARY KEY,
+                    conversation_id TEXT REFERENCES agent_conversations(conversation_id) ON DELETE CASCADE,
+                    role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+                    content TEXT NOT NULL,
+                    structured_data TEXT,
+                    claude_messages TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_messages_conv ON agent_messages(conversation_id, created_at);
+                
+                -- Pending agent actions (for confirmation gate)
+                CREATE TABLE IF NOT EXISTS agent_pending_actions (
+                    action_id TEXT PRIMARY KEY,
+                    conversation_id TEXT REFERENCES agent_conversations(conversation_id) ON DELETE CASCADE,
+                    tool_name TEXT NOT NULL,
+                    tool_input TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
             """)
             conn.commit()
             logger.info(f"Database initialized at {self.db_path}")
@@ -773,6 +802,11 @@ class LeadsDatabase:
         sort_dir: str = 'desc',
         limit: int = 50,
         offset: int = 0,
+        # Agent-specific filters (Phase 1B)
+        min_violations_per_unit: Optional[float] = None,
+        max_violations_per_unit: Optional[float] = None,
+        min_revenue: Optional[float] = None,
+        max_revenue: Optional[float] = None,
     ) -> tuple:
         """
         Get filtered leads using SQL WHERE clauses (fast, uses indexes).
@@ -850,6 +884,20 @@ class LeadsDatabase:
         if pipeline_stage is not None:
             where_clauses.append("(pipeline_stage = ? OR (? = 'research' AND (pipeline_stage IS NULL OR pipeline_stage = '')))")
             params.extend([pipeline_stage, pipeline_stage])
+        
+        # Agent-specific filters
+        if min_violations_per_unit is not None:
+            where_clauses.append("violations_per_unit >= ?")
+            params.append(min_violations_per_unit)
+        if max_violations_per_unit is not None:
+            where_clauses.append("violations_per_unit <= ?")
+            params.append(max_violations_per_unit)
+        if min_revenue is not None:
+            where_clauses.append("estimated_annual_revenue >= ?")
+            params.append(min_revenue)
+        if max_revenue is not None:
+            where_clauses.append("estimated_annual_revenue <= ?")
+            params.append(max_revenue)
         
         # 2B: Full-text search across name/company/address fields
         if search is not None and search.strip():
