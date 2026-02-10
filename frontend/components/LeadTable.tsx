@@ -6,10 +6,23 @@ interface Props {
   onSelectLead: (lead: ApiLead) => void;
 }
 
-type SortField = 'agent_name' | 'portfolio_size' | 'total_units' | 'score' | 'boro' | 'enrichment_status' | 'estimated_annual_revenue' | 'violation_count';
+type SortField = 'agent_name' | 'portfolio_size' | 'total_units' | 'score' | 'boro' | 'enrichment_status' | 'estimated_annual_revenue' | 'violations_per_unit';
 type SortDir = 'asc' | 'desc';
 
 const BOROUGHS = ['MANHATTAN', 'BROOKLYN', 'QUEENS', 'BRONX', 'STATEN ISLAND'];
+const BOROUGH_SHORT: Record<string, string> = { 'MANHATTAN': 'Man', 'BROOKLYN': 'Bklyn', 'QUEENS': 'Qns', 'BRONX': 'Bronx', 'STATEN ISLAND': 'SI' };
+
+const formatCurrency = (amount: number): string => {
+  if (amount >= 1_000_000) return `$${(amount / 1_000_000).toFixed(1)}m`;
+  if (amount >= 1_000) return `$${(amount / 1_000).toFixed(0)}k`;
+  return `$${amount.toFixed(0)}`;
+};
+
+const scoreTier = (score: number): { label: string; color: string } => {
+  if (score >= 60) return { label: 'A', color: 'text-emerald-400' };
+  if (score >= 40) return { label: 'B', color: 'text-amber-400' };
+  return { label: 'C', color: 'text-slate-500' };
+};
 
 const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   const [leads, setLeads] = useState<ApiLead[]>([]);
@@ -19,7 +32,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   
   // Server-side filters
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterBorough, setFilterBorough] = useState<string>('');
+  const [filterBoroughs, setFilterBoroughs] = useState<string[]>([]);
   const [filterMinScore, setFilterMinScore] = useState<string>('');
   const [filterMinPortfolio, setFilterMinPortfolio] = useState<string>('10');
   const [filterHasPhone, setFilterHasPhone] = useState<boolean | null>(null);
@@ -43,6 +56,18 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [enriching, setEnriching] = useState(false);
 
+  const toggleBorough = (boro: string) => {
+    setFilterBoroughs(prev => 
+      prev.includes(boro) ? prev.filter(b => b !== boro) : [...prev, boro]
+    );
+  };
+
+  // Count of secondary filters active (for badge)
+  const activeSecondaryFilterCount = [
+    filterEntityType, filterOutreachStatus, filterMinScore, filterMinUnits,
+    filterHasWebsite === true ? 'yes' : '',
+  ].filter(Boolean).length;
+
   // Fetch leads from server with current filters
   const loadLeads = useCallback(async (currentPage: number = 0) => {
     setLoading(true);
@@ -59,7 +84,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       const minPortfolio = parseInt(filterMinPortfolio);
       if (!isNaN(minPortfolio) && minPortfolio > 0) params.min_portfolio = minPortfolio;
       
-      if (filterBorough) params.boro = filterBorough;
+      if (filterBoroughs.length > 0) params.boro = filterBoroughs.join(',');
       if (filterHasPhone !== null) params.has_phone = filterHasPhone;
       if (filterHasEmail !== null) params.has_email = filterHasEmail;
       if (filterHasWebsite !== null) params.has_website = filterHasWebsite;
@@ -79,7 +104,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     } finally {
       setLoading(false);
     }
-  }, [filterMinScore, filterMinPortfolio, filterBorough, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterPipelineStage, filterMinUnits, pageSize]);
+  }, [filterMinScore, filterMinPortfolio, filterBoroughs, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterPipelineStage, filterMinUnits, pageSize]);
 
   // Reload on filter change - reset to page 0
   useEffect(() => {
@@ -88,7 +113,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadLeads]);
 
-  // Page change (user clicking next/prev) - only fire when page > 0 to avoid double-fetch with the filter effect above
+  // Page change (user clicking next/prev) - only fire when page > 0 to avoid double-fetch
   useEffect(() => {
     if (page > 0) {
       loadLeads(page);
@@ -146,9 +171,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
         aVal = a.estimated_annual_revenue || 0;
         bVal = b.estimated_annual_revenue || 0;
         break;
-      case 'violation_count':
-        aVal = a.violation_count || 0;
-        bVal = b.violation_count || 0;
+      case 'violations_per_unit':
+        aVal = a.violations_per_unit || 0;
+        bVal = b.violations_per_unit || 0;
         break;
     }
     if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
@@ -199,7 +224,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
 
   const clearFilters = () => {
     setSearchTerm('');
-    setFilterBorough('');
+    setFilterBoroughs([]);
     setFilterMinScore('');
     setFilterMinPortfolio('10');
     setFilterHasPhone(null);
@@ -212,10 +237,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   };
 
   const exportToCsv = async () => {
-    // Export ALL matching leads (not just current page) by using the server-side CSV endpoint
     const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000').trim().replace(/\\r\\n$/, '').replace(/[\r\n]+$/, '');
     const params = new URLSearchParams();
-    params.set('limit', totalLeads.toString()); // Export all matching leads
+    params.set('limit', totalLeads.toString());
     
     const minScore = parseFloat(filterMinScore);
     if (!isNaN(minScore) && minScore > 0) params.set('min_score', minScore.toString());
@@ -223,7 +247,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     const minPortfolio = parseInt(filterMinPortfolio);
     if (!isNaN(minPortfolio) && minPortfolio > 0) params.set('min_portfolio', minPortfolio.toString());
     
-    if (filterBorough) params.set('boro', filterBorough);
+    if (filterBoroughs.length > 0) params.set('boro', filterBoroughs.join(','));
     if (filterHasPhone === true) params.set('has_phone', 'true');
     if (filterHasEmail === true) params.set('has_email', 'true');
     if (filterEntityType) params.set('entity_type', filterEntityType);
@@ -242,12 +266,11 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error('Server export failed, falling back to client export:', err);
-      // Fallback: export current page
-      const headers = ['Management Company','Company Name','Entity Type','Primary Contact','Owner Name','Boroughs','Buildings','Units','Score','Est Annual Revenue','Violations','Violations/Unit','Phone','Email','Website','Enrichment Status','Outreach Status','Pipeline Stage','Priority','Next Follow-Up'];
+      const headers = ['Company','Company Name','Entity Type','Primary Contact','Owner Name','Boroughs','Buildings','Units','Score','Est Annual Revenue','Violations/Unit','Violation Count','Phone','Email','Website','Enrichment Status','Outreach Status','Pipeline Stage','Priority','Next Follow-Up'];
       const rows = displayLeads.map(lead => [
         lead.agent_name || '', lead.company_name || '', lead.entity_type || '', lead.primary_contact || '',
         lead.owner_name || '', lead.boros?.join(', ') || lead.boro || '', lead.portfolio_size, lead.total_units,
-        lead.score.toFixed(1), lead.estimated_annual_revenue || 0, lead.violation_count || 0, lead.violations_per_unit || 0,
+        lead.score.toFixed(1), lead.estimated_annual_revenue || 0, lead.violations_per_unit || 0, lead.violation_count || 0,
         lead.phone || '', lead.email || '', lead.website || '', lead.enrichment_status, lead.outreach_status || 'new',
         lead.pipeline_stage || '', lead.priority_rank || 0, lead.next_follow_up || ''
       ]);
@@ -304,33 +327,50 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
               className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
               value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
           </div>
-          <select className="px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-300" value={filterBorough} onChange={(e) => setFilterBorough(e.target.value)}>
-            <option value="">All Boroughs</option>
-            {BOROUGHS.map(b => <option key={b} value={b}>{b}</option>)}
-          </select>
+          {/* Borough multi-select toggles */}
+          <div className="flex gap-1">
+            {BOROUGHS.map(b => (
+              <button key={b} onClick={() => toggleBorough(b)}
+                className={`px-2 py-1.5 rounded text-xs font-medium transition-colors ${
+                  filterBoroughs.includes(b)
+                    ? 'bg-blue-600/30 text-blue-300 border border-blue-500/40'
+                    : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
+                }`}>
+                {BOROUGH_SHORT[b] || b}
+              </button>
+            ))}
+          </div>
           <select className="px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-300" value={filterPipelineStage} onChange={(e) => setFilterPipelineStage(e.target.value)}>
-            <option value="">All Pipeline Stages</option>
+            <option value="">All Stages</option>
             <option value="research">Research</option>
             <option value="first_contact">First Contact</option>
             <option value="follow_up">Follow-Up</option>
-            <option value="meeting_scheduled">Meeting Scheduled</option>
+            <option value="meeting_scheduled">Meeting Set</option>
             <option value="meeting_done">Meeting Done</option>
             <option value="loi">LOI</option>
             <option value="due_diligence">Due Diligence</option>
             <option value="closed">Closed</option>
           </select>
-          <div className="flex gap-2">
+          {/* Min Buildings - promoted to primary row */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-slate-600 uppercase">Min Bldgs</span>
+            <input type="number" className="w-16 px-2 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100" value={filterMinPortfolio} onChange={(e) => setFilterMinPortfolio(e.target.value)} />
+          </div>
+          <div className="flex gap-1.5">
             <button onClick={() => setFilterHasPhone(filterHasPhone === true ? null : true)}
-              className={`px-2 py-1.5 rounded text-xs font-medium transition-colors ${filterHasPhone === true ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'}`}>
-              Phone
+              className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasPhone === true ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'}`}>
+              {filterHasPhone === true && <span className="text-emerald-400">✓</span>}Phone
             </button>
             <button onClick={() => setFilterHasEmail(filterHasEmail === true ? null : true)}
-              className={`px-2 py-1.5 rounded text-xs font-medium transition-colors ${filterHasEmail === true ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'}`}>
-              Email
+              className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasEmail === true ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'}`}>
+              {filterHasEmail === true && <span className="text-emerald-400">✓</span>}Email
             </button>
           </div>
-          <button onClick={() => setShowMoreFilters(!showMoreFilters)} className="px-3 py-2 text-xs text-slate-500 hover:text-slate-300 transition-colors">
-            {showMoreFilters ? 'Less Filters' : 'More Filters'}
+          <button onClick={() => setShowMoreFilters(!showMoreFilters)} className="px-3 py-2 text-xs text-slate-500 hover:text-slate-300 transition-colors relative">
+            {showMoreFilters ? 'Less' : 'More'}
+            {activeSecondaryFilterCount > 0 && !showMoreFilters && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 text-white text-[9px] rounded-full flex items-center justify-center font-bold">{activeSecondaryFilterCount}</span>
+            )}
           </button>
           <button onClick={clearFilters} className="px-3 py-2 text-xs text-slate-500 hover:text-slate-300 transition-colors">Clear</button>
           <button onClick={exportToCsv} disabled={displayLeads.length === 0}
@@ -357,11 +397,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
               <option value="closed">Closed</option>
             </select>
             <input type="number" placeholder="Min Score" className="w-24 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100" value={filterMinScore} onChange={(e) => setFilterMinScore(e.target.value)} />
-            <input type="number" placeholder="Min Buildings" className="w-28 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100" value={filterMinPortfolio} onChange={(e) => setFilterMinPortfolio(e.target.value)} />
             <input type="number" placeholder="Min Units" className="w-24 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100" value={filterMinUnits} onChange={(e) => setFilterMinUnits(e.target.value)} />
             <button onClick={() => setFilterHasWebsite(filterHasWebsite === true ? null : true)}
-              className={`px-2 py-1.5 rounded text-xs font-medium transition-colors ${filterHasWebsite === true ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'}`}>
-              Website
+              className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasWebsite === true ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'}`}>
+              {filterHasWebsite === true && <span className="text-emerald-400">✓</span>}Website
             </button>
           </div>
         )}
@@ -369,7 +408,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
         {/* Results count and bulk actions */}
         <div className="flex justify-between items-center mt-3 pt-3 border-t border-white/5">
           <div className="text-sm text-slate-500">
-            Showing <span className="text-slate-300 font-medium">{displayLeads.length}</span> of <span className="text-slate-300 font-medium">{totalLeads.toLocaleString()}</span> matching leads
+            Showing <span className="text-slate-300 font-medium">{displayLeads.length}</span> of <span className="text-slate-300 font-medium">{totalLeads.toLocaleString()}</span> leads
             {selectedIds.size > 0 && (
               <span className="ml-3 text-blue-400">({selectedIds.size} selected)</span>
             )}
@@ -400,60 +439,41 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                     className="rounded bg-slate-800 border-slate-600"
                   />
                 </th>
-                <th 
-                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors"
-                  onClick={() => handleSort('agent_name')}
-                >
-                  Management Company <SortIcon field="agent_name" />
+                <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors" onClick={() => handleSort('agent_name')}>
+                  Company <SortIcon field="agent_name" />
                 </th>
-                <th 
-                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors"
-                  onClick={() => handleSort('boro')}
-                >
+                <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors" onClick={() => handleSort('boro')}>
                   Borough <SortIcon field="boro" />
                 </th>
-                <th 
-                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right"
-                  onClick={() => handleSort('portfolio_size')}
-                >
-                  Buildings <SortIcon field="portfolio_size" />
+                <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('portfolio_size')}>
+                  Bldgs <SortIcon field="portfolio_size" />
                 </th>
-                <th 
-                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right"
-                  onClick={() => handleSort('total_units')}
-                >
+                <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('total_units')}>
                   Units <SortIcon field="total_units" />
                 </th>
-                <th 
-                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right"
-                  onClick={() => handleSort('score')}
-                >
+                <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('score')}
+                  title="Composite score: A (60+), B (40-59), C (<40)">
                   Score <SortIcon field="score" />
                 </th>
-                <th 
-                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right"
-                  onClick={() => handleSort('estimated_annual_revenue')}
-                  title="Est. annual management fee revenue = Units × Avg Rent (by borough &amp; building type) × 5% mgmt fee rate"
-                >
-                  Revenue <span className="inline-block w-3 h-3 rounded-full border border-slate-600 text-[8px] text-slate-500 text-center leading-[11px] cursor-help align-middle" title="Units × Avg Rent × 5% mgmt fee">?</span> <SortIcon field="estimated_annual_revenue" />
+                <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('estimated_annual_revenue')}
+                  title="Est. annual mgmt fee = Total Units × Avg Rent (by borough & type) × 5%">
+                  Est. Revenue <SortIcon field="estimated_annual_revenue" />
                 </th>
-                <th 
-                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right"
-                  onClick={() => handleSort('violation_count')}
-                >
-                  Violations <SortIcon field="violation_count" />
+                <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('violations_per_unit')}
+                  title="HPD violations per residential unit (sorted by density, not raw count)">
+                  Violations <SortIcon field="violations_per_unit" />
                 </th>
                 <th className="px-4 py-3">Contact</th>
-                <th 
-                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors"
-                  onClick={() => handleSort('enrichment_status')}
-                >
-                  Status <SortIcon field="enrichment_status" />
+                <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors" onClick={() => handleSort('enrichment_status')}
+                  title="Data completeness: how much info we have for this lead">
+                  Data <SortIcon field="enrichment_status" />
                 </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {displayLeads.map((lead) => (
+              {displayLeads.map((lead) => {
+                const tier = scoreTier(lead.score);
+                return (
                 <tr 
                   key={lead.lead_id}
                   className="hover:bg-slate-800/50 transition-colors cursor-pointer"
@@ -475,14 +495,14 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                         lead.entity_type === 'individual_agent' ? 'bg-amber-900/40 text-amber-400' :
                         lead.entity_type === 'owner_operator' ? 'bg-purple-900/40 text-purple-400' :
                         'bg-slate-800 text-slate-600'
-                      }`}>
+                      }`} title={`Entity type: ${lead.entity_type === 'company' ? 'Registered company (LLC, Corp, etc.)' : lead.entity_type === 'individual_agent' ? 'Individual managing agent' : lead.entity_type === 'owner_operator' ? 'Owner who self-manages' : 'Unknown entity type'}`}>
                         {lead.entity_type === 'company' ? 'Company' : 
                          lead.entity_type === 'individual_agent' ? 'Individual' : 
                          lead.entity_type === 'owner_operator' ? 'Owner-Op' : 'Unknown'}
                       </span>
                       {lead.primary_contact && 
                        lead.primary_contact.toLowerCase() !== (lead.company_name || lead.agent_name || lead.owner_name || '').toLowerCase() && (
-                        <span className="text-slate-500 truncate"><span className="text-slate-700">HPD: </span>{lead.primary_contact}</span>
+                        <span className="text-slate-500 truncate">{lead.primary_contact}</span>
                       )}
                     </div>
                   </td>
@@ -502,35 +522,37 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                     <span className="text-blue-400 font-mono text-sm">{lead.total_units.toLocaleString()}</span>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <span className={`font-mono text-sm font-medium ${
-                      lead.score >= 60 ? 'text-emerald-400' : 
-                      lead.score >= 40 ? 'text-amber-400' : 'text-slate-500'
-                    }`}>
-                      {lead.score.toFixed(1)}
-                    </span>
+                    <div className="flex items-center justify-end gap-1">
+                      <span className={`text-[9px] font-bold ${tier.color}`}>{tier.label}</span>
+                      <span className={`font-mono text-sm font-medium ${tier.color}`}>
+                        {lead.score.toFixed(0)}
+                      </span>
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-right">
                     {lead.estimated_annual_revenue > 0 ? (
                       <span className="font-mono text-sm text-emerald-400">
-                        {lead.estimated_annual_revenue >= 1_000_000
-                          ? `$${(lead.estimated_annual_revenue / 1_000_000).toFixed(1)}m`
-                          : lead.estimated_annual_revenue >= 1_000
-                          ? `$${(lead.estimated_annual_revenue / 1_000).toFixed(0)}k`
-                          : `$${lead.estimated_annual_revenue}`}
+                        {formatCurrency(lead.estimated_annual_revenue)}
                       </span>
                     ) : (
                       <span className="text-slate-700">—</span>
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {lead.violation_count > 0 ? (
-                      <div className="flex items-center justify-end gap-1.5">
+                    {lead.violations_per_unit > 0 ? (
+                      <div className="flex items-center justify-end gap-1.5" title={`${lead.violation_count.toLocaleString()} total: A:${lead.violation_class_a} B:${lead.violation_class_b} C:${lead.violation_class_c}`}>
                         <span className={`w-2 h-2 rounded-full ${
                           lead.violations_per_unit > 1.0 ? 'bg-rose-500' :
-                          lead.violations_per_unit > 0.5 ? 'bg-amber-500' : 'bg-emerald-500'
+                          lead.violations_per_unit > 0.3 ? 'bg-amber-500' : 'bg-emerald-500'
                         }`} />
-                        <span className="font-mono text-sm text-slate-300">{lead.violation_count.toLocaleString()}</span>
+                        <span className={`font-mono text-sm ${
+                          lead.violations_per_unit > 1.0 ? 'text-rose-400' :
+                          lead.violations_per_unit > 0.3 ? 'text-amber-400' : 'text-slate-300'
+                        }`}>{lead.violations_per_unit.toFixed(2)}</span>
+                        <span className="text-[9px] text-slate-600">/unit</span>
                       </div>
+                    ) : lead.violation_count > 0 ? (
+                      <span className="font-mono text-sm text-slate-400">{lead.violation_count}</span>
                     ) : (
                       <span className="text-slate-700">—</span>
                     )}
@@ -545,24 +567,14 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                         </a>
                       )}
                       {lead.email && (
-                        <a
-                          href={`mailto:${lead.email}`}
-                          title={`Email: ${lead.email}`}
-                          className="p-1 hover:bg-blue-900/50 rounded transition-colors"
-                        >
+                        <a href={`mailto:${lead.email}`} title={`Email: ${lead.email}`} className="p-1 hover:bg-blue-900/50 rounded transition-colors">
                           <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
                           </svg>
                         </a>
                       )}
                       {lead.website && (
-                        <a
-                          href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title={`Website: ${lead.website}`}
-                          className="p-1 hover:bg-purple-900/50 rounded transition-colors"
-                        >
+                        <a href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`} target="_blank" rel="noopener noreferrer" title={`Website: ${lead.website}`} className="p-1 hover:bg-purple-900/50 rounded transition-colors">
                           <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>
                           </svg>
@@ -573,14 +585,12 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-col gap-1">
-                      <span className={`px-2 py-0.5 text-xs rounded inline-block w-fit ${
-                        lead.enrichment_status === 'complete' ? 'bg-emerald-900/30 text-emerald-400' :
-                        lead.enrichment_status === 'partial' ? 'bg-amber-900/30 text-amber-400' :
-                        lead.enrichment_status === 'failed' ? 'bg-rose-900/30 text-rose-400' :
-                        'bg-slate-800 text-slate-500'
-                      }`}>
-                        {lead.enrichment_status}
-                      </span>
+                      {/* Data quality indicator - dots instead of text */}
+                      <div className="flex items-center gap-0.5" title={`Data: ${lead.enrichment_status}`}>
+                        <span className={`w-2 h-2 rounded-full ${lead.phone || lead.email ? 'bg-emerald-500' : 'bg-slate-700'}`} />
+                        <span className={`w-2 h-2 rounded-full ${lead.website ? 'bg-emerald-500' : 'bg-slate-700'}`} />
+                        <span className={`w-2 h-2 rounded-full ${lead.enrichment_status === 'complete' ? 'bg-emerald-500' : lead.enrichment_status === 'partial' ? 'bg-amber-500' : 'bg-slate-700'}`} />
+                      </div>
                       {lead.pipeline_stage && lead.pipeline_stage !== 'research' && (
                         <span className="px-2 py-0.5 text-[10px] rounded bg-blue-900/30 text-blue-400 inline-block w-fit">
                           {lead.pipeline_stage.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
@@ -589,7 +599,8 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

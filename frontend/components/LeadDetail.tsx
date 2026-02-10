@@ -261,27 +261,22 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
             <button onClick={openWebsite} className="px-3 py-1.5 bg-purple-600 text-white text-xs font-bold rounded-lg hover:bg-purple-500 transition-colors">
               {enrichedLead.website ? 'Website' : 'Search'}
             </button>
-            <button onClick={handleResearch} disabled={isResearching} className="px-3 py-1.5 bg-slate-700 text-slate-300 text-xs font-bold rounded-lg hover:bg-slate-600 disabled:opacity-50 transition-colors">
-              {isResearching ? 'Researching...' : 'Deep Research'}
+            <button onClick={handleResearch} disabled={isResearching} className="px-3 py-1.5 bg-slate-700 text-slate-300 text-xs font-bold rounded-lg hover:bg-slate-600 disabled:opacity-50 transition-colors" title="Scrapes web for owner names, contacts, and company history">
+              {isResearching ? 'Researching...' : 'Enrich Company Info'}
             </button>
             <div className="flex-1" />
-            {/* Pipeline selector inline */}
-            <div className="flex gap-0.5">
-              {PIPELINE_STAGES.map((stage, idx) => {
-                const isActive = stage.value === pipelineStage;
-                const currentIdx = PIPELINE_STAGES.findIndex(s => s.value === pipelineStage);
-                const isPast = idx < currentIdx;
-                return (
-                  <button key={stage.value} onClick={() => handlePipelineChange(stage.value)}
-                    className={`px-2 py-1 text-[9px] font-bold uppercase tracking-wider transition-all ${
-                      isActive ? 'bg-blue-600/40 text-blue-300 border-b-2 border-blue-400' :
-                      isPast ? 'bg-emerald-600/20 text-emerald-500' :
-                      'bg-slate-800/50 text-slate-600 hover:text-slate-400'
-                    } ${idx === 0 ? 'rounded-l' : ''} ${idx === PIPELINE_STAGES.length - 1 ? 'rounded-r' : ''}`}>
-                    {stage.label}
-                  </button>
-                );
-              })}
+            {/* Pipeline selector - dropdown for readability */}
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-slate-500 uppercase">Pipeline:</span>
+              <select 
+                value={pipelineStage} 
+                onChange={(e) => handlePipelineChange(e.target.value)}
+                className="px-3 py-1.5 bg-slate-800 border border-white/10 rounded-lg text-xs text-slate-300 font-bold"
+              >
+                {PIPELINE_STAGES.map((stage) => (
+                  <option key={stage.value} value={stage.value}>{stage.label}</option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -312,19 +307,30 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                     <div>
                       <div className="text-2xl font-bold font-mono text-emerald-400">{formatCurrency(enrichedLead.estimated_annual_revenue)}<span className="text-sm text-emerald-600">/yr</span></div>
                       <div className="text-sm font-mono text-slate-400 mt-1">{formatCurrency(enrichedLead.estimated_monthly_revenue)}<span className="text-xs text-slate-600">/mo</span></div>
-                      <div className="mt-3 pt-3 border-t border-emerald-500/10 space-y-1">
-                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">How this is calculated</p>
-                        <p className="text-xs text-slate-500">Units × Avg Rent × <span className="text-emerald-500 font-mono">5%</span> mgmt fee</p>
-                        <div className="text-[10px] text-slate-600 space-y-0.5 mt-1">
-                          <p>• Avg rents sourced from StreetEasy &amp; Census ACS</p>
-                          <p>• Adjusted by borough ({enrichedLead.boro || 'NYC avg'}) &amp; building type</p>
-                          <p>• Condo/co-op fees reduced to 60% of rental rate</p>
-                          <p>• {enrichedLead.total_units?.toLocaleString() || '—'} total units across {enrichedLead.portfolio_size || '—'} buildings</p>
+                      {/* Detailed breakdown with real numbers */}
+                      <details className="mt-3 pt-3 border-t border-emerald-500/10">
+                        <summary className="text-[10px] font-bold text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-300">
+                          {enrichedLead.total_units?.toLocaleString()} units × avg rent × 5% fee — View Breakdown
+                        </summary>
+                        <div className="mt-2 space-y-1">
+                          {(enrichedLead as any).revenue_breakdown?.map((item: any, i: number) => (
+                            <div key={i} className="flex items-center justify-between text-xs">
+                              <span className="text-slate-500">{item.label}: <span className="text-slate-400 font-mono">{item.estimated_units?.toLocaleString()}</span> units @ <span className="text-slate-400 font-mono">${item.rent_per_unit?.toLocaleString()}</span>/mo</span>
+                              <span className="text-emerald-500 font-mono">{formatCurrency(item.monthly_gross * 0.05 * 12)}/yr</span>
+                            </div>
+                          )) || (
+                            <div className="text-[10px] text-slate-600 space-y-0.5">
+                              <p>{enrichedLead.total_units?.toLocaleString() || '—'} units across {enrichedLead.portfolio_size || '—'} buildings</p>
+                              <p>Borough: {enrichedLead.boro || 'NYC avg'} • Fee rate: 5%</p>
+                              <p>Rents: StreetEasy &amp; Census ACS • Condo/co-op adjusted to 60%</p>
+                            </div>
+                          )}
+                          <p className="text-[10px] text-slate-600 mt-1 pt-1 border-t border-emerald-500/10">Source: StreetEasy &amp; Census ACS avg rents • 5% mgmt fee rate • Condo/co-op at 60%</p>
                         </div>
-                      </div>
+                      </details>
                     </div>
                   ) : (
-                    <div className="text-slate-600 text-sm">Pending computation</div>
+                    <div className="text-slate-600 text-sm">{enrichedLead.total_units > 0 ? 'Revenue calculating...' : 'No unit data available'}</div>
                   )}
                 </div>
                 <div className={`bg-gradient-to-br ${
@@ -340,13 +346,19 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                   </div>
                   {enrichedLead.violation_count > 0 ? (
                     <div>
-                      <div className="text-2xl font-bold font-mono text-white">{enrichedLead.violation_count.toLocaleString()}</div>
+                      <div className="flex items-baseline gap-2">
+                        <span className={`text-2xl font-bold font-mono ${
+                          enrichedLead.violations_per_unit > 1.0 ? 'text-rose-400' :
+                          enrichedLead.violations_per_unit > 0.3 ? 'text-amber-400' : 'text-white'
+                        }`}>{enrichedLead.violations_per_unit.toFixed(2)}</span>
+                        <span className="text-xs text-slate-500">per unit</span>
+                      </div>
+                      <div className="text-sm text-slate-500 mt-1 font-mono">{enrichedLead.violation_count.toLocaleString()} total violations</div>
                       <div className="flex gap-3 mt-2 text-xs">
                         <span className="text-slate-400">A: {enrichedLead.violation_class_a}</span>
                         <span className="text-amber-400">B: {enrichedLead.violation_class_b}</span>
                         <span className="text-rose-400">C: {enrichedLead.violation_class_c}</span>
                       </div>
-                      <div className="text-xs text-slate-500 mt-1"><span className="font-mono text-slate-300">{enrichedLead.violations_per_unit.toFixed(2)}</span> per unit</div>
                     </div>
                   ) : (
                     <div className="text-slate-600 text-sm">No violations on record</div>
@@ -414,15 +426,16 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                 </details>
               )}
 
-              {/* Map */}
-              {enrichedLead.buildings && enrichedLead.buildings.length > 0 && (
+              {/* Map - only show if API key is configured */}
+              {enrichedLead.buildings && enrichedLead.buildings.length > 0 && import.meta.env.VITE_GOOGLE_MAPS_KEY && (
                 <div className="bg-slate-800/30 rounded-xl p-4">
                   <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">Portfolio Footprint</h3>
                   <img
                     src={`https://maps.googleapis.com/maps/api/staticmap?size=600x250&scale=2&maptype=roadmap&center=40.7128,-73.95&zoom=11${
                       enrichedLead.buildings.slice(0, 20).map((b: string) => `&markers=size:tiny|color:0x3b82f6|${encodeURIComponent(b + ', New York, NY')}`).join('')
-                    }&key=${import.meta.env.VITE_GOOGLE_MAPS_KEY || ''}`}
+                    }&key=${import.meta.env.VITE_GOOGLE_MAPS_KEY}`}
                     alt="Portfolio map" className="w-full rounded-lg"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                   />
                 </div>
               )}
@@ -432,17 +445,33 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
           {/* TAB: CONTACTS & RESEARCH */}
           {activeTab === 'contacts' && (
             <>
-              {/* Contact Actions */}
-              <div className="flex gap-2 flex-wrap">
-                <button onClick={handleEnrichContacts} disabled={isEnriching}
-                  className="px-4 py-2 bg-emerald-600 text-white text-sm font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors">
-                  {isEnriching ? 'Finding Contacts...' : 'Find Contacts'}
-                </button>
-                <button onClick={handleResearch} disabled={isResearching}
-                  className="px-4 py-2 bg-slate-700 text-slate-300 text-sm font-bold rounded-lg hover:bg-slate-600 disabled:opacity-50 transition-colors">
-                  {isResearching ? 'Researching...' : 'Deep Research'}
-                </button>
-              </div>
+              {/* Contact Actions - prominent when no contacts exist */}
+              {!enrichedLead.phone && !enrichedLead.email ? (
+                <div className="bg-gradient-to-r from-emerald-900/30 to-emerald-950/30 border border-emerald-500/30 rounded-xl p-4 text-center">
+                  <p className="text-slate-400 text-sm mb-3">No contact info yet for this lead</p>
+                  <div className="flex gap-2 justify-center">
+                    <button onClick={handleEnrichContacts} disabled={isEnriching}
+                      className="px-6 py-2.5 bg-emerald-600 text-white text-sm font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors">
+                      {isEnriching ? 'Finding Contacts...' : 'Find Contacts (Google, DOS, Web)'}
+                    </button>
+                    <button onClick={handleResearch} disabled={isResearching}
+                      className="px-4 py-2.5 bg-slate-700 text-slate-300 text-sm font-bold rounded-lg hover:bg-slate-600 disabled:opacity-50 transition-colors" title="Scrapes web for owner names, contacts, and company history">
+                      {isResearching ? 'Researching...' : 'Enrich Company Info'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex gap-2 flex-wrap">
+                  <button onClick={handleEnrichContacts} disabled={isEnriching}
+                    className="px-4 py-2 bg-emerald-600 text-white text-sm font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors">
+                    {isEnriching ? 'Finding Contacts...' : 'Find More Contacts'}
+                  </button>
+                  <button onClick={handleResearch} disabled={isResearching}
+                    className="px-4 py-2 bg-slate-700 text-slate-300 text-sm font-bold rounded-lg hover:bg-slate-600 disabled:opacity-50 transition-colors" title="Scrapes web for owner names, contacts, and company history">
+                    {isResearching ? 'Researching...' : 'Enrich Company Info'}
+                  </button>
+                </div>
+              )}
 
               {/* All Contact Info */}
               <div className="bg-slate-800/30 rounded-xl p-4 space-y-3">
@@ -655,13 +684,14 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               <input type="text" value={buildingSearch} onChange={e => setBuildingSearch(e.target.value)} placeholder="Search buildings..."
                 className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-300" />
               
-              {/* Map */}
-              {enrichedLead.buildings && enrichedLead.buildings.length > 0 && (
+              {/* Map - only show if API key is configured */}
+              {enrichedLead.buildings && enrichedLead.buildings.length > 0 && import.meta.env.VITE_GOOGLE_MAPS_KEY && (
                 <img
                   src={`https://maps.googleapis.com/maps/api/staticmap?size=600x250&scale=2&maptype=roadmap&center=40.7128,-73.95&zoom=11${
                     enrichedLead.buildings.slice(0, 25).map((b: string) => `&markers=size:tiny|color:0x3b82f6|${encodeURIComponent(b + ', New York, NY')}`).join('')
-                  }&key=${import.meta.env.VITE_GOOGLE_MAPS_KEY || ''}`}
+                  }&key=${import.meta.env.VITE_GOOGLE_MAPS_KEY}`}
                   alt="Portfolio map" className="w-full rounded-lg"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                 />
               )}
 

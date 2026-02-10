@@ -465,17 +465,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
           {refreshingViolations ? (
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse" />
-              <span>Refreshing violations data...</span>
+              <span>Loading violations data...</span>
             </div>
           ) : leadsWithViolations > 0 ? (
-            <span>{leadsWithViolations} leads with violations</span>
+            <span>{leadsWithViolations} leads with violations • <button onClick={handleRefreshViolations} className="text-orange-500 hover:text-orange-400 underline">Refresh</button></span>
           ) : (
-            <button
-              onClick={handleRefreshViolations}
-              className="text-orange-500 hover:text-orange-400 underline"
-            >
-              Load violations data
-            </button>
+            <span className="flex items-center gap-1">
+              <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
+              Violations computing in background...
+            </span>
           )}
 
           <span className="text-slate-700">|</span>

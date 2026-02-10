@@ -88,6 +88,18 @@ export interface ApiLead {
   // Revenue estimation (Phase 5.1)
   estimated_monthly_revenue: number;
   estimated_annual_revenue: number;
+  revenue_breakdown: Array<{
+    type: string;
+    label: string;
+    buildings: number;
+    estimated_units: number;
+    rent_per_unit: number;
+    monthly_gross: number;
+    fee_rate: number;
+    avg_rent_per_unit: number;
+    borough_used: string;
+    total_units_used: number;
+  }> | null;
   // Violations (Phase 5.2)
   violation_count: number;
   violation_class_a: number;

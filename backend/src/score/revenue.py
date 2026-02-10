@@ -2,12 +2,14 @@
 Revenue estimation for property management leads.
 
 Estimates management fee revenue based on:
-- Number of units per building type per borough
+- Total residential units (known accurately from HPD data)
+- Building type mix (used to weight average rents, NOT as unit counts)
 - Average rents by borough and building type (StreetEasy/Census ACS data)
 - Standard property management fee rate (4-8%, midpoint 5%)
 
-This gives a rough proxy for whether a company is in the PE target range
-(e.g., $500K-$1.5M EBITDA).
+IMPORTANT: building_types fields (condo, rental_elevator, etc.) are BUILDING
+COUNTS, not unit counts. We distribute total_units proportionally across
+building types to estimate per-type unit counts.
 """
 import logging
 from typing import Optional
@@ -20,8 +22,8 @@ AVG_MONTHLY_RENT = {
     "MANHATTAN": {
         "rental_elevator": 4200,
         "rental_walkup": 3200,
-        "condo": 2500,     # Management fee only (no rent collection), lower effective rate
-        "coop": 2200,      # Similar to condo
+        "condo": 2500,
+        "coop": 2200,
         "small_residential": 2800,
         "other": 3000,
         "unknown": 3500,
@@ -77,75 +79,115 @@ DEFAULT_RENTS = {
 
 # Property management fee rate (% of gross rent)
 # Standard range: 4-8%, using 5% midpoint
-# Condos/coops often pay flat fees but we approximate as % of imputed rent
 MGMT_FEE_RATE = 0.05
 
 # Condo/coop management is typically just management (no rent collection)
 # so the effective fee relative to market rent is lower
 CONDO_COOP_ADJUSTMENT = 0.60  # 60% of rental rate
 
+# Friendly display names for building types
+BUILDING_TYPE_LABELS = {
+    "rental_elevator": "Elevator Rental",
+    "rental_walkup": "Walkup Rental",
+    "condo": "Condo",
+    "coop": "Co-op",
+    "small_residential": "Small Residential",
+    "other": "Other",
+    "unknown": "Unknown",
+}
+
 
 def estimate_revenue(lead) -> dict:
     """
     Estimate monthly and annual property management revenue for a lead.
     
-    Uses building type breakdown and borough distribution.
+    CRITICAL: building_types.condo, .rental_elevator, etc. are BUILDING COUNTS.
+    We use total_units (the accurate unit count) distributed proportionally
+    by building type mix to estimate per-type unit counts.
     
     Args:
-        lead: Lead object with building_types and boro/boros attributes
+        lead: Lead object with building_types, total_units, and boro attributes
         
     Returns:
-        dict with estimated_monthly_revenue and estimated_annual_revenue
+        dict with estimated revenues AND a detailed breakdown for display
     """
-    building_types = getattr(lead, 'building_types', None)
-    if not building_types:
-        # Fallback: use total_units with default rent
-        total_units = getattr(lead, 'total_units', 0) or 0
-        if total_units == 0:
-            return {"estimated_monthly_revenue": 0.0, "estimated_annual_revenue": 0.0}
-        
-        avg_rent = DEFAULT_RENTS["unknown"]
-        monthly_gross = total_units * avg_rent
-        monthly_revenue = monthly_gross * MGMT_FEE_RATE
+    total_units = getattr(lead, 'total_units', 0) or 0
+    if total_units == 0:
         return {
-            "estimated_monthly_revenue": round(monthly_revenue, 2),
-            "estimated_annual_revenue": round(monthly_revenue * 12, 2),
+            "estimated_monthly_revenue": 0.0,
+            "estimated_annual_revenue": 0.0,
+            "revenue_breakdown": [],
         }
     
     # Get the primary borough (or default)
     boro = (getattr(lead, 'boro', '') or '').upper()
     rent_table = AVG_MONTHLY_RENT.get(boro, DEFAULT_RENTS)
     
-    # Calculate revenue by building type
+    building_types = getattr(lead, 'building_types', None)
+    
+    # Build building count map from building_types object
+    bldg_count_map = {}
+    if building_types:
+        for btype in ["condo", "coop", "rental_elevator", "rental_walkup", "small_residential", "other", "unknown"]:
+            count = getattr(building_types, btype, 0) or 0
+            if count > 0:
+                bldg_count_map[btype] = count
+    
+    total_buildings = sum(bldg_count_map.values())
+    
+    # If no building type breakdown, treat all as "unknown"
+    if total_buildings == 0:
+        bldg_count_map = {"unknown": 1}
+        total_buildings = 1
+    
+    # Distribute total_units proportionally by building type share
+    # Use largest-remainder method to ensure sum(estimated_units) == total_units
+    raw_shares = {btype: (bldg_count / total_buildings) * total_units for btype, bldg_count in bldg_count_map.items()}
+    floored = {btype: int(v) for btype, v in raw_shares.items()}
+    remainder = total_units - sum(floored.values())
+    # Give extra units to types with largest fractional remainders
+    sorted_by_remainder = sorted(raw_shares.keys(), key=lambda b: raw_shares[b] - floored[b], reverse=True)
+    unit_allocation = dict(floored)
+    for i in range(remainder):
+        unit_allocation[sorted_by_remainder[i]] += 1
+    
     monthly_gross = 0.0
+    breakdown = []
     
-    type_map = {
-        "condo": getattr(building_types, 'condo', 0) or 0,
-        "coop": getattr(building_types, 'coop', 0) or 0,
-        "rental_elevator": getattr(building_types, 'rental_elevator', 0) or 0,
-        "rental_walkup": getattr(building_types, 'rental_walkup', 0) or 0,
-        "small_residential": getattr(building_types, 'small_residential', 0) or 0,
-        "other": getattr(building_types, 'other', 0) or 0,
-        "unknown": getattr(building_types, 'unknown', 0) or 0,
-    }
-    
-    for btype, units in type_map.items():
-        if units <= 0:
+    for btype, estimated_units in unit_allocation.items():
+        if estimated_units <= 0:
             continue
         
         rent = rent_table.get(btype, rent_table.get("unknown", 2200))
+        effective_rent = rent
         
         # Condo/coop adjustment
         if btype in ("condo", "coop"):
-            rent = rent * CONDO_COOP_ADJUSTMENT
+            effective_rent = rent * CONDO_COOP_ADJUSTMENT
         
-        monthly_gross += units * rent
+        type_gross = estimated_units * effective_rent
+        monthly_gross += type_gross
+        
+        breakdown.append({
+            "type": btype,
+            "label": BUILDING_TYPE_LABELS.get(btype, btype),
+            "buildings": bldg_count,
+            "estimated_units": estimated_units,
+            "rent_per_unit": effective_rent,
+            "monthly_gross": round(type_gross, 2),
+        })
     
     monthly_revenue = monthly_gross * MGMT_FEE_RATE
+    avg_rent = monthly_gross / total_units if total_units > 0 else 0
     
     return {
         "estimated_monthly_revenue": round(monthly_revenue, 2),
         "estimated_annual_revenue": round(monthly_revenue * 12, 2),
+        "revenue_breakdown": breakdown,
+        "avg_rent_per_unit": round(avg_rent, 0),
+        "fee_rate": MGMT_FEE_RATE,
+        "total_units_used": total_units,
+        "borough_used": boro or "NYC avg",
     }
 
 

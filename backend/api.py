@@ -102,8 +102,10 @@ async def startup_load():
         logger.info(f"Startup: Loaded {len(loaded)} leads from database")
         
         # Auto-compute revenue if not yet computed (pure math, no API calls)
+        # v2: force recompute if computed before the fix (building counts vs unit counts bug)
         revenue_computed = db.get_setting('revenue_computed_at')
-        if not revenue_computed:
+        revenue_version = db.get_setting('revenue_formula_version')
+        if not revenue_computed or revenue_version != '2':
             logger.info("Startup: Computing revenue estimates for all leads (first time)...")
             from src.score.revenue import estimate_revenue
             batch_updates = []
@@ -116,9 +118,19 @@ async def startup_load():
             # Persist in a single transaction (fast even for 100k leads)
             db.batch_update_revenue(batch_updates)
             db.set_setting('revenue_computed_at', datetime.now().isoformat())
+            db.set_setting('revenue_formula_version', '2')
             logger.info(f"Startup: Revenue estimated for {len(batch_updates)} leads")
         else:
-            logger.info(f"Startup: Revenue already computed at {revenue_computed}")
+            logger.info(f"Startup: Revenue already computed (v2) at {revenue_computed}")
+        
+        # Auto-compute violations if not yet done (runs as background task - hits HPD API)
+        violations_computed = db.get_setting('violations_computed_at')
+        if not violations_computed:
+            logger.info("Startup: Violations not yet computed, scheduling background fetch...")
+            import asyncio
+            asyncio.create_task(_auto_compute_violations())
+        else:
+            logger.info(f"Startup: Violations already computed at {violations_computed}")
         
         # Check if there's an incomplete enrichment job to resume
         active_job = db.get_active_enrichment_job()
@@ -158,6 +170,67 @@ async def startup_load():
             logger.warning(f"Startup: Data is {days_stale} days stale")
     else:
         logger.info("Startup: No leads in database, run /api/refresh to populate")
+
+
+async def _auto_compute_violations():
+    """Auto-compute violations data in background on first startup."""
+    import asyncio
+    await asyncio.sleep(10)  # Wait for server to fully start
+    try:
+        logger.info("Background: Starting violations computation...")
+        from src.ingest.hpd_violations import HPDViolationsClient, aggregate_violations_for_lead
+        import json as _json
+        
+        db = get_database()
+        rows, total = db.get_leads_filtered(min_portfolio=10, limit=5000, offset=0)
+        
+        if not rows:
+            logger.info("Background: No high-value leads for violations")
+            db.set_setting('violations_computed_at', datetime.now().isoformat())
+            return
+        
+        client = HPDViolationsClient()
+        
+        all_building_ids = []
+        lead_buildings = {}
+        lead_units = {}
+        
+        for row in rows:
+            lead_id = row['lead_id']
+            bids = _json.loads(row.get('building_ids') or '[]')
+            lead_buildings[lead_id] = bids
+            lead_units[lead_id] = row.get('total_units', 0) or 0
+            all_building_ids.extend(bids)
+        
+        logger.info(f"Background: Fetching violations for {len(all_building_ids)} buildings across {len(rows)} leads")
+        violations_data = client.fetch_violations_for_buildings(all_building_ids, batch_size=100)
+        
+        updated = 0
+        for lead_id, bids in lead_buildings.items():
+            agg = aggregate_violations_for_lead(bids, violations_data, lead_units.get(lead_id, 0))
+            if agg["violation_count"] > 0:
+                db.update_lead(lead_id, agg)
+                updated += 1
+        
+        # Update cache
+        global _leads_cache
+        for lead in _leads_cache:
+            if lead.lead_id in lead_buildings:
+                agg = aggregate_violations_for_lead(
+                    lead_buildings[lead.lead_id],
+                    violations_data,
+                    lead_units.get(lead.lead_id, 0)
+                )
+                lead.violation_count = agg["violation_count"]
+                lead.violation_class_a = agg["violation_class_a"]
+                lead.violation_class_b = agg["violation_class_b"]
+                lead.violation_class_c = agg["violation_class_c"]
+                lead.violations_per_unit = agg["violations_per_unit"]
+        
+        db.set_setting('violations_computed_at', datetime.now().isoformat())
+        logger.info(f"Background: Violations computed for {updated}/{len(rows)} leads")
+    except Exception as e:
+        logger.error(f"Background violations computation failed: {e}")
 
 
 async def _auto_start_enrichment():
@@ -422,6 +495,7 @@ class LeadResponse(BaseModel):
     # Revenue estimation (Phase 5.1)
     estimated_monthly_revenue: float = 0.0
     estimated_annual_revenue: float = 0.0
+    revenue_breakdown: Optional[List[Dict]] = None  # Per-type breakdown for display
     # Violations (Phase 5.2)
     violation_count: int = 0
     violation_class_a: int = 0
@@ -2636,6 +2710,25 @@ async def get_outreach_attempts(lead_id: str):
     return attempts
 
 
+def _get_revenue_breakdown(lead) -> Optional[List[Dict]]:
+    """Compute revenue breakdown for display (live, not cached)."""
+    try:
+        from src.score.revenue import estimate_revenue
+        result = estimate_revenue(lead)
+        bd = result.get("revenue_breakdown", [])
+        if bd:
+            return [{
+                **item,
+                "fee_rate": result.get("fee_rate", 0.05),
+                "avg_rent_per_unit": result.get("avg_rent_per_unit", 0),
+                "borough_used": result.get("borough_used", ""),
+                "total_units_used": result.get("total_units_used", 0),
+            } for item in bd]
+    except Exception:
+        pass
+    return None
+
+
 def _lead_to_response(lead: Lead) -> LeadResponse:
     """Convert Lead dataclass to API response."""
     # Convert score breakdown if available
@@ -2726,9 +2819,10 @@ def _lead_to_response(lead: Lead) -> LeadResponse:
         company_name=getattr(lead, 'company_name', None),
         primary_contact=getattr(lead, 'primary_contact', None),
         primary_contact_title=getattr(lead, 'primary_contact_title', None),
-        # Revenue estimation (Phase 5.1)
+        # Revenue estimation (Phase 5.1) - compute live breakdown for display
         estimated_monthly_revenue=getattr(lead, 'estimated_monthly_revenue', 0.0) or 0.0,
         estimated_annual_revenue=getattr(lead, 'estimated_annual_revenue', 0.0) or 0.0,
+        revenue_breakdown=_get_revenue_breakdown(lead),
         # Violations (Phase 5.2)
         violation_count=getattr(lead, 'violation_count', 0) or 0,
         violation_class_a=getattr(lead, 'violation_class_a', 0) or 0,
@@ -3086,6 +3180,8 @@ async def refresh_violations():
                 lead.violation_class_b = agg["violation_class_b"]
                 lead.violation_class_c = agg["violation_class_c"]
                 lead.violations_per_unit = agg["violations_per_unit"]
+    
+    db.set_setting('violations_computed_at', datetime.now().isoformat())
     
     return {
         "status": "success",

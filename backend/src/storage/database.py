@@ -771,9 +771,17 @@ class LeadsDatabase:
             where_clauses.append("portfolio_size >= ?")
             params.append(min_portfolio)
         if boro is not None:
-            # boro field is primary borough; also check boros JSON array
-            where_clauses.append("(UPPER(boro) = UPPER(?) OR boros LIKE ?)")
-            params.extend([boro, f'%"{boro.upper()}"%'])
+            # Support comma-separated boroughs for multi-select (e.g., "MANHATTAN,BROOKLYN")
+            boro_list = [b.strip().upper() for b in boro.split(',') if b.strip()]
+            if len(boro_list) == 1:
+                where_clauses.append("(UPPER(boro) = UPPER(?) OR boros LIKE ?)")
+                params.extend([boro_list[0], f'%"{boro_list[0]}"%'])
+            elif len(boro_list) > 1:
+                placeholders = ','.join(['?' for _ in boro_list])
+                like_clauses = ' OR '.join(['boros LIKE ?' for _ in boro_list])
+                where_clauses.append(f"(UPPER(boro) IN ({placeholders}) OR ({like_clauses}))")
+                params.extend(boro_list)  # for IN clause
+                params.extend([f'%"{b}"%' for b in boro_list])  # for LIKE clauses
         if has_phone is True:
             where_clauses.append("phone IS NOT NULL AND phone != ''")
         elif has_phone is False:
