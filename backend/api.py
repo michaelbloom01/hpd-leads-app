@@ -569,7 +569,7 @@ async def get_leads(
     enrichment_status: Optional[str] = Query(None, description="Filter by enrichment status"),
     outreach_status: Optional[str] = Query(None, description="Filter by outreach status"),
     min_units: Optional[int] = Query(None, description="Minimum total residential units"),
-    limit: int = Query(50, le=200, description="Max results to return"),
+    limit: int = Query(50, le=1000, description="Max results to return"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
 ):
     """
