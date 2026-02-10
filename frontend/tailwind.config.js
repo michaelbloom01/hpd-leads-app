@@ -14,12 +14,6 @@ export default {
         sans: ['Inter', 'sans-serif'],
         mono: ['JetBrains Mono', 'monospace'],
       },
-      colors: {
-        slate: {
-          850: '#111827',
-          950: '#030712',
-        }
-      }
     }
   },
   plugins: [],

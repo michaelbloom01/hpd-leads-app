@@ -23,9 +23,9 @@ const formatCurrency = (amount: number | undefined | null): string => {
 };
 
 const scoreColor = (score: number): string => {
-  if (score >= 60) return 'text-emerald-400';
-  if (score >= 40) return 'text-amber-400';
-  return 'text-slate-500';
+  if (score >= 60) return 'text-emerald-600';
+  if (score >= 40) return 'text-amber-600';
+  return 'text-gray-400';
 };
 
 const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
@@ -351,7 +351,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   };
 
   const SortIcon = ({ field }: { field: SortField }) => (
-    <span className="ml-1 text-slate-600">
+    <span className="ml-1 text-gray-400">
       {sortField === field ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
     </span>
   );
@@ -361,11 +361,11 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-        <h2 className="text-lg font-semibold text-blue-400">Backend is starting up</h2>
-        <p className="text-slate-400 text-sm max-w-md">
+        <h2 className="text-lg font-semibold text-blue-600">Backend is starting up</h2>
+        <p className="text-gray-500 text-sm max-w-md">
           This usually takes 1–2 minutes after inactivity. The page will load automatically once the server is ready.
         </p>
-        <p className="text-slate-600 text-xs">Polling every {HEALTH_POLL_INTERVAL / 1000}s...</p>
+        <p className="text-gray-400 text-xs">Polling every {HEALTH_POLL_INTERVAL / 1000}s...</p>
       </div>
     );
   }
@@ -373,9 +373,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   if (loading) {
     return (
       <div className="space-y-4 animate-pulse">
-        <div className="h-12 bg-slate-800/50 rounded-xl" />
-        <div className="h-10 bg-slate-800/30 rounded-xl" />
-        {[...Array(8)].map((_, i) => <div key={i} className="h-14 bg-slate-800/20 rounded-lg" />)}
+        <div className="h-12 bg-gray-50 rounded-xl" />
+        <div className="h-10 bg-gray-50 rounded-xl" />
+        {[...Array(8)].map((_, i) => <div key={i} className="h-14 bg-gray-100 rounded-lg" />)}
       </div>
     );
   }
@@ -383,8 +383,8 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
-        <div className="text-rose-400 mb-4">{error}</div>
-        <p className="text-slate-500 text-sm">Try refreshing the page or check the Dashboard for data status.</p>
+        <div className="text-rose-600 mb-4">{error}</div>
+        <p className="text-gray-400 text-sm">Try refreshing the page or check the Dashboard for data status.</p>
         {/* R5: Retry button */}
         <button 
           onClick={() => { setError(null); loadLeads(page); }}
@@ -399,12 +399,12 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   return (
     <div className="space-y-4">
       {/* Filter Bar */}
-      <div className="bg-slate-900/60 border border-white/5 rounded-xl p-3 md:p-4">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3 md:p-4">
         {/* Primary Filters Row */}
         <div className="flex flex-wrap gap-2 md:gap-3 items-center">
           <div className="flex-1 min-w-[160px] md:min-w-[200px]">
             <input type="text" placeholder="Search name, company, address..."
-              className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
               value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
           </div>
@@ -414,14 +414,14 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
               <button key={b} onClick={() => toggleBorough(b)}
                 className={`px-2 py-1.5 rounded text-xs font-medium transition-colors ${
                   filterBoroughs.includes(b)
-                    ? 'bg-blue-600/30 text-blue-300 border border-blue-500/40'
-                    : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
+                    ? 'bg-blue-50 text-blue-700 border border-blue-300'
+                    : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'
                 }`}>
                 {BOROUGH_SHORT[b] || b}
               </button>
             ))}
           </div>
-          <select className="px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-300" value={filterPipelineStage} onChange={(e) => setFilterPipelineStage(e.target.value)}>
+          <select className="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-900" value={filterPipelineStage} onChange={(e) => setFilterPipelineStage(e.target.value)}>
             <option value="">All Stages</option>
             <option value="research">Research</option>
             <option value="first_contact">First Contact</option>
@@ -434,22 +434,22 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
           </select>
           {/* Buildings range */}
           <div className="flex items-center gap-1" title="Filter by number of buildings in portfolio">
-            <span className="text-[10px] text-slate-600 uppercase font-bold">Bldgs</span>
-            <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMinPortfolio} onChange={(e) => setFilterMinPortfolio(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
-            <span className="text-slate-600 text-xs">—</span>
-            <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMaxPortfolio} onChange={(e) => setFilterMaxPortfolio(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
+            <span className="text-[10px] text-gray-400 uppercase font-bold">Bldgs</span>
+            <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMinPortfolio} onChange={(e) => setFilterMinPortfolio(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
+            <span className="text-gray-400 text-xs">—</span>
+            <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMaxPortfolio} onChange={(e) => setFilterMaxPortfolio(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
           </div>
           <div className="flex gap-1.5">
             <button onClick={() => setFilterHasPhone(filterHasPhone === true ? null : true)}
-              className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasPhone === true ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'}`}>
-              {filterHasPhone === true && <span className="text-emerald-400">✓</span>}Phone
+              className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasPhone === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
+              {filterHasPhone === true && <span className="text-emerald-600">✓</span>}Phone
             </button>
             <button onClick={() => setFilterHasEmail(filterHasEmail === true ? null : true)}
-              className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasEmail === true ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'}`}>
-              {filterHasEmail === true && <span className="text-emerald-400">✓</span>}Email
+              className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasEmail === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
+              {filterHasEmail === true && <span className="text-emerald-600">✓</span>}Email
             </button>
           </div>
-          <button onClick={() => setShowMoreFilters(!showMoreFilters)} className="px-3 py-2 text-xs text-slate-500 hover:text-slate-300 transition-colors relative">
+          <button onClick={() => setShowMoreFilters(!showMoreFilters)} className="px-3 py-2 text-xs text-gray-500 hover:text-gray-700 transition-colors relative">
             {showMoreFilters ? 'Less Filters' : 'More Filters'}
             {activeSecondaryFilterCount > 0 && !showMoreFilters && (
               <span className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 text-white text-[9px] rounded-full flex items-center justify-center font-bold">{activeSecondaryFilterCount}</span>
@@ -458,45 +458,45 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
           <button onClick={applyFilters} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors">
             Go
           </button>
-          <button onClick={clearFilters} className="px-3 py-2 text-xs text-slate-500 hover:text-slate-300 transition-colors">Clear</button>
+          <button onClick={clearFilters} className="px-3 py-2 text-xs text-gray-500 hover:text-gray-700 transition-colors">Clear</button>
           <button onClick={exportToCsv} disabled={displayLeads.length === 0}
-            className="px-3 py-2 bg-slate-800 border border-white/10 rounded-lg text-xs text-slate-300 hover:bg-slate-700 hover:text-white disabled:opacity-40 transition-colors flex items-center gap-1.5">
+            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs text-gray-700 hover:bg-gray-50 hover:text-gray-900 disabled:opacity-40 transition-colors flex items-center gap-1.5">
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
             Export
           </button>
         </div>
         {/* More Filters (collapsed) */}
         {showMoreFilters && (
-          <div className="mt-3 pt-3 border-t border-white/5 space-y-3">
+          <div className="mt-3 pt-3 border-t border-gray-200 space-y-3">
             {/* Row 1: Range filters */}
             <div className="flex flex-wrap gap-4 items-center">
               {/* Score range */}
               <div className="flex items-center gap-1" title="Filter by lead quality score (0-100)">
-                <span className="text-[10px] text-slate-600 uppercase font-bold w-12">Score</span>
-                <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMinScore} onChange={(e) => setFilterMinScore(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
-                <span className="text-slate-600 text-xs">—</span>
-                <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMaxScore} onChange={(e) => setFilterMaxScore(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
+                <span className="text-[10px] text-gray-400 uppercase font-bold w-12">Score</span>
+                <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMinScore} onChange={(e) => setFilterMinScore(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
+                <span className="text-gray-400 text-xs">—</span>
+                <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMaxScore} onChange={(e) => setFilterMaxScore(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
               </div>
               {/* Units range */}
               <div className="flex items-center gap-1" title="Filter by total residential units">
-                <span className="text-[10px] text-slate-600 uppercase font-bold w-12">Units</span>
-                <input type="number" placeholder="Min" className="w-16 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMinUnits} onChange={(e) => setFilterMinUnits(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
-                <span className="text-slate-600 text-xs">—</span>
-                <input type="number" placeholder="Max" className="w-16 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMaxUnits} onChange={(e) => setFilterMaxUnits(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
+                <span className="text-[10px] text-gray-400 uppercase font-bold w-12">Units</span>
+                <input type="number" placeholder="Min" className="w-16 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMinUnits} onChange={(e) => setFilterMinUnits(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
+                <span className="text-gray-400 text-xs">—</span>
+                <input type="number" placeholder="Max" className="w-16 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMaxUnits} onChange={(e) => setFilterMaxUnits(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
               </div>
               {/* Units per Building range */}
               <div className="flex items-center gap-1" title="Filter by average units per building">
-                <span className="text-[10px] text-slate-600 uppercase font-bold w-12">U/Bldg</span>
-                <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMinUnitsPerBldg} onChange={(e) => setFilterMinUnitsPerBldg(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
-                <span className="text-slate-600 text-xs">—</span>
-                <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMaxUnitsPerBldg} onChange={(e) => setFilterMaxUnitsPerBldg(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
+                <span className="text-[10px] text-gray-400 uppercase font-bold w-12">U/Bldg</span>
+                <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMinUnitsPerBldg} onChange={(e) => setFilterMinUnitsPerBldg(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
+                <span className="text-gray-400 text-xs">—</span>
+                <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMaxUnitsPerBldg} onChange={(e) => setFilterMaxUnitsPerBldg(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
               </div>
             </div>
             {/* Row 2: Building types, entity type, outreach, website */}
             <div className="flex flex-wrap gap-3 items-center">
               {/* Building type toggles */}
               <div className="flex items-center gap-1.5">
-                <span className="text-[10px] text-slate-600 uppercase font-bold">Type</span>
+                <span className="text-[10px] text-gray-400 uppercase font-bold">Type</span>
                 {([
                   ['condo', 'Condo'],
                   ['coop', 'Co-op'],
@@ -507,20 +507,20 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   <button key={val} onClick={() => toggleBuildingType(val)}
                     className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
                       filterBuildingTypes.includes(val)
-                        ? 'bg-purple-600/30 text-purple-300 border border-purple-500/40'
-                        : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
+                        ? 'bg-purple-50 text-purple-700 border border-purple-300'
+                        : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'
                     }`}>
                     {label}
                   </button>
                 ))}
               </div>
-              <select className="px-3 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-300" value={filterEntityType} onChange={(e) => setFilterEntityType(e.target.value)}>
+              <select className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900" value={filterEntityType} onChange={(e) => setFilterEntityType(e.target.value)}>
                 <option value="">All Entity Types</option>
                 <option value="company">Company</option>
                 <option value="individual_agent">Individual Agent</option>
                 <option value="owner_operator">Owner-Operator</option>
               </select>
-              <select className="px-3 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-300" value={filterOutreachStatus} onChange={(e) => setFilterOutreachStatus(e.target.value)}>
+              <select className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900" value={filterOutreachStatus} onChange={(e) => setFilterOutreachStatus(e.target.value)}>
                 <option value="">All Outreach</option>
                 <option value="new">New</option>
                 <option value="contacted">Contacted</option>
@@ -529,19 +529,19 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                 <option value="closed">Closed</option>
               </select>
               <button onClick={() => setFilterHasWebsite(filterHasWebsite === true ? null : true)}
-                className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasWebsite === true ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'}`}>
-                {filterHasWebsite === true && <span className="text-emerald-400">✓</span>}Website
+                className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasWebsite === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
+                {filterHasWebsite === true && <span className="text-emerald-600">✓</span>}Website
               </button>
             </div>
           </div>
         )}
         
         {/* Results count and bulk actions */}
-        <div className="flex justify-between items-center mt-3 pt-3 border-t border-white/5">
-          <div className="text-sm text-slate-500">
-            Showing <span className="text-slate-300 font-medium">{displayLeads.length}</span> of <span className="text-slate-300 font-medium">{totalLeads.toLocaleString()}</span> leads
+        <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-200">
+          <div className="text-sm text-gray-400">
+            Showing <span className="text-gray-700 font-medium">{displayLeads.length}</span> of <span className="text-gray-700 font-medium">{totalLeads.toLocaleString()}</span> leads
             {selectedIds.size > 0 && (
-              <span className="ml-3 text-blue-400">({selectedIds.size} selected)</span>
+              <span className="ml-3 text-blue-600">({selectedIds.size} selected)</span>
             )}
           </div>
           {selectedIds.size > 0 && (
@@ -557,60 +557,60 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       </div>
 
       {/* Data Table — desktop table, mobile cards */}
-      <div className="bg-slate-900/40 border border-white/5 rounded-xl overflow-hidden">
+      <div className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
         {/* Desktop Table */}
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left">
             <thead>
-              <tr className="bg-slate-950/80 text-slate-500 text-xs uppercase tracking-wider border-b border-white/5">
+              <tr className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider border-b border-gray-200">
                 <th className="px-4 py-3 w-8">
                   <input
                     type="checkbox"
                     checked={selectedIds.size === displayLeads.length && displayLeads.length > 0}
                     onChange={selectAll}
-                    className="rounded bg-slate-800 border-slate-600"
+                    className="rounded bg-white border-gray-300"
                   />
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors" onClick={() => handleSort('agent_name')}>
+                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors" onClick={() => handleSort('agent_name')}>
                   Company <SortIcon field="agent_name" />
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors" onClick={() => handleSort('boro')}>
+                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors" onClick={() => handleSort('boro')}>
                   Borough <SortIcon field="boro" />
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('portfolio_size')}>
+                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors text-right" onClick={() => handleSort('portfolio_size')}>
                   Bldgs <SortIcon field="portfolio_size" />
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('total_units')}>
+                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors text-right" onClick={() => handleSort('total_units')}>
                   Units <SortIcon field="total_units" />
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('units_per_bldg')} title="Average residential units per building">
+                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors text-right" onClick={() => handleSort('units_per_bldg')} title="Average residential units per building">
                   U/Bldg <SortIcon field="units_per_bldg" />
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('score')}
+                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors text-right" onClick={() => handleSort('score')}
                   title="Lead quality score (0–100) based on portfolio size, building types, registration status, and data completeness. Higher = stronger acquisition target.">
                   Score <SortIcon field="score" />
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('estimated_annual_revenue')}
+                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors text-right" onClick={() => handleSort('estimated_annual_revenue')}
                   title="Estimated annual management fee revenue = Total Units × Average Rent (by borough & building type) × 5% management fee rate">
                   Mgmt Fee <SortIcon field="estimated_annual_revenue" />
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('violations_per_unit')}
+                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors text-right" onClick={() => handleSort('violations_per_unit')}
                   title="Open HPD violations per residential unit — higher = more maintenance issues, potential distressed asset opportunity">
                   Violations <SortIcon field="violations_per_unit" />
                 </th>
                 <th className="px-4 py-3">Contact</th>
-                <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors" onClick={() => handleSort('enrichment_status')}
+                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors" onClick={() => handleSort('enrichment_status')}
                   title="How much contact data we have: green dots = phone/email found, website found, full research complete">
                   Info <SortIcon field="enrichment_status" />
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
+            <tbody className="divide-y divide-gray-100">
               {displayLeads.map((lead) => {
                 return (
                 <tr 
                   key={lead.lead_id}
-                  className="hover:bg-slate-800/50 transition-colors cursor-pointer"
+                  className="bg-white hover:bg-gray-50 transition-colors cursor-pointer border-b border-gray-100"
                   onClick={() => onSelectLead(lead)}
                 >
                   <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
@@ -618,17 +618,17 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                       type="checkbox"
                       checked={selectedIds.has(lead.lead_id)}
                       onChange={() => toggleSelect(lead.lead_id)}
-                      className="rounded bg-slate-800 border-slate-600"
+                      className="rounded bg-white border-gray-300"
                     />
                   </td>
                   <td className="px-4 py-3">
-                    <div className="font-medium text-slate-200 text-sm">{lead.company_name || lead.agent_name || lead.owner_name}</div>
-                    <div className="text-xs text-slate-600 truncate max-w-[250px] flex items-center gap-1.5">
+                    <div className="font-medium text-gray-800 text-sm">{lead.company_name || lead.agent_name || lead.owner_name}</div>
+                    <div className="text-xs text-gray-400 truncate max-w-[250px] flex items-center gap-1.5">
                       <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
-                        lead.entity_type === 'company' ? 'bg-blue-900/40 text-blue-400' :
-                        lead.entity_type === 'individual_agent' ? 'bg-amber-900/40 text-amber-400' :
-                        lead.entity_type === 'owner_operator' ? 'bg-purple-900/40 text-purple-400' :
-                        'bg-slate-800 text-slate-600'
+                        lead.entity_type === 'company' ? 'bg-blue-50 text-blue-700' :
+                        lead.entity_type === 'individual_agent' ? 'bg-amber-50 text-amber-700' :
+                        lead.entity_type === 'owner_operator' ? 'bg-purple-50 text-purple-700' :
+                        'bg-gray-100 text-gray-400'
                       }`} title={lead.entity_type === 'company' ? 'Registered management company or housing entity' : lead.entity_type === 'individual_agent' ? 'Individual person acting as managing agent for these buildings' : lead.entity_type === 'owner_operator' ? 'Property owner who self-manages without a separate management company' : 'Entity type could not be determined from HPD records'}>
                         {lead.entity_type === 'company' ? 'Company' : 
                          lead.entity_type === 'individual_agent' ? 'Individual' : 
@@ -636,27 +636,27 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                       </span>
                       {lead.primary_contact && 
                        lead.primary_contact.toLowerCase() !== (lead.company_name || lead.agent_name || lead.owner_name || '').toLowerCase() && (
-                        <span className="text-slate-500 truncate">{lead.primary_contact}</span>
+                        <span className="text-gray-400 truncate">{lead.primary_contact}</span>
                       )}
                     </div>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-1">
                       {(lead.boros?.length > 0 ? lead.boros : [lead.boro]).filter(Boolean).map((b, i) => (
-                        <span key={i} className="px-1.5 py-0.5 bg-slate-800 text-slate-400 text-[10px] rounded capitalize">
+                        <span key={i} className="px-1.5 py-0.5 bg-gray-100 text-gray-500 text-[10px] rounded capitalize">
                           {b ? b.charAt(0) + b.slice(1).toLowerCase() : ''}
                         </span>
                       ))}
                     </div>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <span className="text-slate-300 font-mono text-sm">{lead.portfolio_size}</span>
+                    <span className="text-gray-700 font-mono text-sm">{lead.portfolio_size}</span>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <span className="text-blue-400 font-mono text-sm">{(lead.total_units || 0).toLocaleString()}</span>
+                    <span className="text-blue-600 font-mono text-sm">{(lead.total_units || 0).toLocaleString()}</span>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <span className="text-slate-400 font-mono text-sm">
+                    <span className="text-gray-500 font-mono text-sm">
                       {(lead.portfolio_size || 0) > 0 ? ((lead.total_units || 0) / lead.portfolio_size).toFixed(0) : '—'}
                     </span>
                   </td>
@@ -668,11 +668,11 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   </td>
                   <td className="px-4 py-3 text-right">
                     {lead.estimated_annual_revenue > 0 ? (
-                      <span className="font-mono text-sm text-emerald-400">
+                      <span className="font-mono text-sm text-emerald-600">
                         {formatCurrency(lead.estimated_annual_revenue)}
                       </span>
                     ) : (
-                      <span className="text-slate-700">—</span>
+                      <span className="text-gray-300">—</span>
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">
@@ -683,41 +683,41 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                           (lead.violations_per_unit || 0) > 0.3 ? 'bg-amber-500' : 'bg-emerald-500'
                         }`} />
                         <span className={`font-mono text-sm ${
-                          (lead.violations_per_unit || 0) > 1.0 ? 'text-rose-400' :
-                          (lead.violations_per_unit || 0) > 0.3 ? 'text-amber-400' : 'text-slate-300'
+                          (lead.violations_per_unit || 0) > 1.0 ? 'text-rose-600' :
+                          (lead.violations_per_unit || 0) > 0.3 ? 'text-amber-600' : 'text-gray-700'
                         }`}>{(lead.violations_per_unit || 0).toFixed(2)}</span>
-                        <span className="text-[9px] text-slate-600">per unit</span>
+                        <span className="text-[9px] text-gray-400">per unit</span>
                       </div>
                     ) : (lead.violation_count || 0) > 0 ? (
-                      <span className="font-mono text-sm text-slate-400" title={`${lead.violation_count || 0} total violations (per-unit data not yet available)`}>{lead.violation_count}</span>
+                      <span className="font-mono text-sm text-gray-500" title={`${lead.violation_count || 0} total violations (per-unit data not yet available)`}>{lead.violation_count}</span>
                     ) : (
-                      <span className="text-slate-700" title="No open HPD violations on record, or data not yet loaded">—</span>
+                      <span className="text-gray-300" title="No open HPD violations on record, or data not yet loaded">—</span>
                     )}
                   </td>
                   <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                     <div className="flex gap-1.5">
                       {lead.phone && (
-                        <a href={`tel:${lead.phone}`} title={`Call: ${lead.phone}`} className="p-1.5 hover:bg-emerald-900/50 rounded transition-colors">
+                        <a href={`tel:${lead.phone}`} title={`Call: ${lead.phone}`} className="p-1.5 hover:bg-emerald-50 rounded transition-colors">
                           <svg className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
                           </svg>
                         </a>
                       )}
                       {lead.email && (
-                        <a href={`mailto:${lead.email}`} title={`Email: ${lead.email}`} className="p-1.5 hover:bg-blue-900/50 rounded transition-colors">
+                        <a href={`mailto:${lead.email}`} title={`Email: ${lead.email}`} className="p-1.5 hover:bg-blue-50 rounded transition-colors">
                           <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
                           </svg>
                         </a>
                       )}
                       {lead.website && (
-                        <a href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`} target="_blank" rel="noopener noreferrer" title={`Website: ${lead.website}`} className="p-1.5 hover:bg-purple-900/50 rounded transition-colors">
+                        <a href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`} target="_blank" rel="noopener noreferrer" title={`Website: ${lead.website}`} className="p-1.5 hover:bg-purple-50 rounded transition-colors">
                           <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>
                           </svg>
                         </a>
                       )}
-                      {!lead.phone && !lead.email && !lead.website && <span className="text-slate-700">—</span>}
+                      {!lead.phone && !lead.email && !lead.website && <span className="text-gray-300">—</span>}
                     </div>
                   </td>
                   <td className="px-4 py-3">
@@ -729,10 +729,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                         'Not yet enriched'
                       }\nPhone: ${lead.phone || 'None'}\nEmail: ${lead.email || 'None'}\nWebsite: ${lead.website || 'None'}`}>
                         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                          lead.enrichment_status === 'complete' ? 'bg-emerald-500/20 text-emerald-400' :
-                          lead.enrichment_status === 'partial' ? 'bg-amber-500/20 text-amber-400' :
-                          lead.enrichment_status === 'failed' ? 'bg-rose-500/20 text-rose-400' :
-                          'bg-slate-800 text-slate-600'
+                          lead.enrichment_status === 'complete' ? 'bg-emerald-50 text-emerald-700' :
+                          lead.enrichment_status === 'partial' ? 'bg-amber-50 text-amber-700' :
+                          lead.enrichment_status === 'failed' ? 'bg-rose-50 text-rose-700' :
+                          'bg-gray-100 text-gray-400'
                         }`}>
                           {lead.enrichment_status === 'complete' ? 'Enriched' :
                            lead.enrichment_status === 'partial' ? 'Partial' :
@@ -741,7 +741,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                         </span>
                       </div>
                       {lead.pipeline_stage && lead.pipeline_stage !== 'research' && (
-                        <span className="px-2 py-0.5 text-[10px] rounded bg-blue-900/30 text-blue-400 inline-block w-fit">
+                        <span className="px-2 py-0.5 text-[10px] rounded bg-blue-50 text-blue-700 inline-block w-fit">
                           {lead.pipeline_stage.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                         </span>
                       )}
@@ -757,11 +757,11 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
         {/* Empty State */}
         {displayLeads.length === 0 && !loading && (
           <div className="flex flex-col items-center justify-center py-16 text-center">
-            <svg className="w-12 h-12 text-slate-700 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-12 h-12 text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
             </svg>
-            <p className="text-slate-400 text-sm font-medium">No leads match your filters</p>
-            <p className="text-slate-600 text-xs mt-1">Try adjusting your search or filter criteria</p>
+            <p className="text-gray-500 text-sm font-medium">No leads match your filters</p>
+            <p className="text-gray-400 text-xs mt-1">Try adjusting your search or filter criteria</p>
             <button onClick={clearFilters} className="mt-3 px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-medium transition-colors">
               Clear All Filters
             </button>
@@ -769,29 +769,29 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
         )}
 
         {/* Mobile Card View */}
-        <div className="md:hidden divide-y divide-white/5">
+        <div className="md:hidden divide-y divide-gray-100">
           {displayLeads.map((lead) => (
             <div
               key={lead.lead_id}
-              className="p-4 active:bg-slate-800/50 transition-colors cursor-pointer"
+              className="p-4 active:bg-gray-50 transition-colors cursor-pointer"
               onClick={() => onSelectLead(lead)}
             >
               <div className="flex justify-between items-start mb-2">
                 <div className="flex-1 min-w-0">
-                  <div className="font-medium text-slate-200 text-sm truncate">{lead.company_name || lead.agent_name || lead.owner_name}</div>
+                  <div className="font-medium text-gray-800 text-sm truncate">{lead.company_name || lead.agent_name || lead.owner_name}</div>
                   <div className="flex items-center gap-1.5 mt-1">
                     <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
-                      lead.entity_type === 'company' ? 'bg-blue-900/40 text-blue-400' :
-                      lead.entity_type === 'individual_agent' ? 'bg-amber-900/40 text-amber-400' :
-                      lead.entity_type === 'owner_operator' ? 'bg-purple-900/40 text-purple-400' :
-                      'bg-slate-800 text-slate-600'
+                      lead.entity_type === 'company' ? 'bg-blue-50 text-blue-700' :
+                      lead.entity_type === 'individual_agent' ? 'bg-amber-50 text-amber-700' :
+                      lead.entity_type === 'owner_operator' ? 'bg-purple-50 text-purple-700' :
+                      'bg-gray-100 text-gray-400'
                     }`}>
                       {lead.entity_type === 'company' ? 'Company' : 
                        lead.entity_type === 'individual_agent' ? 'Individual' : 
                        lead.entity_type === 'owner_operator' ? 'Owner-Op' : 'Unknown'}
                     </span>
                     {(lead.boros?.length > 0 ? lead.boros : [lead.boro]).filter(Boolean).slice(0, 2).map((b, i) => (
-                      <span key={i} className="px-1 py-0.5 bg-slate-800 text-slate-400 text-[9px] rounded capitalize">
+                      <span key={i} className="px-1 py-0.5 bg-gray-100 text-gray-500 text-[9px] rounded capitalize">
                         {b ? b.charAt(0) + b.slice(1).toLowerCase() : ''}
                       </span>
                     ))}
@@ -802,37 +802,37 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                 </span>
               </div>
               <div className="flex items-center gap-4 text-xs">
-                <span className="text-slate-400"><span className="font-mono text-slate-300">{lead.portfolio_size || 0}</span> bldgs</span>
-                <span className="text-slate-400"><span className="font-mono text-blue-400">{(lead.total_units || 0).toLocaleString()}</span> units</span>
+                <span className="text-gray-500"><span className="font-mono text-gray-700">{lead.portfolio_size || 0}</span> bldgs</span>
+                <span className="text-gray-500"><span className="font-mono text-blue-600">{(lead.total_units || 0).toLocaleString()}</span> units</span>
                 {(lead.portfolio_size || 0) > 0 && (
-                  <span className="text-slate-500"><span className="font-mono text-slate-400">{((lead.total_units || 0) / lead.portfolio_size).toFixed(0)}</span> u/b</span>
+                  <span className="text-gray-400"><span className="font-mono text-gray-500">{((lead.total_units || 0) / lead.portfolio_size).toFixed(0)}</span> u/b</span>
                 )}
                 {(lead.estimated_annual_revenue || 0) > 0 && (
-                  <span className="font-mono text-emerald-400">{formatCurrency(lead.estimated_annual_revenue)}</span>
+                  <span className="font-mono text-emerald-600">{formatCurrency(lead.estimated_annual_revenue)}</span>
                 )}
                 {(lead.violations_per_unit || 0) > 0 && (
-                  <span className={`font-mono ${(lead.violations_per_unit || 0) > 1.0 ? 'text-rose-400' : 'text-amber-400'}`}>
+                  <span className={`font-mono ${(lead.violations_per_unit || 0) > 1.0 ? 'text-rose-600' : 'text-amber-600'}`}>
                     {(lead.violations_per_unit || 0).toFixed(2)} v/u
                   </span>
                 )}
               </div>
               <div className="flex items-center gap-2 mt-2" onClick={(e) => e.stopPropagation()}>
                 {lead.phone && (
-                  <a href={`tel:${lead.phone}`} className="p-2 bg-emerald-900/30 rounded-lg">
+                  <a href={`tel:${lead.phone}`} className="p-2 bg-emerald-50 rounded-lg">
                     <svg className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
                     </svg>
                   </a>
                 )}
                 {lead.email && (
-                  <a href={`mailto:${lead.email}`} className="p-2 bg-blue-900/30 rounded-lg">
+                  <a href={`mailto:${lead.email}`} className="p-2 bg-blue-50 rounded-lg">
                     <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
                     </svg>
                   </a>
                 )}
                 {lead.pipeline_stage && lead.pipeline_stage !== 'research' && (
-                  <span className="px-2 py-1 text-[10px] rounded bg-blue-900/30 text-blue-400 ml-auto">
+                  <span className="px-2 py-1 text-[10px] rounded bg-blue-50 text-blue-700 ml-auto">
                     {lead.pipeline_stage.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                   </span>
                 )}
@@ -842,24 +842,24 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
         </div>
         
         {/* Pagination */}
-        <div className="flex items-center justify-between px-4 py-3 border-t border-white/5 bg-slate-950/50">
+        <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
           <button
             onClick={() => setPage(Math.max(0, page - 1))}
             disabled={page === 0}
-            className="px-3 py-1 text-sm text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1 text-sm text-gray-500 hover:text-gray-900 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             ← Previous
           </button>
           <div className="flex items-center gap-4">
-            <div className="text-sm text-slate-500">
+            <div className="text-sm text-gray-400">
               Page {page + 1} of {totalPages || 1}
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-600">Per page:</span>
+              <span className="text-xs text-gray-400">Per page:</span>
               <select
                 value={pageSize}
                 onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }}
-                className="px-2 py-1 bg-slate-800 border border-white/10 rounded text-xs text-slate-300 focus:outline-none"
+                className="px-2 py-1 bg-white border border-gray-200 rounded text-xs text-gray-700 focus:outline-none"
               >
                 <option value={25}>25</option>
                 <option value={50}>50</option>
@@ -872,7 +872,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
           <button
             onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
             disabled={page >= totalPages - 1}
-            className="px-3 py-1 text-sm text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1 text-sm text-gray-500 hover:text-gray-900 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             Next →
           </button>

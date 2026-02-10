@@ -236,11 +236,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-        <h2 className="text-lg font-semibold text-blue-400">Backend is starting up</h2>
-        <p className="text-slate-400 text-sm max-w-md">
+        <h2 className="text-lg font-semibold text-blue-600">Backend is starting up</h2>
+        <p className="text-gray-500 text-sm max-w-md">
           This usually takes 1–2 minutes after inactivity. The dashboard will load automatically once the server is ready.
         </p>
-        <p className="text-slate-600 text-xs">Polling every 5s...</p>
+        <p className="text-gray-400 text-xs">Polling every 5s...</p>
       </div>
     );
   }
@@ -248,13 +248,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
   if (loading) {
     return (
       <div className="space-y-6 animate-pulse">
-        <div className="h-16 bg-slate-800/50 rounded-2xl" />
+        <div className="h-16 bg-gray-100 rounded-2xl" />
         <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-          {[...Array(6)].map((_, i) => <div key={i} className="h-24 bg-slate-800/50 rounded-2xl" />)}
+          {[...Array(6)].map((_, i) => <div key={i} className="h-24 bg-gray-100 rounded-2xl" />)}
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="h-64 bg-slate-800/50 rounded-2xl" />
-          <div className="h-64 bg-slate-800/50 rounded-2xl" />
+          <div className="h-64 bg-gray-100 rounded-2xl" />
+          <div className="h-64 bg-gray-100 rounded-2xl" />
         </div>
       </div>
     );
@@ -263,10 +263,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       {/* Pipeline Funnel */}
-      <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-5">
+      <div className="bg-white shadow-sm border border-gray-200 rounded-2xl p-5">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Deal Pipeline</h3>
-          <span className="text-xs text-slate-600">
+          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Deal Pipeline</h3>
+          <span className="text-xs text-gray-400">
             {leadsInPipeline} active {leadsInPipeline === 1 ? 'deal' : 'deals'}
             {pipelineRevenue > 0 && ` • ${formatCurrency(pipelineRevenue)}/yr est. management fee`}
           </span>
@@ -276,9 +276,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
             const count = pipelineCounts[stage.key] || 0;
             return (
               <div key={stage.key} className="flex-1 group">
-                <div className={`${count > 0 ? stage.color : 'bg-slate-800'} rounded-lg px-2 py-3 text-center transition-all hover:opacity-80`}>
-                  <div className="text-lg font-bold font-mono text-white">{count}</div>
-                  <div className="text-[9px] uppercase tracking-wider text-white/70 font-medium">{stage.label}</div>
+                <div className={`${count > 0 ? stage.color : 'bg-gray-100'} rounded-lg px-2 py-3 text-center transition-all hover:opacity-80`}>
+                  <div className={`text-lg font-bold font-mono ${count > 0 ? 'text-white' : 'text-gray-900'}`}>{count}</div>
+                  <div className={`text-[9px] uppercase tracking-wider font-medium ${count > 0 ? 'text-white/70' : 'text-gray-500'}`}>{stage.label}</div>
                 </div>
               </div>
             );
@@ -288,55 +288,55 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
 
       {/* Key Metrics */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Target Leads</p>
-          <p className="text-2xl font-mono font-bold text-white">{highValueCount.toLocaleString()}</p>
-          <p className="text-[10px] text-slate-600 mt-0.5">10+ buildings</p>
+        <div className="bg-white shadow-sm border border-gray-100 rounded-2xl p-4">
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Target Leads</p>
+          <p className="text-2xl font-mono font-bold text-gray-900">{highValueCount.toLocaleString()}</p>
+          <p className="text-[10px] text-gray-400 mt-0.5">10+ buildings</p>
         </div>
-        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4 relative">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1">
+        <div className="bg-white shadow-sm border border-gray-100 rounded-2xl p-4 relative">
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 flex items-center gap-1">
             Mgmt Fee Opportunity
             <button
               onClick={() => setShowFeeTooltip(!showFeeTooltip)}
-              className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-slate-600 text-[8px] text-slate-500 hover:text-slate-300 hover:border-slate-400 transition-colors"
+              className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-gray-300 text-[8px] text-gray-400 hover:text-gray-600 hover:border-gray-500 transition-colors"
               aria-label="How is this calculated?"
             >?</button>
           </p>
           {showFeeTooltip && (
-            <div className="absolute top-full left-0 mt-1 z-50 w-64 p-3 bg-slate-800 border border-white/10 rounded-lg shadow-xl text-xs text-slate-300 leading-relaxed">
+            <div className="absolute top-full left-0 mt-1 z-50 w-64 p-3 bg-white shadow-lg border border-gray-200 rounded-lg text-xs text-gray-700 leading-relaxed">
               <p>Estimated annual management fees if these portfolios were acquired.</p>
-              <p className="mt-1 text-slate-500">Total Units x Avg Rent (by borough & building type) x 5% management fee rate.</p>
-              <button onClick={() => setShowFeeTooltip(false)} className="mt-2 text-blue-400 hover:text-blue-300 text-[10px]">Got it</button>
+              <p className="mt-1 text-gray-400">Total Units x Avg Rent (by borough & building type) x 5% management fee rate.</p>
+              <button onClick={() => setShowFeeTooltip(false)} className="mt-2 text-blue-600 hover:text-blue-500 text-[10px]">Got it</button>
             </div>
           )}
-          <p className="text-2xl font-mono font-bold text-emerald-400">{totalTargetRevenue > 0 ? formatCurrency(totalTargetRevenue) : '—'}</p>
-          <p className="text-[10px] text-slate-600 mt-0.5">Top 100 leads • 5% fee rate</p>
+          <p className="text-2xl font-mono font-bold text-emerald-600">{totalTargetRevenue > 0 ? formatCurrency(totalTargetRevenue) : '—'}</p>
+          <p className="text-[10px] text-gray-400 mt-0.5">Top 100 leads • 5% fee rate</p>
         </div>
-        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Follow-Ups Due</p>
-          <p className="text-2xl font-mono font-bold text-rose-400">{followUpsDue?.count || 0}</p>
-          <p className="text-[10px] text-slate-600 mt-0.5">Need action</p>
+        <div className="bg-white shadow-sm border border-gray-100 rounded-2xl p-4">
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Follow-Ups Due</p>
+          <p className="text-2xl font-mono font-bold text-rose-600">{followUpsDue?.count || 0}</p>
+          <p className="text-[10px] text-gray-400 mt-0.5">Need action</p>
         </div>
-        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">With Contact</p>
-          <p className="text-2xl font-mono font-bold text-blue-400">{enrichedCount}</p>
-          <p className="text-[10px] text-slate-600 mt-0.5">{withEmail} emails</p>
+        <div className="bg-white shadow-sm border border-gray-100 rounded-2xl p-4">
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">With Contact</p>
+          <p className="text-2xl font-mono font-bold text-blue-600">{enrichedCount}</p>
+          <p className="text-[10px] text-gray-400 mt-0.5">{withEmail} emails</p>
         </div>
-        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Ready to Call</p>
-          <p className="text-2xl font-mono font-bold text-amber-400">{readyToContact.length}</p>
-          <p className="text-[10px] text-slate-600 mt-0.5">Uncontacted</p>
+        <div className="bg-white shadow-sm border border-gray-100 rounded-2xl p-4">
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Ready to Call</p>
+          <p className="text-2xl font-mono font-bold text-amber-600">{readyToContact.length}</p>
+          <p className="text-[10px] text-gray-400 mt-0.5">Uncontacted</p>
         </div>
-        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4" title="Leads with open HPD violations — potential distressed assets or management turnover opportunities">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">With Violations</p>
-          <p className="text-2xl font-mono font-bold text-orange-400">{leadsWithViolations}</p>
-          <p className="text-[10px] text-slate-600 mt-0.5">Open HPD violations</p>
+        <div className="bg-white shadow-sm border border-gray-100 rounded-2xl p-4" title="Leads with open HPD violations — potential distressed assets or management turnover opportunities">
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">With Violations</p>
+          <p className="text-2xl font-mono font-bold text-orange-600">{leadsWithViolations}</p>
+          <p className="text-[10px] text-gray-400 mt-0.5">Open HPD violations</p>
         </div>
         {enrichmentGaps && enrichmentGaps.unenriched > 0 && (
-          <div className="bg-slate-900/50 border border-amber-500/20 rounded-2xl p-4 col-span-2 md:col-span-1" title="Leads that have not been enriched with contact info yet">
-            <p className="text-[10px] font-bold text-amber-500 uppercase tracking-wider mb-1">Not Yet Enriched</p>
-            <p className="text-2xl font-mono font-bold text-amber-400">{enrichmentGaps.unenriched.toLocaleString()}</p>
-            <p className="text-[10px] text-slate-600 mt-0.5">of {enrichmentGaps.total_leads.toLocaleString()} total</p>
+          <div className="bg-white shadow-sm border border-amber-200 rounded-2xl p-4 col-span-2 md:col-span-1" title="Leads that have not been enriched with contact info yet">
+            <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider mb-1">Not Yet Enriched</p>
+            <p className="text-2xl font-mono font-bold text-amber-600">{enrichmentGaps.unenriched.toLocaleString()}</p>
+            <p className="text-[10px] text-gray-400 mt-0.5">of {enrichmentGaps.total_leads.toLocaleString()} total</p>
           </div>
         )}
       </div>
@@ -345,9 +345,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Follow-Ups Due */}
         {followUpsDue && followUpsDue.count > 0 ? (
-          <div className="bg-gradient-to-br from-rose-900/30 to-rose-950/30 border border-rose-500/30 rounded-2xl p-6">
+          <div className="bg-rose-50 border border-rose-200 rounded-2xl p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-white">Follow-Ups Due</h3>
+              <h3 className="text-lg font-bold text-gray-900">Follow-Ups Due</h3>
               <span className="px-2 py-1 bg-rose-600 text-white text-xs font-bold rounded-lg">
                 {followUpsDue.count} due
               </span>
@@ -366,19 +366,19 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                       const fullLead = topLeads.find(l => l.lead_id === lead.lead_id);
                       if (fullLead) onSelectLead?.(fullLead);
                     }}
-                    className="flex items-center justify-between p-3 bg-slate-900/50 rounded-xl hover:bg-slate-800/50 cursor-pointer transition-colors"
+                    className="flex items-center justify-between p-3 bg-gray-50 rounded-xl hover:bg-gray-100 cursor-pointer transition-colors"
                   >
                     <div>
-                      <p className="text-white font-medium text-sm">{lead.agent_name || lead.owner_name || lead.company_name || 'Unknown'}</p>
+                      <p className="text-gray-900 font-medium text-sm">{lead.agent_name || lead.owner_name || lead.company_name || 'Unknown'}</p>
                       <div className="flex items-center gap-2 mt-0.5">
                         {lead.pipeline_stage && (
-                          <span className="text-[10px] px-1.5 py-0.5 bg-blue-900/30 text-blue-400 rounded">
+                          <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">
                             {(lead.pipeline_stage as string).replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}
                           </span>
                         )}
                       </div>
                     </div>
-                    <span className={`text-xs font-bold ${isOverdue ? 'text-rose-400' : isDueToday ? 'text-amber-400' : 'text-slate-500'}`}>
+                    <span className={`text-xs font-bold ${isOverdue ? 'text-rose-600' : isDueToday ? 'text-amber-600' : 'text-gray-400'}`}>
                       {isOverdue ? `${daysOverdue}d overdue` : isDueToday ? 'Due today' : lead.next_follow_up}
                     </span>
                   </div>
@@ -388,9 +388,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
           </div>
         ) : (
           // Ready to Contact (show when no follow-ups)
-          <div className="bg-gradient-to-br from-emerald-900/30 to-emerald-950/30 border border-emerald-500/30 rounded-2xl p-6">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-white">Ready to Contact</h3>
+              <h3 className="text-lg font-bold text-gray-900">Ready to Contact</h3>
               <span className="px-2 py-1 bg-emerald-600 text-white text-xs font-bold rounded-lg">
                 {readyToContact.length} leads
               </span>
@@ -400,15 +400,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                 <div 
                   key={lead.lead_id}
                   onClick={() => onSelectLead?.(lead)}
-                  className="flex items-center justify-between p-3 bg-slate-900/50 rounded-xl hover:bg-slate-800/50 cursor-pointer transition-colors"
+                  className="flex items-center justify-between p-3 bg-gray-50 rounded-xl hover:bg-gray-100 cursor-pointer transition-colors"
                 >
                   <div>
-                    <p className="text-white font-medium text-sm">{lead.company_name || lead.agent_name || lead.owner_name}</p>
-                    <p className="text-slate-500 text-xs">{lead.portfolio_size} bldgs • {(lead.total_units || 0).toLocaleString()} units</p>
+                    <p className="text-gray-900 font-medium text-sm">{lead.company_name || lead.agent_name || lead.owner_name}</p>
+                    <p className="text-gray-400 text-xs">{lead.portfolio_size} bldgs • {(lead.total_units || 0).toLocaleString()} units</p>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    {lead.phone && <span className="p-1 bg-emerald-900/50 rounded text-emerald-400 text-[10px]">Phone</span>}
-                    {lead.email && <span className="p-1 bg-blue-900/50 rounded text-blue-400 text-[10px]">Email</span>}
+                    {lead.phone && <span className="p-1 bg-emerald-50 rounded text-emerald-600 text-[10px]">Phone</span>}
+                    {lead.email && <span className="p-1 bg-blue-50 rounded text-blue-600 text-[10px]">Email</span>}
                   </div>
                 </div>
               ))}
@@ -418,9 +418,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
 
         {/* Ready to Contact (when follow-ups exist) OR Ready to Contact always shows */}
         {followUpsDue && followUpsDue.count > 0 && readyToContact.length > 0 && (
-          <div className="bg-gradient-to-br from-emerald-900/30 to-emerald-950/30 border border-emerald-500/30 rounded-2xl p-6">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-white">Ready to Contact</h3>
+              <h3 className="text-lg font-bold text-gray-900">Ready to Contact</h3>
               <span className="px-2 py-1 bg-emerald-600 text-white text-xs font-bold rounded-lg">
                 {readyToContact.length} leads
               </span>
@@ -430,15 +430,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                 <div 
                   key={lead.lead_id}
                   onClick={() => onSelectLead?.(lead)}
-                  className="flex items-center justify-between p-3 bg-slate-900/50 rounded-xl hover:bg-slate-800/50 cursor-pointer transition-colors"
+                  className="flex items-center justify-between p-3 bg-gray-50 rounded-xl hover:bg-gray-100 cursor-pointer transition-colors"
                 >
                   <div>
-                    <p className="text-white font-medium text-sm">{lead.company_name || lead.agent_name || lead.owner_name}</p>
-                    <p className="text-slate-500 text-xs">{lead.portfolio_size} bldgs • {(lead.total_units || 0).toLocaleString()} units</p>
+                    <p className="text-gray-900 font-medium text-sm">{lead.company_name || lead.agent_name || lead.owner_name}</p>
+                    <p className="text-gray-400 text-xs">{lead.portfolio_size} bldgs • {(lead.total_units || 0).toLocaleString()} units</p>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    {lead.phone && <span className="p-1 bg-emerald-900/50 rounded text-emerald-400 text-[10px]">Phone</span>}
-                    {lead.email && <span className="p-1 bg-blue-900/50 rounded text-blue-400 text-[10px]">Email</span>}
+                    {lead.phone && <span className="p-1 bg-emerald-50 rounded text-emerald-600 text-[10px]">Phone</span>}
+                    {lead.email && <span className="p-1 bg-blue-50 rounded text-blue-600 text-[10px]">Email</span>}
                   </div>
                 </div>
               ))}
@@ -448,15 +448,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
       </div>
 
       {/* Top Leads Table */}
-      <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-6">
+      <div className="bg-white shadow-sm border border-gray-200 rounded-2xl p-6">
         <div className="flex items-center justify-between mb-4">
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Top Leads by Score</h4>
-          <span className="text-[10px] text-slate-600">Click to view details</span>
+          <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Top Leads by Score</h4>
+          <span className="text-[10px] text-gray-400">Click to view details</span>
         </div>
         <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
           <table className="w-full">
-            <thead className="sticky top-0 bg-slate-900 z-10">
-              <tr className="text-[10px] text-slate-500 uppercase tracking-wider border-b border-white/5">
+            <thead className="sticky top-0 bg-white z-10">
+              <tr className="text-[10px] text-gray-400 uppercase tracking-wider border-b border-gray-200">
                 <th className="text-left py-2 px-3">#</th>
                 <th className="text-left py-2 px-3">Company</th>
                 <th className="text-right py-2 px-3">Buildings</th>
@@ -471,38 +471,38 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                 <tr 
                   key={lead.lead_id}
                   onClick={() => onSelectLead?.(lead)}
-                  className="border-b border-white/5 hover:bg-slate-800/30 cursor-pointer transition-colors"
+                  className="border-b border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
                 >
-                  <td className="py-3 px-3 text-slate-600 font-mono text-sm">{i + 1}</td>
+                  <td className="py-3 px-3 text-gray-400 font-mono text-sm">{i + 1}</td>
                   <td className="py-3 px-3">
-                    <p className="text-white font-medium text-sm">{lead.company_name || lead.agent_name || lead.owner_name}</p>
+                    <p className="text-gray-900 font-medium text-sm">{lead.company_name || lead.agent_name || lead.owner_name}</p>
                     {lead.pipeline_stage && lead.pipeline_stage !== 'research' && (
-                      <span className="text-[9px] px-1.5 py-0.5 bg-blue-900/30 text-blue-400 rounded mt-0.5 inline-block">
+                      <span className="text-[9px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded mt-0.5 inline-block">
                         {lead.pipeline_stage.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                       </span>
                     )}
                   </td>
-                  <td className="py-3 px-3 text-right font-mono text-sm text-blue-400 font-bold">{lead.portfolio_size}</td>
-                  <td className="py-3 px-3 text-right font-mono text-sm text-slate-300">{(lead.total_units || 0).toLocaleString()}</td>
-                  <td className="py-3 px-3 text-right font-mono text-sm text-emerald-400">
+                  <td className="py-3 px-3 text-right font-mono text-sm text-blue-600 font-bold">{lead.portfolio_size}</td>
+                  <td className="py-3 px-3 text-right font-mono text-sm text-gray-700">{(lead.total_units || 0).toLocaleString()}</td>
+                  <td className="py-3 px-3 text-right font-mono text-sm text-emerald-600">
                     {lead.estimated_annual_revenue > 0 ? formatCurrency(lead.estimated_annual_revenue) : '—'}
                   </td>
                   <td className="py-3 px-3">
                     <div className="flex gap-1 flex-wrap">
                       {(lead.boros || [lead.boro]).slice(0, 2).map((b, j) => (
-                        <span key={j} className="px-1.5 py-0.5 bg-slate-800 text-slate-400 text-[9px] rounded">
+                        <span key={j} className="px-1.5 py-0.5 bg-gray-100 text-gray-500 text-[9px] rounded">
                           {b ? b.charAt(0) + b.slice(1).toLowerCase() : ''}
                         </span>
                       ))}
                       {(lead.boros?.length || 0) > 2 && (
-                        <span className="px-1.5 py-0.5 bg-slate-800 text-slate-500 text-[9px] rounded">
+                        <span className="px-1.5 py-0.5 bg-gray-100 text-gray-400 text-[9px] rounded">
                           +{(lead.boros?.length || 0) - 2}
                         </span>
                       )}
                     </div>
                   </td>
                   <td className="py-3 px-3 text-right">
-                    <span className={`font-mono font-bold ${lead.score >= 60 ? 'text-emerald-400' : lead.score >= 40 ? 'text-amber-400' : 'text-slate-500'}`}>
+                    <span className={`font-mono font-bold ${lead.score >= 60 ? 'text-emerald-600' : lead.score >= 40 ? 'text-amber-600' : 'text-gray-400'}`}>
                       {lead.score.toFixed(0)}
                     </span>
                   </td>
@@ -514,8 +514,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
       </div>
 
       {/* Data Status Footer */}
-      <div className="flex items-center justify-between px-2 py-3 border-t border-white/5">
-        <div className="flex items-center gap-4 text-xs text-slate-600">
+      <div className="flex items-center justify-between px-2 py-3 border-t border-gray-200">
+        <div className="flex items-center gap-4 text-xs text-gray-400">
           {/* Contact Lookup Status */}
           {enrichmentStatus?.running ? (
             <div className="flex items-center gap-2">
@@ -528,13 +528,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
             <button
               onClick={handleStartEnrichment}
               disabled={startingEnrichment}
-              className="text-amber-500 hover:text-amber-400 underline disabled:opacity-50"
+              className="text-amber-600 hover:text-amber-500 underline disabled:opacity-50"
             >
               {startingEnrichment ? 'Starting...' : `Enrich leads (${enrichedCount} enriched so far)`}
             </button>
           )}
 
-          <span className="text-slate-700">|</span>
+          <span className="text-gray-300">|</span>
 
           {/* Violations Status */}
           {refreshingViolations ? (
@@ -543,7 +543,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
               <span>Loading violations data...</span>
             </div>
           ) : leadsWithViolations > 0 ? (
-            <span>{leadsWithViolations} leads with violations • <button onClick={handleRefreshViolations} className="text-orange-500 hover:text-orange-400 underline">Refresh</button></span>
+            <span>{leadsWithViolations} leads with violations • <button onClick={handleRefreshViolations} className="text-orange-600 hover:text-orange-500 underline">Refresh</button></span>
           ) : (
             <span className="flex items-center gap-1">
               <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
@@ -551,13 +551,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
             </span>
           )}
 
-          <span className="text-slate-700">|</span>
+          <span className="text-gray-300">|</span>
           
           <span>Data refreshed: {status?.last_refresh ? new Date(status.last_refresh).toLocaleDateString() : 'Never'}</span>
         </div>
         {/* Data freshness indicators */}
         {dataStatus && (
-          <div className="flex flex-wrap gap-4 text-[10px] text-slate-600 mt-1">
+          <div className="flex flex-wrap gap-4 text-[10px] text-gray-400 mt-1">
             <span>Revenue: {dataStatus.revenue_computed_at ? `computed ${new Date(dataStatus.revenue_computed_at).toLocaleString()} (v${dataStatus.revenue_formula_version || '?'})` : 'not yet computed'}</span>
             <span>Violations: {dataStatus.violations_computed_at ? `fetched ${new Date(dataStatus.violations_computed_at).toLocaleString()}` : 'computing...'}</span>
             <span>Enrichment: {dataStatus.enrichment_completed_at ? `completed ${new Date(dataStatus.enrichment_completed_at).toLocaleString()}` : 'in progress'}</span>

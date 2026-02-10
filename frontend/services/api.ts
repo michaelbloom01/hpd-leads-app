@@ -707,3 +707,195 @@ export async function getEnrichmentGaps(): Promise<EnrichmentGaps> {
   if (!response.ok) throw new Error(`Failed to get enrichment gaps: ${response.statusText}`);
   return response.json();
 }
+
+// ===========================================================================
+// Agent API (AI Agent feature)
+// ===========================================================================
+
+// --- SSE Event types (discriminated union) ---
+
+export type AgentSSEEvent =
+  | { type: 'status'; data: string }
+  | { type: 'tool_call'; data: { name: string; input: Record<string, unknown> } }
+  | { type: 'partial'; data: string }
+  | { type: 'leads'; data: AgentLeadRow[] }
+  | { type: 'scripts'; data: AgentScriptRow[] }
+  | { type: 'briefing_preview'; data: AgentBriefingPreview }
+  | { type: 'rent_comparison'; data: AgentRentComparison[] }
+  | { type: 'needs_confirmation'; data: AgentConfirmation }
+  | { type: 'actions'; data: string[] }
+  | { type: 'error'; data: string }
+  | { type: 'done'; data: { conversation_id: string } };
+
+export interface AgentLeadRow {
+  lead_id: string;
+  company_name: string;
+  portfolio_size: number;
+  total_units: number;
+  score: number;
+  estimated_annual_revenue: number;
+  enrichment_status: string;
+  phone: string | null;
+  email: string | null;
+  website: string | null;
+  boros: string[];
+  violations_per_unit: number;
+  pipeline_stage: string;
+}
+
+export interface AgentScriptRow {
+  lead_id: string;
+  company_name: string;
+  phone: string | null;
+  owner_name: string | null;
+  script: string;
+}
+
+export interface AgentRentComparison {
+  lead_id: string;
+  company_name: string;
+  current_monthly_rent: number;
+  refined_monthly_rent: number;
+  delta_pct: number;
+  current_annual_revenue: number;
+  refined_annual_revenue: number;
+  confidence: 'high' | 'medium' | 'low';
+  sources: string[];
+}
+
+export interface AgentBriefingPreview {
+  briefing_id: string;
+  html: string;
+  lead_count: number;
+}
+
+export interface AgentConfirmation {
+  action_id: string;
+  description: string;
+  count: number;
+}
+
+export interface AgentChatRequest {
+  message: string;
+  conversation_id?: string;
+  confirmation?: { action_id: string; confirmed: boolean };
+}
+
+export interface ConversationSummary {
+  conversation_id: string;
+  title: string;
+  message_count: number;
+  updated_at: string;
+}
+
+/**
+ * Send a message to the agent and receive SSE events.
+ * Returns an AbortController for cancellation and a callback-based event handler.
+ */
+export function agentChat(
+  request: AgentChatRequest,
+  onEvent: (event: AgentSSEEvent) => void,
+  onError?: (error: Error) => void,
+): AbortController {
+  const controller = new AbortController();
+
+  (async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/agent/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Agent chat failed: ${response.status} ${response.statusText}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No response body');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        let currentEvent = '';
+        let currentData = '';
+
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
+            currentData = line.slice(6);
+          } else if (line === '' && currentEvent) {
+            // End of SSE message — dispatch
+            try {
+              let parsedData: unknown;
+              try {
+                parsedData = JSON.parse(currentData);
+              } catch {
+                parsedData = currentData;
+              }
+              onEvent({ type: currentEvent, data: parsedData } as AgentSSEEvent);
+            } catch (e) {
+              console.warn('Failed to parse SSE event:', currentEvent, currentData);
+            }
+            currentEvent = '';
+            currentData = '';
+          }
+        }
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') return;
+      if (onError) onError(err instanceof Error ? err : new Error(String(err)));
+    }
+  })();
+
+  return controller;
+}
+
+/**
+ * Get list of recent conversations.
+ */
+export async function getConversations(): Promise<ConversationSummary[]> {
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/agent/conversations`);
+  if (!response.ok) throw new Error('Failed to fetch conversations');
+  const data = await response.json();
+  return data.conversations || [];
+}
+
+/**
+ * Get full message history for a conversation.
+ */
+export async function getConversation(conversationId: string): Promise<{ conversation_id: string; messages: unknown[] }> {
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/agent/conversations/${conversationId}`);
+  if (!response.ok) throw new Error('Failed to fetch conversation');
+  return response.json();
+}
+
+/**
+ * Log an outreach attempt from Call Mode.
+ */
+export async function logOutreachFromCallMode(
+  leadId: string,
+  outcome: string,
+  notes?: string,
+): Promise<void> {
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/outreach`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      method: 'cold_call',
+      outcome,
+      notes: notes || '',
+    }),
+  });
+  if (!response.ok) throw new Error('Failed to log outreach');
+}

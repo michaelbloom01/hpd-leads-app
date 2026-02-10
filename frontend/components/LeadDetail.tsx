@@ -17,7 +17,7 @@ const PIPELINE_STAGES = [
 ];
 
 const OUTREACH_STATUSES = [
-  { value: 'new', label: 'New', color: 'bg-slate-600 text-slate-200' },
+  { value: 'new', label: 'New', color: 'bg-gray-200 text-gray-700' },
   { value: 'contacted', label: 'Contacted', color: 'bg-blue-600 text-blue-100' },
   { value: 'interested', label: 'Interested', color: 'bg-emerald-600 text-emerald-100' },
   { value: 'not_interested', label: 'Not Interested', color: 'bg-amber-600 text-amber-100' },
@@ -214,53 +214,53 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
   ];
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-0 md:p-4" onClick={onClose}>
-      <div className="bg-slate-900 border border-white/10 md:rounded-2xl max-w-3xl w-full h-full md:h-auto md:max-h-[90vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50 flex items-center justify-center p-0 md:p-4" onClick={onClose}>
+      <div className="bg-white border border-gray-200 md:rounded-2xl max-w-3xl w-full h-full md:h-auto md:max-h-[90vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
         
         {/* === STICKY HEADER === */}
-        <div className="flex-shrink-0 border-b border-white/10">
+        <div className="flex-shrink-0 border-b border-gray-200">
           {/* Top row: name + close */}
           <div className="p-5 pb-3 flex justify-between items-start">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1 flex-wrap">
                 <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
-                  enrichedLead.entity_type === 'company' ? 'bg-blue-900/50 text-blue-400' :
-                  enrichedLead.entity_type === 'individual_agent' ? 'bg-amber-900/50 text-amber-400' :
-                  enrichedLead.entity_type === 'owner_operator' ? 'bg-purple-900/50 text-purple-400' :
-                  'bg-slate-800 text-slate-500'
+                  enrichedLead.entity_type === 'company' ? 'bg-blue-50 text-blue-700' :
+                  enrichedLead.entity_type === 'individual_agent' ? 'bg-amber-50 text-amber-700' :
+                  enrichedLead.entity_type === 'owner_operator' ? 'bg-purple-50 text-purple-700' :
+                  'bg-gray-100 text-gray-500'
                 }`} title={enrichedLead.entity_type === 'company' ? 'Registered management company or housing entity' : enrichedLead.entity_type === 'individual_agent' ? 'Individual person acting as managing agent' : enrichedLead.entity_type === 'owner_operator' ? 'Property owner who self-manages' : 'Entity type unknown'}>
                   {enrichedLead.entity_type === 'company' ? 'Company' : 
                    enrichedLead.entity_type === 'individual_agent' ? 'Individual Agent' : 
                    enrichedLead.entity_type === 'owner_operator' ? 'Owner-Operator' : 'Unknown'}
                 </span>
                 {(enrichedLead.boros || [enrichedLead.boro]).map((b, i) => (
-                  <span key={i} className="px-1.5 py-0.5 bg-slate-800 text-slate-400 text-[10px] rounded">
+                  <span key={i} className="px-1.5 py-0.5 bg-gray-100 text-gray-500 text-[10px] rounded">
                     {b ? b.charAt(0) + b.slice(1).toLowerCase() : ''}
                   </span>
                 ))}
               </div>
-              <h2 className="text-xl font-bold text-white truncate">{enrichedLead.company_name || enrichedLead.agent_name || enrichedLead.owner_name}</h2>
+              <h2 className="text-xl font-bold text-gray-900 truncate">{enrichedLead.company_name || enrichedLead.agent_name || enrichedLead.owner_name}</h2>
             </div>
             <div className="flex items-center gap-3 ml-4">
               {/* Score with context */}
               <div className={`px-3 py-1 rounded-lg text-center ${
-                (enrichedLead.score || 0) >= 60 ? 'bg-emerald-900/30' :
-                (enrichedLead.score || 0) >= 40 ? 'bg-amber-900/30' : 'bg-slate-800'
+                (enrichedLead.score || 0) >= 60 ? 'bg-emerald-50' :
+                (enrichedLead.score || 0) >= 40 ? 'bg-amber-50' : 'bg-gray-100'
               }`} title={`Lead quality score (0–100): ${(enrichedLead.score || 0) >= 60 ? 'Strong acquisition target' : (enrichedLead.score || 0) >= 40 ? 'Moderate potential' : 'Lower priority'}\nBased on portfolio size, building types, registration status, and data completeness`}>
                 <div className={`text-2xl font-bold font-mono ${
-                  (enrichedLead.score || 0) >= 60 ? 'text-emerald-400' :
-                  (enrichedLead.score || 0) >= 40 ? 'text-amber-400' : 'text-slate-400'
+                  (enrichedLead.score || 0) >= 60 ? 'text-emerald-600' :
+                  (enrichedLead.score || 0) >= 40 ? 'text-amber-600' : 'text-gray-500'
                 }`}>{(enrichedLead.score || 0).toFixed(0)}</div>
-                <div className="text-[9px] text-slate-500 uppercase font-bold">Score</div>
+                <div className="text-[9px] text-gray-400 uppercase font-bold">Score</div>
               </div>
               {/* Revenue */}
               {(enrichedLead.estimated_annual_revenue || 0) > 0 && (
                 <div className="text-right" title="Estimated annual management fee if acquired: Total Units × Avg Rent (by borough & building type) × 5% management fee">
-                  <div className="text-lg font-bold font-mono text-emerald-400">{formatCurrency(enrichedLead.estimated_annual_revenue)}<span className="text-xs text-emerald-600">/yr</span></div>
-                  <div className="text-[9px] text-slate-500 uppercase font-bold">Mgmt Fee</div>
+                  <div className="text-lg font-bold font-mono text-emerald-600">{formatCurrency(enrichedLead.estimated_annual_revenue)}<span className="text-xs text-emerald-500">/yr</span></div>
+                  <div className="text-[9px] text-gray-400 uppercase font-bold">Mgmt Fee</div>
                 </div>
               )}
-              <button onClick={onClose} className="p-2 text-slate-500 hover:text-white transition-colors">
+              <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-900 transition-colors">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/>
                 </svg>
@@ -286,20 +286,20 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                   <svg className={`w-3 h-3 ml-0.5 transition-transform ${showEmailMenu ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"/></svg>
                 </button>
                 {showEmailMenu && (
-                <div className="absolute top-full left-0 mt-1 w-56 bg-slate-800 border border-white/10 rounded-lg shadow-xl z-50 py-1">
+                <div className="absolute top-full left-0 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-xl z-50 py-1">
                   <a href={`mailto:${enrichedLead.email}?subject=Property Management Services — ${enrichedLead.company_name || enrichedLead.agent_name || 'Introduction'}&body=Hi ${enrichedLead.primary_contact || 'there'},%0D%0A%0D%0AI noticed your portfolio of ${enrichedLead.portfolio_size} buildings across ${(enrichedLead.boros || [enrichedLead.boro]).join(', ')} and wanted to introduce our property management services.%0D%0A%0D%0AWould you have time for a brief call this week?%0D%0A%0D%0ABest regards`}
                     onClick={() => { setShowEmailMenu(false); addOutreachAttempt(lead.lead_id, { method: 'email', outcome: 'sent_email', notes: 'Intro template sent' }).catch(() => {}); }}
-                    className="block px-4 py-2 text-xs text-slate-300 hover:bg-slate-700 transition-colors">
+                    className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors">
                     Intro Template
                   </a>
                   <a href={`mailto:${enrichedLead.email}?subject=Following up — ${enrichedLead.company_name || enrichedLead.agent_name || ''}&body=Hi ${enrichedLead.primary_contact || 'there'},%0D%0A%0D%0AI wanted to follow up on my previous message regarding your ${enrichedLead.portfolio_size}-building portfolio.%0D%0A%0D%0AWe specialize in portfolios like yours in ${(enrichedLead.boros || [enrichedLead.boro]).join(' and ')} and believe we can add value.%0D%0A%0D%0AWould you be open to a brief conversation?%0D%0A%0D%0ABest regards`}
                     onClick={() => { setShowEmailMenu(false); addOutreachAttempt(lead.lead_id, { method: 'email', outcome: 'sent_email', notes: 'Follow-up template sent' }).catch(() => {}); }}
-                    className="block px-4 py-2 text-xs text-slate-300 hover:bg-slate-700 transition-colors">
+                    className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors">
                     Follow-Up Template
                   </a>
                   <a href={`mailto:${enrichedLead.email}`}
                     onClick={() => setShowEmailMenu(false)}
-                    className="block px-4 py-2 text-xs text-slate-300 hover:bg-slate-700 transition-colors border-t border-white/5">
+                    className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-200">
                     Blank Email
                   </a>
                 </div>
@@ -315,11 +315,11 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
             <div className="flex-1" />
             {/* Pipeline selector - dropdown for readability */}
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-slate-500 uppercase">Pipeline:</span>
+              <span className="text-[10px] text-gray-400 uppercase">Pipeline:</span>
               <select 
                 value={pipelineStage} 
                 onChange={(e) => handlePipelineChange(e.target.value)}
-                className="px-3 py-1.5 bg-slate-800 border border-white/10 rounded-lg text-xs text-slate-300 font-bold"
+                className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 font-bold"
               >
                 {PIPELINE_STAGES.map((stage) => (
                   <option key={stage.value} value={stage.value}>{stage.label}</option>
@@ -329,11 +329,11 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
           </div>
 
           {/* Tab bar */}
-          <div className="flex border-t border-white/5">
+          <div className="flex border-b border-gray-200">
             {TABS.map(tab => (
               <button key={tab.id} onClick={() => setActiveTab(tab.id)}
                 className={`flex-1 px-4 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors ${
-                  activeTab === tab.id ? 'text-white border-b-2 border-blue-500 bg-slate-800/30' : 'text-slate-600 hover:text-slate-400'
+                  activeTab === tab.id ? 'text-gray-900 border-b-2 border-emerald-500' : 'text-gray-500 hover:text-gray-700'
                 }`}>
                 {tab.label}
               </button>
@@ -349,114 +349,114 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
             <>
               {/* Revenue & Violations */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-gradient-to-br from-emerald-900/20 to-emerald-950/20 border border-emerald-500/20 rounded-xl p-4">
-                  <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-2">Estimated Management Fee</h3>
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+                  <h3 className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-2">Estimated Management Fee</h3>
                   {(enrichedLead.estimated_annual_revenue || 0) > 0 ? (
                     <div>
-                      <div className="text-2xl font-bold font-mono text-emerald-400">{formatCurrency(enrichedLead.estimated_annual_revenue)}<span className="text-sm text-emerald-600">/yr</span></div>
-                      <div className="text-sm font-mono text-slate-400 mt-1">{formatCurrency(enrichedLead.estimated_monthly_revenue)}<span className="text-xs text-slate-600">/mo</span></div>
+                      <div className="text-2xl font-bold font-mono text-emerald-600">{formatCurrency(enrichedLead.estimated_annual_revenue)}<span className="text-sm text-emerald-500">/yr</span></div>
+                      <div className="text-sm font-mono text-gray-500 mt-1">{formatCurrency(enrichedLead.estimated_monthly_revenue)}<span className="text-xs text-gray-400">/mo</span></div>
                       {/* Detailed breakdown with real numbers */}
-                      <details className="mt-3 pt-3 border-t border-emerald-500/10">
-                        <summary className="text-[10px] font-bold text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-300">
+                      <details className="mt-3 pt-3 border-t border-emerald-200">
+                        <summary className="text-[10px] font-bold text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-700">
                           {enrichedLead.total_units?.toLocaleString()} units × avg rent × 5% fee — View Breakdown
                         </summary>
                         <div className="mt-2 space-y-1">
                           {(enrichedLead as any).revenue_breakdown?.map((item: any, i: number) => (
                             <div key={i} className="flex items-center justify-between text-xs">
-                              <span className="text-slate-500">{item.label}: <span className="text-slate-400 font-mono">{item.estimated_units?.toLocaleString()}</span> units @ <span className="text-slate-400 font-mono">${item.rent_per_unit?.toLocaleString()}</span>/mo</span>
-                              <span className="text-emerald-500 font-mono">{formatCurrency(item.monthly_gross * 0.05 * 12)}/yr</span>
+                              <span className="text-gray-500">{item.label}: <span className="text-gray-700 font-mono">{item.estimated_units?.toLocaleString()}</span> units @ <span className="text-gray-700 font-mono">${item.rent_per_unit?.toLocaleString()}</span>/mo</span>
+                              <span className="text-emerald-600 font-mono">{formatCurrency(item.monthly_gross * 0.05 * 12)}/yr</span>
                             </div>
                           )) || (
-                            <div className="text-[10px] text-slate-600 space-y-0.5">
+                            <div className="text-[10px] text-gray-400 space-y-0.5">
                               <p>{enrichedLead.total_units?.toLocaleString() || '—'} units across {enrichedLead.portfolio_size || '—'} buildings</p>
                               <p>Borough: {enrichedLead.boro || 'NYC avg'} • Fee rate: 5%</p>
                               <p>Rents: StreetEasy &amp; Census ACS • Condo/co-op adjusted to 60%</p>
                             </div>
                           )}
-                          <p className="text-[10px] text-slate-600 mt-1 pt-1 border-t border-emerald-500/10">Source: StreetEasy &amp; Census ACS avg rents • 5% mgmt fee rate • Condo/co-op at 60%</p>
+                          <p className="text-[10px] text-gray-400 mt-1 pt-1 border-t border-emerald-200">Source: StreetEasy &amp; Census ACS avg rents • 5% mgmt fee rate • Condo/co-op at 60%</p>
                         </div>
                       </details>
                     </div>
                   ) : (
-                    <div className="text-slate-600 text-sm">{(enrichedLead.total_units || 0) > 0 ? 'Revenue calculating...' : 'No unit data available'}</div>
+                    <div className="text-gray-400 text-sm">{(enrichedLead.total_units || 0) > 0 ? 'Revenue calculating...' : 'No unit data available'}</div>
                   )}
                 </div>
-                <div className={`bg-gradient-to-br ${
-                  enrichedLead.violations_per_unit > 1.0 ? 'from-rose-900/20 to-rose-950/20 border-rose-500/20' :
-                  enrichedLead.violation_count > 0 ? 'from-amber-900/20 to-amber-950/20 border-amber-500/20' :
-                  'from-slate-900/20 to-slate-950/20 border-white/5'
+                <div className={`${
+                  enrichedLead.violations_per_unit > 1.0 ? 'bg-rose-50 border-rose-200' :
+                  enrichedLead.violation_count > 0 ? 'bg-amber-50 border-amber-200' :
+                  'bg-gray-50 border-gray-200'
                 } border rounded-xl p-4`}>
                   <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">HPD Violations</h3>
+                    <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider">HPD Violations</h3>
                     {enrichedLead.violations_per_unit > 1.0 && (
-                      <span className="px-2 py-0.5 bg-rose-600/30 text-rose-400 text-[10px] font-bold rounded uppercase">High Distress</span>
+                      <span className="px-2 py-0.5 bg-rose-100 text-rose-700 text-[10px] font-bold rounded uppercase">High Distress</span>
                     )}
                   </div>
                   {enrichedLead.violation_count > 0 ? (
                     <div>
                       <div className="flex items-baseline gap-2">
                         <span className={`text-2xl font-bold font-mono ${
-                          (enrichedLead.violations_per_unit || 0) > 1.0 ? 'text-rose-400' :
-                          (enrichedLead.violations_per_unit || 0) > 0.3 ? 'text-amber-400' : 'text-white'
+                          (enrichedLead.violations_per_unit || 0) > 1.0 ? 'text-rose-600' :
+                          (enrichedLead.violations_per_unit || 0) > 0.3 ? 'text-amber-600' : 'text-gray-900'
                         }`}>{(enrichedLead.violations_per_unit || 0).toFixed(2)}</span>
-                        <span className="text-xs text-slate-500">per unit</span>
+                        <span className="text-xs text-gray-500">per unit</span>
                       </div>
-                      <div className="text-sm text-slate-500 mt-1 font-mono">{(enrichedLead.violation_count || 0).toLocaleString()} total violations</div>
+                      <div className="text-sm text-gray-500 mt-1 font-mono">{(enrichedLead.violation_count || 0).toLocaleString()} total violations</div>
                       <div className="flex flex-col gap-1 mt-2 text-xs">
                         <div className="flex gap-3">
-                          <span className="text-slate-400" title="Non-hazardous conditions">A: {enrichedLead.violation_class_a}</span>
-                          <span className="text-amber-400" title="Hazardous conditions">B: {enrichedLead.violation_class_b}</span>
-                          <span className="text-rose-400" title="Immediately hazardous conditions">C: {enrichedLead.violation_class_c}</span>
+                          <span className="text-gray-500" title="Non-hazardous conditions">A: {enrichedLead.violation_class_a}</span>
+                          <span className="text-amber-600" title="Hazardous conditions">B: {enrichedLead.violation_class_b}</span>
+                          <span className="text-rose-600" title="Immediately hazardous conditions">C: {enrichedLead.violation_class_c}</span>
                         </div>
-                        <div className="text-[9px] text-slate-600">A = non-hazardous • B = hazardous • C = immediately hazardous</div>
+                        <div className="text-[9px] text-gray-400">A = non-hazardous • B = hazardous • C = immediately hazardous</div>
                       </div>
                     </div>
                   ) : (
-                    <div className="text-slate-600 text-sm">No violations on record</div>
+                    <div className="text-gray-400 text-sm">No violations on record</div>
                   )}
                 </div>
               </div>
 
               {/* Portfolio Summary */}
               <div className="grid grid-cols-3 gap-3">
-                <div className="bg-slate-800/50 rounded-xl p-3 text-center" title="Lead quality score (0–100) based on portfolio size, building mix, registration status, and data completeness">
-                  <div className={`text-2xl font-bold font-mono ${(enrichedLead.score || 0) >= 60 ? 'text-emerald-400' : (enrichedLead.score || 0) >= 40 ? 'text-amber-400' : 'text-slate-400'}`}>{(enrichedLead.score || 0).toFixed(1)}</div>
-                  <div className="text-[10px] text-slate-500 mt-0.5 uppercase">Lead Score</div>
+                <div className="bg-gray-50 rounded-xl p-3 text-center" title="Lead quality score (0–100) based on portfolio size, building mix, registration status, and data completeness">
+                  <div className={`text-2xl font-bold font-mono ${(enrichedLead.score || 0) >= 60 ? 'text-emerald-600' : (enrichedLead.score || 0) >= 40 ? 'text-amber-600' : 'text-gray-500'}`}>{(enrichedLead.score || 0).toFixed(1)}</div>
+                  <div className="text-[10px] text-gray-400 mt-0.5 uppercase">Lead Score</div>
                 </div>
-                <div className="bg-slate-800/50 rounded-xl p-3 text-center" title="Total number of buildings managed by this entity per HPD registration records">
-                  <div className="text-2xl font-bold font-mono text-blue-400">{enrichedLead.portfolio_size || 0}</div>
-                  <div className="text-[10px] text-slate-500 mt-0.5 uppercase">Buildings</div>
+                <div className="bg-gray-50 rounded-xl p-3 text-center" title="Total number of buildings managed by this entity per HPD registration records">
+                  <div className="text-2xl font-bold font-mono text-blue-600">{enrichedLead.portfolio_size || 0}</div>
+                  <div className="text-[10px] text-gray-400 mt-0.5 uppercase">Buildings</div>
                 </div>
-                <div className="bg-slate-800/50 rounded-xl p-3 text-center" title="Total residential units across all buildings in this portfolio">
-                  <div className="text-2xl font-bold font-mono text-purple-400">{(enrichedLead.total_units || 0).toLocaleString()}</div>
-                  <div className="text-[10px] text-slate-500 mt-0.5 uppercase">Res. Units</div>
+                <div className="bg-gray-50 rounded-xl p-3 text-center" title="Total residential units across all buildings in this portfolio">
+                  <div className="text-2xl font-bold font-mono text-purple-600">{(enrichedLead.total_units || 0).toLocaleString()}</div>
+                  <div className="text-[10px] text-gray-400 mt-0.5 uppercase">Res. Units</div>
                 </div>
               </div>
 
               {/* Building Type Breakdown */}
               {enrichedLead.building_types && enrichedLead.building_types.total > 0 && (
-                <div className="bg-slate-800/30 rounded-xl p-4">
-                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">Portfolio Composition</h3>
+                <div className="bg-gray-50 rounded-xl p-4">
+                  <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-3">Portfolio Composition</h3>
                   <div className="flex gap-2 flex-wrap">
-                    {enrichedLead.building_types.condo > 0 && <span className="px-2 py-1 bg-blue-900/30 text-blue-400 text-xs rounded">{enrichedLead.building_types.condo} Condo</span>}
-                    {enrichedLead.building_types.coop > 0 && <span className="px-2 py-1 bg-purple-900/30 text-purple-400 text-xs rounded">{enrichedLead.building_types.coop} Coop</span>}
-                    {enrichedLead.building_types.rental_elevator > 0 && <span className="px-2 py-1 bg-emerald-900/30 text-emerald-400 text-xs rounded">{enrichedLead.building_types.rental_elevator} Elevator</span>}
-                    {enrichedLead.building_types.rental_walkup > 0 && <span className="px-2 py-1 bg-amber-900/30 text-amber-400 text-xs rounded">{enrichedLead.building_types.rental_walkup} Walkup</span>}
-                    {enrichedLead.building_types.small_residential > 0 && <span className="px-2 py-1 bg-slate-700 text-slate-300 text-xs rounded">{enrichedLead.building_types.small_residential} Small Res</span>}
+                    {enrichedLead.building_types.condo > 0 && <span className="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded">{enrichedLead.building_types.condo} Condo</span>}
+                    {enrichedLead.building_types.coop > 0 && <span className="px-2 py-1 bg-purple-50 text-purple-700 text-xs rounded">{enrichedLead.building_types.coop} Coop</span>}
+                    {enrichedLead.building_types.rental_elevator > 0 && <span className="px-2 py-1 bg-emerald-50 text-emerald-700 text-xs rounded">{enrichedLead.building_types.rental_elevator} Elevator</span>}
+                    {enrichedLead.building_types.rental_walkup > 0 && <span className="px-2 py-1 bg-amber-50 text-amber-700 text-xs rounded">{enrichedLead.building_types.rental_walkup} Walkup</span>}
+                    {enrichedLead.building_types.small_residential > 0 && <span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded">{enrichedLead.building_types.small_residential} Small Res</span>}
                   </div>
                 </div>
               )}
 
               {/* AI Summary */}
-              <div className="bg-slate-800/30 rounded-xl p-4">
+              <div className="bg-gray-50 rounded-xl p-4">
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Company Overview</h3>
-                  <button onClick={handleEnrichAll} disabled={isEnriching} className="text-[10px] text-blue-400 hover:text-blue-300 disabled:opacity-50">
+                  <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Company Overview</h3>
+                  <button onClick={handleEnrichAll} disabled={isEnriching} className="text-[10px] text-blue-600 hover:text-blue-500 disabled:opacity-50">
                     {isEnriching ? 'Enriching...' : aiDescription ? 'Refresh' : 'Enrich to Generate'}
                   </button>
                 </div>
                 {aiDescription ? (
-                  <p className="text-sm text-slate-300 leading-relaxed">{
+                  <p className="text-sm text-gray-700 leading-relaxed">{
                     // Strip accidental markdown formatting from AI output
                     aiDescription
                       .replace(/^#+\s/gm, '')
@@ -466,16 +466,16 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                       .trim()
                   }</p>
                 ) : (
-                  <p className="text-sm text-slate-600 italic">Click "Enrich Lead" to generate contacts and an AI summary</p>
+                  <p className="text-sm text-gray-400 italic">Click "Enrich Lead" to generate contacts and an AI summary</p>
                 )}
               </div>
 
               {/* Score Breakdown (collapsed) */}
               {enrichedLead.score_breakdown && (
-                <details className="bg-slate-800/30 rounded-xl">
-                  <summary className="p-4 cursor-pointer text-xs font-bold text-slate-500 uppercase tracking-wider hover:text-slate-300">How is the score calculated?</summary>
+                <details className="bg-gray-50 rounded-xl">
+                  <summary className="p-4 cursor-pointer text-xs font-bold text-gray-500 uppercase tracking-wider hover:text-gray-700">How is the score calculated?</summary>
                   <div className="px-4 pb-4">
-                    <p className="text-[10px] text-slate-600 mb-3">Score is weighted across several factors. Each component contributes points to the total (max 100).</p>
+                    <p className="text-[10px] text-gray-400 mb-3">Score is weighted across several factors. Each component contributes points to the total (max 100).</p>
                     <div className="grid grid-cols-2 gap-3">
                       {Object.entries(enrichedLead.score_breakdown).map(([key, value]) => {
                         const SCORE_LABELS: Record<string, string> = {
@@ -493,8 +493,8 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                         };
                         return (
                           <div key={key} className="flex items-center justify-between">
-                            <span className="text-xs text-slate-500">{SCORE_LABELS[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</span>
-                            <span className="text-xs font-mono text-slate-300">{typeof value === 'number' ? value.toFixed(1) : String(value)}</span>
+                            <span className="text-xs text-gray-500">{SCORE_LABELS[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</span>
+                            <span className="text-xs font-mono text-gray-700">{typeof value === 'number' ? value.toFixed(1) : String(value)}</span>
                           </div>
                         );
                       })}
@@ -505,9 +505,9 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
 
               {/* Interactive Map (OpenStreetMap) */}
               {enrichedLead.buildings && enrichedLead.buildings.length > 0 && (
-                <div className="bg-slate-800/30 rounded-xl p-4">
-                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">Portfolio Footprint</h3>
-                  <Suspense fallback={<div className="h-[250px] bg-slate-800 rounded-lg animate-pulse" />}>
+                <div className="bg-gray-50 rounded-xl p-4">
+                  <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-3">Portfolio Footprint</h3>
+                  <Suspense fallback={<div className="h-[250px] bg-gray-100 rounded-lg animate-pulse" />}>
                     <PortfolioMap buildings={enrichedLead.buildings} boro={enrichedLead.boro} boros={enrichedLead.boros} />
                   </Suspense>
                 </div>
@@ -520,10 +520,10 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
             <>
               {/* Enrichment Status Banner */}
               <div className={`rounded-lg px-3 py-2 text-xs font-medium flex items-center gap-2 ${
-                enrichedLead.enrichment_status === 'complete' ? 'bg-emerald-900/30 border border-emerald-500/20 text-emerald-400' :
-                enrichedLead.enrichment_status === 'partial' ? 'bg-amber-900/30 border border-amber-500/20 text-amber-400' :
-                enrichedLead.enrichment_status === 'failed' ? 'bg-rose-900/30 border border-rose-500/20 text-rose-400' :
-                'bg-slate-800/50 border border-white/5 text-slate-500'
+                enrichedLead.enrichment_status === 'complete' ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' :
+                enrichedLead.enrichment_status === 'partial' ? 'bg-amber-50 border border-amber-200 text-amber-700' :
+                enrichedLead.enrichment_status === 'failed' ? 'bg-rose-50 border border-rose-200 text-rose-700' :
+                'bg-gray-50 border border-gray-200 text-gray-500'
               }`}>
                 <span className="text-sm">
                   {enrichedLead.enrichment_status === 'complete' ? '●' :
@@ -537,33 +537,33 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               </div>
 
               {/* Single Enrich Action */}
-              <div className={`${!enrichedLead.phone && !enrichedLead.email ? 'bg-gradient-to-r from-emerald-900/30 to-emerald-950/30 border border-emerald-500/30 rounded-xl p-4 text-center' : ''}`}>
+              <div className={`${!enrichedLead.phone && !enrichedLead.email ? 'bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-center' : ''}`}>
                 {!enrichedLead.phone && !enrichedLead.email && (
-                  <p className="text-slate-400 text-sm mb-3">No contact info found yet</p>
+                  <p className="text-gray-500 text-sm mb-3">No contact info found yet</p>
                 )}
                 <button onClick={handleEnrichAll} disabled={isEnriching}
                   className={`${!enrichedLead.phone && !enrichedLead.email ? 'px-6 py-2.5' : 'px-4 py-2'} bg-emerald-600 text-white text-sm font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors`}
                   title="Finds contacts (phone, email, website) via Google Places, NY DOS, web scraping, and Hunter.io — then generates an AI summary">
                   {isEnriching ? 'Enriching...' : enrichedLead.enrichment_status === 'none' ? 'Enrich Lead' : 'Re-enrich Lead'}
                 </button>
-                <p className="text-[10px] text-slate-600 mt-1.5">Searches Google Places, NY DOS, web, and Hunter.io for contacts, then generates an AI summary.</p>
+                <p className="text-[10px] text-gray-400 mt-1.5">Searches Google Places, NY DOS, web, and Hunter.io for contacts, then generates an AI summary.</p>
               </div>
 
               {/* All Contact Info */}
-              <div className="bg-slate-800/30 rounded-xl p-4 space-y-3">
-                <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Contact Information</h3>
+              <div className="bg-gray-50 rounded-xl p-4 space-y-3">
+                <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Contact Information</h3>
                 
                 {/* Phones */}
                 {(enrichedLead.phones?.length > 0 || enrichedLead.phone) && (
                   <div>
-                    <label className="text-[10px] text-slate-500 uppercase">Phone</label>
+                    <label className="text-[10px] text-gray-400 uppercase">Phone</label>
                     {enrichedLead.phones?.length > 0 ? enrichedLead.phones.map((p, i) => (
                       <div key={i} className="flex items-center justify-between py-1">
-                        <a href={`tel:${p.value}`} className="text-emerald-400 text-sm font-mono hover:underline">{p.value}</a>
-                        <span className="text-[10px] text-slate-600">{p.source}</span>
+                        <a href={`tel:${p.value}`} className="text-emerald-600 text-sm font-mono hover:underline">{p.value}</a>
+                        <span className="text-[10px] text-gray-400">{p.source}</span>
                       </div>
                     )) : enrichedLead.phone && (
-                      <a href={`tel:${enrichedLead.phone}`} className="text-emerald-400 text-sm font-mono hover:underline block">{enrichedLead.phone}</a>
+                      <a href={`tel:${enrichedLead.phone}`} className="text-emerald-600 text-sm font-mono hover:underline block">{enrichedLead.phone}</a>
                     )}
                   </div>
                 )}
@@ -571,14 +571,14 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                 {/* Emails */}
                 {(enrichedLead.emails?.length > 0 || enrichedLead.email) && (
                   <div>
-                    <label className="text-[10px] text-slate-500 uppercase">Email</label>
+                    <label className="text-[10px] text-gray-400 uppercase">Email</label>
                     {enrichedLead.emails?.length > 0 ? enrichedLead.emails.map((e, i) => (
                       <div key={i} className="flex items-center justify-between py-1">
-                        <a href={`mailto:${e.value}`} className="text-blue-400 text-sm hover:underline">{e.value}</a>
-                        <span className="text-[10px] text-slate-600">{e.source}</span>
+                        <a href={`mailto:${e.value}`} className="text-blue-600 text-sm hover:underline">{e.value}</a>
+                        <span className="text-[10px] text-gray-400">{e.source}</span>
                       </div>
                     )) : enrichedLead.email && (
-                      <a href={`mailto:${enrichedLead.email}`} className="text-blue-400 text-sm hover:underline block">{enrichedLead.email}</a>
+                      <a href={`mailto:${enrichedLead.email}`} className="text-blue-600 text-sm hover:underline block">{enrichedLead.email}</a>
                     )}
                   </div>
                 )}
@@ -586,58 +586,58 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                 {/* Website */}
                 {enrichedLead.website && (
                   <div>
-                    <label className="text-[10px] text-slate-500 uppercase">Website</label>
-                    <a href={enrichedLead.website.startsWith('http') ? enrichedLead.website : `https://${enrichedLead.website}`} target="_blank" rel="noopener" className="text-purple-400 text-sm hover:underline block truncate">{enrichedLead.website}</a>
+                    <label className="text-[10px] text-gray-400 uppercase">Website</label>
+                    <a href={enrichedLead.website.startsWith('http') ? enrichedLead.website : `https://${enrichedLead.website}`} target="_blank" rel="noopener" className="text-purple-600 text-sm hover:underline block truncate">{enrichedLead.website}</a>
                   </div>
                 )}
 
                 {/* LinkedIn */}
                 {enrichedLead.linkedin_url && (
                   <div>
-                    <label className="text-[10px] text-slate-500 uppercase">LinkedIn</label>
-                    <a href={enrichedLead.linkedin_url} target="_blank" rel="noopener" className="text-blue-400 text-sm hover:underline block">{enrichedLead.linkedin_url}</a>
+                    <label className="text-[10px] text-gray-400 uppercase">LinkedIn</label>
+                    <a href={enrichedLead.linkedin_url} target="_blank" rel="noopener" className="text-blue-600 text-sm hover:underline block">{enrichedLead.linkedin_url}</a>
                   </div>
                 )}
 
                 {!enrichedLead.phone && !enrichedLead.email && !enrichedLead.website && (
-                  <p className="text-slate-600 text-sm italic">No contact info yet. Click "Find Contacts" above.</p>
+                  <p className="text-gray-400 text-sm italic">No contact info yet. Click "Find Contacts" above.</p>
                 )}
               </div>
 
               {/* Company Research Results */}
               {companyResearch && (
-                <div className="bg-emerald-900/20 border border-emerald-500/30 rounded-xl p-4 space-y-2">
-                  <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Company Research</h3>
-                  {companyResearch.owner_names?.length > 0 && <div><span className="text-xs text-slate-500">Owners: </span><span className="text-sm text-slate-300">{companyResearch.owner_names.join(', ')}</span></div>}
-                  {companyResearch.year_established && <div><span className="text-xs text-slate-500">Est: </span><span className="text-sm text-slate-300">{companyResearch.year_established}</span></div>}
-                  {companyResearch.service_areas?.length > 0 && <div><span className="text-xs text-slate-500">Areas: </span><span className="text-sm text-slate-300">{companyResearch.service_areas.join(', ')}</span></div>}
-                  {companyResearch.description && <p className="text-sm text-slate-400 leading-relaxed">{companyResearch.description}</p>}
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-2">
+                  <h3 className="text-xs font-bold text-emerald-600 uppercase tracking-wider">Company Research</h3>
+                  {companyResearch.owner_names?.length > 0 && <div><span className="text-xs text-gray-500">Owners: </span><span className="text-sm text-gray-700">{companyResearch.owner_names.join(', ')}</span></div>}
+                  {companyResearch.year_established && <div><span className="text-xs text-gray-500">Est: </span><span className="text-sm text-gray-700">{companyResearch.year_established}</span></div>}
+                  {companyResearch.service_areas?.length > 0 && <div><span className="text-xs text-gray-500">Areas: </span><span className="text-sm text-gray-700">{companyResearch.service_areas.join(', ')}</span></div>}
+                  {companyResearch.description && <p className="text-sm text-gray-500 leading-relaxed">{companyResearch.description}</p>}
                 </div>
               )}
 
               {/* NY DOS Info */}
               {dosInfo && (
-                <div className="bg-slate-800/30 rounded-xl p-4 space-y-2">
-                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">NY DOS Corporation</h3>
+                <div className="bg-gray-50 rounded-xl p-4 space-y-2">
+                  <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider">NY DOS Corporation</h3>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    {dosInfo.entity_name && <div><span className="text-xs text-slate-500 block">Entity</span><span className="text-slate-300">{dosInfo.entity_name}</span></div>}
-                    {dosInfo.entity_type && <div><span className="text-xs text-slate-500 block">Type</span><span className="text-slate-300">{dosInfo.entity_type}</span></div>}
-                    {dosInfo.formation_date && <div><span className="text-xs text-slate-500 block">Formed</span><span className="text-slate-300">{dosInfo.formation_date}</span></div>}
-                    {dosInfo.dos_id && <div><span className="text-xs text-slate-500 block">DOS ID</span><span className="text-slate-300">{dosInfo.dos_id}</span></div>}
-                    {dosInfo.registered_agent && <div className="col-span-2"><span className="text-xs text-slate-500 block">Agent</span><span className="text-emerald-400">{dosInfo.registered_agent}</span></div>}
+                    {dosInfo.entity_name && <div><span className="text-xs text-gray-400 block">Entity</span><span className="text-gray-700">{dosInfo.entity_name}</span></div>}
+                    {dosInfo.entity_type && <div><span className="text-xs text-gray-400 block">Type</span><span className="text-gray-700">{dosInfo.entity_type}</span></div>}
+                    {dosInfo.formation_date && <div><span className="text-xs text-gray-400 block">Formed</span><span className="text-gray-700">{dosInfo.formation_date}</span></div>}
+                    {dosInfo.dos_id && <div><span className="text-xs text-gray-400 block">DOS ID</span><span className="text-gray-700">{dosInfo.dos_id}</span></div>}
+                    {dosInfo.registered_agent && <div className="col-span-2"><span className="text-xs text-gray-400 block">Agent</span><span className="text-emerald-600">{dosInfo.registered_agent}</span></div>}
                   </div>
                 </div>
               )}
 
               {/* HPD Registered Contacts */}
               {uniqueContacts.length > 0 && (
-                <div className="bg-slate-800/30 rounded-xl p-4">
-                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">HPD Registered Contacts</h3>
+                <div className="bg-gray-50 rounded-xl p-4">
+                  <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">HPD Registered Contacts</h3>
                   <div className="space-y-1.5">
                     {uniqueContacts.map((contact: any, i: number) => (
                       <div key={i} className="flex items-center justify-between py-1">
-                        <span className="text-sm text-slate-300">{contact.name}</span>
-                        <span className="text-[10px] text-slate-600">{(contact.type || '').replace(/([A-Z])/g, ' $1').trim()}</span>
+                        <span className="text-sm text-gray-700">{contact.name}</span>
+                        <span className="text-[10px] text-gray-400">{(contact.type || '').replace(/([A-Z])/g, ' $1').trim()}</span>
                       </div>
                     ))}
                   </div>
@@ -652,11 +652,11 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               {/* Priority & Follow-Up */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs text-slate-500 uppercase tracking-wider block mb-2">Priority</label>
+                  <label className="text-xs text-gray-400 uppercase tracking-wider block mb-2">Priority</label>
                   <div className="flex gap-1">
                     {[1, 2, 3, 4, 5].map(star => (
                       <button key={star} onClick={() => handlePriorityChange(star)} className="transition-transform hover:scale-110">
-                        <svg className={`w-7 h-7 ${star <= priorityRank ? 'text-amber-400' : 'text-slate-700'}`} fill="currentColor" viewBox="0 0 20 20">
+                        <svg className={`w-7 h-7 ${star <= priorityRank ? 'text-amber-500' : 'text-gray-300'}`} fill="currentColor" viewBox="0 0 20 20">
                           <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
                         </svg>
                       </button>
@@ -664,13 +664,13 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                   </div>
                 </div>
                 <div>
-                  <label className="text-xs text-slate-500 uppercase tracking-wider block mb-2">Next Follow-Up</label>
+                  <label className="text-xs text-gray-400 uppercase tracking-wider block mb-2">Next Follow-Up</label>
                   <div className="relative">
                     <input type="date" value={nextFollowUp} onChange={e => handleFollowUpChange(e.target.value)}
-                      className={`w-full px-3 py-2 bg-slate-800 border rounded-lg text-sm font-mono ${
-                        nextFollowUp && new Date(nextFollowUp) < new Date(new Date().toDateString()) ? 'border-rose-500/50 text-rose-400' :
-                        nextFollowUp && new Date(nextFollowUp).toDateString() === new Date().toDateString() ? 'border-amber-500/50 text-amber-400' :
-                        'border-slate-700 text-slate-300'
+                      className={`w-full px-3 py-2 bg-white border rounded-lg text-sm font-mono ${
+                        nextFollowUp && new Date(nextFollowUp) < new Date(new Date().toDateString()) ? 'border-rose-300 text-rose-600' :
+                        nextFollowUp && new Date(nextFollowUp).toDateString() === new Date().toDateString() ? 'border-amber-300 text-amber-600' :
+                        'border-gray-300 text-gray-900'
                       }`} />
                     {nextFollowUp && new Date(nextFollowUp) < new Date(new Date().toDateString()) && (
                       <span className="absolute -top-2 right-2 px-1.5 py-0.5 bg-rose-600 text-[9px] font-bold text-white rounded">OVERDUE</span>
@@ -681,13 +681,13 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
 
               {/* Outreach Status */}
               <div>
-                <label className="text-xs text-slate-500 uppercase tracking-wider block mb-2">Outreach Status</label>
+                <label className="text-xs text-gray-400 uppercase tracking-wider block mb-2">Outreach Status</label>
                 <div className="flex flex-wrap gap-2">
                   {OUTREACH_STATUSES.map(status => (
                     <button key={status.value} onClick={() => handleSaveStatus(status.value)} disabled={isSaving}
                       className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                        outreachStatus === status.value ? `${status.color} ring-2 ring-offset-2 ring-offset-slate-900 ring-white/20` :
-                        'bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300'
+                        outreachStatus === status.value ? `${status.color} ring-2 ring-offset-2 ring-offset-white ring-gray-300` :
+                        'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-700'
                       }`}>
                       {status.label}
                     </button>
@@ -696,27 +696,27 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               </div>
 
               {/* Outreach Log */}
-              <div className="bg-slate-800/30 rounded-xl p-4">
+              <div className="bg-gray-50 rounded-xl p-4">
                 <div className="flex justify-between items-center mb-3">
-                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Outreach Log</h3>
+                  <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Outreach Log</h3>
                   <button onClick={() => setShowAddOutreach(!showAddOutreach)} className="px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-500 transition-colors">
                     + Log Attempt
                   </button>
                 </div>
                 {showAddOutreach && (
-                  <div className="bg-slate-900/50 rounded-lg p-3 mb-3 space-y-2">
+                  <div className="bg-white shadow-sm rounded-lg p-3 mb-3 space-y-2">
                     <div className="grid grid-cols-2 gap-2">
                       <select value={newOutreach.method} onChange={e => setNewOutreach({...newOutreach, method: e.target.value})}
-                        className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300">
+                        className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900">
                         {OUTREACH_METHODS.map(m => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
                       </select>
                       <select value={newOutreach.outcome} onChange={e => setNewOutreach({...newOutreach, outcome: e.target.value})}
-                        className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300">
+                        className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900">
                         {OUTREACH_OUTCOMES.map(o => <option key={o} value={o}>{o.replace(/_/g, ' ')}</option>)}
                       </select>
                     </div>
                     <textarea value={newOutreach.notes} onChange={e => setNewOutreach({...newOutreach, notes: e.target.value})}
-                      placeholder="Notes..." rows={2} className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 resize-none" />
+                      placeholder="Notes..." rows={2} className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 resize-none" />
                     <button onClick={handleAddOutreachAttempt} disabled={isSaving}
                       className="px-4 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-500 disabled:opacity-50">
                       {isSaving ? 'Saving...' : 'Save'}
@@ -725,30 +725,30 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                 )}
                 <div className="space-y-2 max-h-64 overflow-y-auto">
                   {outreachAttempts.length > 0 ? outreachAttempts.map((attempt, i) => (
-                    <div key={i} className="p-2 bg-slate-900/50 rounded-lg">
+                    <div key={i} className="p-2 bg-white shadow-sm rounded-lg">
                       <div className="flex items-center gap-2">
-                        <span className="px-1.5 py-0.5 bg-blue-900/30 text-blue-400 text-[10px] rounded">{attempt.method}</span>
-                        <span className="px-1.5 py-0.5 bg-slate-800 text-slate-400 text-[10px] rounded">{attempt.outcome?.replace(/_/g, ' ')}</span>
-                        <span className="text-[10px] text-slate-600 ml-auto">{new Date(attempt.timestamp).toLocaleDateString()}</span>
+                        <span className="px-1.5 py-0.5 bg-blue-50 text-blue-600 text-[10px] rounded">{attempt.method}</span>
+                        <span className="px-1.5 py-0.5 bg-gray-100 text-gray-500 text-[10px] rounded">{attempt.outcome?.replace(/_/g, ' ')}</span>
+                        <span className="text-[10px] text-gray-400 ml-auto">{new Date(attempt.timestamp).toLocaleDateString()}</span>
                       </div>
-                      {attempt.notes && <p className="text-xs text-slate-500 mt-1">{attempt.notes}</p>}
+                      {attempt.notes && <p className="text-xs text-gray-500 mt-1">{attempt.notes}</p>}
                     </div>
                   )) : (
-                    <p className="text-slate-600 text-sm italic">No outreach attempts logged yet</p>
+                    <p className="text-gray-400 text-sm italic">No outreach attempts logged yet</p>
                   )}
                 </div>
               </div>
 
               {/* Notes */}
-              <div className="bg-slate-800/30 rounded-xl p-4">
+              <div className="bg-gray-50 rounded-xl p-4">
                 <div className="flex justify-between items-center mb-2">
-                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Notes</h3>
+                  <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Notes</h3>
                   <button onClick={handleSaveNotes} disabled={isSaving} className="px-3 py-1 bg-emerald-600 text-white text-xs font-medium rounded-lg hover:bg-emerald-500 disabled:opacity-50">
                     {isSaving ? 'Saving...' : 'Save'}
                   </button>
                 </div>
                 <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={4} placeholder="Add notes about this lead..."
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-300 resize-none" />
+                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-900 resize-none" />
               </div>
             </>
           )}
@@ -758,11 +758,11 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
             <>
               {/* Search */}
               <input type="text" value={buildingSearch} onChange={e => setBuildingSearch(e.target.value)} placeholder="Search buildings..."
-                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-300" />
+                className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-900" />
               
               {/* Interactive Map (OpenStreetMap) */}
               {enrichedLead.buildings && enrichedLead.buildings.length > 0 && (
-                <Suspense fallback={<div className="h-[250px] bg-slate-800 rounded-lg animate-pulse" />}>
+                <Suspense fallback={<div className="h-[250px] bg-gray-100 rounded-lg animate-pulse" />}>
                   <PortfolioMap buildings={enrichedLead.buildings} boro={enrichedLead.boro} boros={enrichedLead.boros} />
                 </Suspense>
               )}
@@ -772,13 +772,13 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                 {(enrichedLead.buildings || [])
                   .filter((b: string) => !buildingSearch || String(b || '').toLowerCase().includes(buildingSearch.toLowerCase()))
                   .map((building: string, i: number) => (
-                    <div key={i} className="flex items-center justify-between p-2 bg-slate-800/30 rounded-lg hover:bg-slate-800/50">
-                      <span className="text-sm text-slate-300">{building}</span>
+                    <div key={i} className="flex items-center justify-between p-2 bg-white hover:bg-gray-50 border-b border-gray-100 rounded-lg">
+                      <span className="text-sm text-gray-700">{building}</span>
                       <a href={`https://www.google.com/maps/search/${encodeURIComponent(building + ', New York, NY')}`} target="_blank" rel="noopener"
-                        className="text-[10px] text-blue-400 hover:underline">Map</a>
+                        className="text-[10px] text-blue-600 hover:underline">Map</a>
                     </div>
                   ))}
-                {(!enrichedLead.buildings || enrichedLead.buildings.length === 0) && <p className="text-slate-600 text-sm italic">No buildings data available</p>}
+                {(!enrichedLead.buildings || enrichedLead.buildings.length === 0) && <p className="text-gray-400 text-sm italic">No buildings data available</p>}
               </div>
             </>
           )}
@@ -797,37 +797,37 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               {ddReport && (
                 <div className="space-y-4">
                   {/* Key Risks Summary */}
-                  <div className="bg-gradient-to-r from-rose-900/20 to-amber-900/20 border border-rose-500/20 rounded-xl p-4">
-                    <h3 className="text-xs font-bold text-rose-400 uppercase tracking-wider mb-2">Key Risks</h3>
+                  <div className="bg-rose-50 border border-rose-200 rounded-xl p-4">
+                    <h3 className="text-xs font-bold text-rose-600 uppercase tracking-wider mb-2">Key Risks</h3>
                     <div className="space-y-1.5 text-sm">
                       {enrichedLead.violations_per_unit > 1.0 && (
                         <div className="flex items-center gap-2">
                           <span className="w-2 h-2 rounded-full bg-rose-500" />
-                          <span className="text-slate-300">High violation density ({enrichedLead.violations_per_unit.toFixed(2)}/unit) — may indicate deferred maintenance</span>
+                          <span className="text-gray-700">High violation density ({enrichedLead.violations_per_unit.toFixed(2)}/unit) — may indicate deferred maintenance</span>
                         </div>
                       )}
                       {enrichedLead.violation_class_c > 10 && (
                         <div className="flex items-center gap-2">
                           <span className="w-2 h-2 rounded-full bg-rose-500" />
-                          <span className="text-slate-300">{enrichedLead.violation_class_c} Class C (immediately hazardous) violations</span>
+                          <span className="text-gray-700">{enrichedLead.violation_class_c} Class C (immediately hazardous) violations</span>
                         </div>
                       )}
                       {!enrichedLead.phone && !enrichedLead.email && (
                         <div className="flex items-center gap-2">
                           <span className="w-2 h-2 rounded-full bg-amber-500" />
-                          <span className="text-slate-300">No direct contact info found — may be difficult to reach</span>
+                          <span className="text-gray-700">No direct contact info found — may be difficult to reach</span>
                         </div>
                       )}
                       {enrichedLead.portfolio_size <= 5 && (
                         <div className="flex items-center gap-2">
                           <span className="w-2 h-2 rounded-full bg-amber-500" />
-                          <span className="text-slate-300">Small portfolio ({enrichedLead.portfolio_size} buildings) — lower revenue potential</span>
+                          <span className="text-gray-700">Small portfolio ({enrichedLead.portfolio_size} buildings) — lower revenue potential</span>
                         </div>
                       )}
                       {enrichedLead.violations_per_unit <= 1.0 && enrichedLead.violation_class_c <= 10 && (enrichedLead.phone || enrichedLead.email) && enrichedLead.portfolio_size > 5 && (
                         <div className="flex items-center gap-2">
                           <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                          <span className="text-slate-300">No major red flags identified</span>
+                          <span className="text-gray-700">No major red flags identified</span>
                         </div>
                       )}
                     </div>
@@ -835,7 +835,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
 
                   <div className="flex justify-end gap-2">
                     <button onClick={() => { navigator.clipboard.writeText(ddReport.report_markdown); toast.success('Copied to clipboard'); }}
-                      className="px-3 py-1 bg-slate-700 text-slate-300 text-xs rounded-lg hover:bg-slate-600">Copy Markdown</button>
+                      className="px-3 py-1 bg-gray-100 text-gray-700 text-xs rounded-lg hover:bg-gray-200">Copy Markdown</button>
                     <button onClick={() => {
                       const printWindow = window.open('', '_blank');
                       if (printWindow) {
@@ -873,36 +873,36 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                       Print / PDF
                     </button>
                   </div>
-                  <div className="prose prose-invert prose-sm max-w-none">
+                  <div className="prose prose-sm max-w-none">
                     {ddReport.report_markdown.split('\n').map((line, i) => {
-                      if (line.startsWith('# ')) return <h1 key={i} className="text-xl font-bold text-white mt-4 mb-2">{line.slice(2)}</h1>;
-                      if (line.startsWith('## ')) return <h2 key={i} className="text-lg font-bold text-blue-400 mt-3 mb-1">{line.slice(3)}</h2>;
-                      if (line.startsWith('### ')) return <h3 key={i} className="text-sm font-bold text-slate-300 mt-3 mb-1">{line.slice(4)}</h3>;
-                      if (line.startsWith('- ')) return <li key={i} className="text-slate-300 text-sm ml-4">{line.slice(2)}</li>;
+                      if (line.startsWith('# ')) return <h1 key={i} className="text-xl font-bold text-gray-900 mt-4 mb-2">{line.slice(2)}</h1>;
+                      if (line.startsWith('## ')) return <h2 key={i} className="text-lg font-bold text-blue-600 mt-3 mb-1">{line.slice(3)}</h2>;
+                      if (line.startsWith('### ')) return <h3 key={i} className="text-sm font-bold text-gray-700 mt-3 mb-1">{line.slice(4)}</h3>;
+                      if (line.startsWith('- ')) return <li key={i} className="text-gray-700 text-sm ml-4">{line.slice(2)}</li>;
                       if (line.trim() === '') return <br key={i} />;
-                      return <p key={i} className="text-slate-400 text-sm leading-relaxed">{line}</p>;
+                      return <p key={i} className="text-gray-500 text-sm leading-relaxed">{line}</p>;
                     })}
                   </div>
                   {ddReport.comparables?.length > 0 && (
-                    <div className="border-t border-slate-800 pt-3">
-                      <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Comparables</h3>
+                    <div className="border-t border-gray-200 pt-3">
+                      <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Comparables</h3>
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
-                          <thead><tr className="text-slate-500 text-xs uppercase">
+                          <thead><tr className="text-gray-500 text-xs uppercase">
                             <th className="text-left py-1 px-2">Name</th><th className="text-right py-1 px-2">Score</th><th className="text-right py-1 px-2">Buildings</th><th className="text-right py-1 px-2">Units</th><th className="text-right py-1 px-2">Revenue</th>
                           </tr></thead>
-                          <tbody className="divide-y divide-slate-800">
+                          <tbody className="divide-y divide-gray-200">
                             {ddReport.comparables.map((comp: any, i: number) => (
-                              <tr key={i} className="text-slate-300 hover:bg-slate-800/30">
+                              <tr key={i} className="text-gray-700 hover:bg-gray-50">
                                 <td className="py-1.5 px-2">{comp.name || comp.lead_name}</td>
                                 <td className="py-1.5 px-2 text-right font-mono">
-                                  <span className={comp.score >= 60 ? 'text-emerald-400' : comp.score >= 40 ? 'text-amber-400' : 'text-slate-400'}>
+                                  <span className={comp.score >= 60 ? 'text-emerald-600' : comp.score >= 40 ? 'text-amber-600' : 'text-gray-500'}>
                                     {comp.score?.toFixed(1)}
                                   </span>
                                 </td>
                                 <td className="py-1.5 px-2 text-right font-mono">{comp.portfolio_size || comp.buildings}</td>
-                                <td className="py-1.5 px-2 text-right font-mono text-blue-400">{comp.total_units?.toLocaleString() || '—'}</td>
-                                <td className="py-1.5 px-2 text-right font-mono text-emerald-400">{comp.estimated_annual_revenue ? formatCurrency(comp.estimated_annual_revenue) : '—'}</td>
+                                <td className="py-1.5 px-2 text-right font-mono text-blue-600">{comp.total_units?.toLocaleString() || '—'}</td>
+                                <td className="py-1.5 px-2 text-right font-mono text-emerald-600">{comp.estimated_annual_revenue ? formatCurrency(comp.estimated_annual_revenue) : '—'}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -915,15 +915,15 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
 
               {!ddReport && !isLoadingDD && (
                 <div className="text-center py-10">
-                  <p className="text-slate-600 text-sm">Generate a full due diligence report for this lead — includes portfolio analysis, financials, violation history, contacts, and comparison with similar companies.</p>
+                  <p className="text-gray-400 text-sm">Generate a full due diligence report for this lead — includes portfolio analysis, financials, violation history, contacts, and comparison with similar companies.</p>
                 </div>
               )}
 
               {isLoadingDD && !ddReport && (
                 <div className="flex flex-col items-center justify-center py-16">
                   <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
-                  <p className="text-slate-400 text-sm">Generating report...</p>
-                  <p className="text-slate-600 text-xs mt-1">This may take 15-30 seconds</p>
+                  <p className="text-gray-500 text-sm">Generating report...</p>
+                  <p className="text-gray-400 text-xs mt-1">This may take 15-30 seconds</p>
                 </div>
               )}
             </>

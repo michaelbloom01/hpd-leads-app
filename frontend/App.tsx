@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Toaster, toast } from 'react-hot-toast';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
@@ -7,7 +7,8 @@ import Dashboard from './components/Dashboard';
 import LeadTable from './components/LeadTable';
 import LeadDetail from './components/LeadDetail';
 import ErrorBoundary from './components/ErrorBoundary';
-import { ApiLead, refreshPipeline } from './services/api';
+import AgentPanel from './components/AgentPanel';
+import { ApiLead, refreshPipeline, fetchLead } from './services/api';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'leads'>('dashboard');
@@ -15,6 +16,19 @@ const App: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isAgentOpen, setIsAgentOpen] = useState(false);
+
+  // Cmd/Ctrl + K shortcut to toggle agent panel
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsAgentOpen(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const handleRefresh = useCallback(async () => {
     const confirmed = window.confirm(
@@ -24,7 +38,7 @@ const App: React.FC = () => {
     
     setIsRefreshing(true);
     try {
-      await refreshPipeline(true); // Always do full refresh
+      await refreshPipeline(true);
       setRefreshKey(k => k + 1);
       toast.success('Refresh started in background. Check the dashboard for progress.');
     } catch (err) {
@@ -37,27 +51,28 @@ const App: React.FC = () => {
 
   return (
     <ErrorBoundary>
-    <div className="flex h-screen bg-slate-950 text-slate-200 overflow-hidden font-sans">
+    <div className="flex h-screen bg-white text-gray-800 overflow-hidden font-sans">
       {/* Toast Notifications */}
       <Toaster 
         position="top-right"
         toastOptions={{
           duration: 4000,
           style: {
-            background: '#1e293b',
-            color: '#f1f5f9',
-            border: '1px solid rgba(255,255,255,0.1)',
+            background: '#ffffff',
+            color: '#111827',
+            border: '1px solid #e5e7eb',
+            boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)',
           },
           success: {
             iconTheme: {
-              primary: '#10b981',
-              secondary: '#f1f5f9',
+              primary: '#059669',
+              secondary: '#ffffff',
             },
           },
           error: {
             iconTheme: {
               primary: '#ef4444',
-              secondary: '#f1f5f9',
+              secondary: '#ffffff',
             },
           },
         }}
@@ -65,9 +80,9 @@ const App: React.FC = () => {
       {/* Mobile Menu Button */}
       <button
         onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-        className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-slate-800 rounded-lg border border-white/10"
+        className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-white rounded-lg border border-gray-200 shadow-sm"
       >
-        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           {isMobileMenuOpen ? (
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/>
           ) : (
@@ -79,7 +94,7 @@ const App: React.FC = () => {
       {/* Mobile Menu Overlay */}
       {isMobileMenuOpen && (
         <div 
-          className="lg:hidden fixed inset-0 bg-black/50 z-40"
+          className="lg:hidden fixed inset-0 bg-black/20 z-40"
           onClick={() => setIsMobileMenuOpen(false)}
         />
       )}
@@ -92,29 +107,30 @@ const App: React.FC = () => {
           setIsMobileMenuOpen(false);
         }}
         isMobileOpen={isMobileMenuOpen}
+        onToggleAgent={() => setIsAgentOpen(prev => !prev)}
       />
 
       {/* Primary Application Interface */}
       <div className="flex-1 flex flex-col min-w-0">
         <Header />
         
-        <main className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-12">
-          <div className="max-w-[1600px] mx-auto space-y-12">
+        <main className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-12 bg-gray-50">
+          <div className="max-w-[1600px] mx-auto space-y-8">
             <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
-              <div className="space-y-2">
-                <h1 className="text-4xl font-black text-white tracking-tighter uppercase">
+              <div className="space-y-1">
+                <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">
                   {activeTab === 'dashboard' ? 'Lead Dashboard' : 'All Leads'}
                 </h1>
-                <p className="text-slate-500 text-sm max-w-xl leading-relaxed">
+                <p className="text-gray-500 text-sm max-w-xl leading-relaxed">
                   {activeTab === 'dashboard' 
-                    ? 'NYC property management companies ranked by portfolio size and acquisition potential. Scores reflect building count, unit mix, and data completeness.' 
-                    : 'Browse, filter, and take action on property management leads. Click any row to see full details.'}
+                    ? 'NYC property management companies ranked by portfolio size and acquisition potential.' 
+                    : 'Browse, filter, and take action on property management leads.'}
                 </p>
               </div>
               <button 
                 onClick={handleRefresh}
                 disabled={isRefreshing}
-                className="flex items-center gap-3 px-6 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-bold text-[11px] uppercase tracking-widest transition-all shadow-xl disabled:opacity-50 disabled:cursor-not-allowed border border-white/5"
+                className="flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-gray-50 text-gray-700 rounded-lg font-medium text-sm transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed border border-gray-200"
               >
                 <svg className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                 {isRefreshing ? 'Starting...' : 'Refresh Data'}
@@ -132,7 +148,18 @@ const App: React.FC = () => {
         </main>
       </div>
 
-      {/* Lead Detail Modal */}
+      {/* Agent Panel (overlay, z-40) */}
+      <AgentPanel
+        isOpen={isAgentOpen}
+        onClose={() => setIsAgentOpen(false)}
+        onSelectLead={(leadId) => {
+          fetchLead(leadId).then(lead => {
+            if (lead) setSelectedLead(lead);
+          });
+        }}
+      />
+
+      {/* Lead Detail Modal (z-50) */}
       {selectedLead && (
         <LeadDetail 
           lead={selectedLead} 
