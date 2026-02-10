@@ -232,8 +232,8 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               </div>
               {/* Revenue */}
               {enrichedLead.estimated_annual_revenue > 0 && (
-                <div className="text-lg font-bold font-mono text-emerald-400">
-                  {formatCurrency(enrichedLead.estimated_annual_revenue)}<span className="text-xs text-emerald-600">/yr</span>
+                <div className="text-lg font-bold font-mono text-emerald-400" title="Est. mgmt fee revenue = Units × Avg Rent × 5% fee">
+                  {formatCurrency(enrichedLead.estimated_annual_revenue)}<span className="text-xs text-emerald-600">/yr est.</span>
                 </div>
               )}
               <button onClick={onClose} className="p-2 text-slate-500 hover:text-white transition-colors">
@@ -307,11 +307,21 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               {/* Revenue & Violations */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="bg-gradient-to-br from-emerald-900/20 to-emerald-950/20 border border-emerald-500/20 rounded-xl p-4">
-                  <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-2">Est. Revenue</h3>
+                  <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-2">Est. Mgmt Fee Revenue</h3>
                   {enrichedLead.estimated_annual_revenue > 0 ? (
                     <div>
                       <div className="text-2xl font-bold font-mono text-emerald-400">{formatCurrency(enrichedLead.estimated_annual_revenue)}<span className="text-sm text-emerald-600">/yr</span></div>
                       <div className="text-sm font-mono text-slate-400 mt-1">{formatCurrency(enrichedLead.estimated_monthly_revenue)}<span className="text-xs text-slate-600">/mo</span></div>
+                      <div className="mt-3 pt-3 border-t border-emerald-500/10 space-y-1">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">How this is calculated</p>
+                        <p className="text-xs text-slate-500">Units × Avg Rent × <span className="text-emerald-500 font-mono">5%</span> mgmt fee</p>
+                        <div className="text-[10px] text-slate-600 space-y-0.5 mt-1">
+                          <p>• Avg rents sourced from StreetEasy &amp; Census ACS</p>
+                          <p>• Adjusted by borough ({enrichedLead.boro || 'NYC avg'}) &amp; building type</p>
+                          <p>• Condo/co-op fees reduced to 60% of rental rate</p>
+                          <p>• {enrichedLead.total_units?.toLocaleString() || '—'} total units across {enrichedLead.portfolio_size || '—'} buildings</p>
+                        </div>
+                      </div>
                     </div>
                   ) : (
                     <div className="text-slate-600 text-sm">Pending computation</div>

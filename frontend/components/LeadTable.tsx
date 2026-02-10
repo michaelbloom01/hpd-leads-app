@@ -433,8 +433,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                 <th 
                   className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right"
                   onClick={() => handleSort('estimated_annual_revenue')}
+                  title="Est. annual management fee revenue = Units × Avg Rent (by borough &amp; building type) × 5% mgmt fee rate"
                 >
-                  Revenue <SortIcon field="estimated_annual_revenue" />
+                  Revenue <span className="inline-block w-3 h-3 rounded-full border border-slate-600 text-[8px] text-slate-500 text-center leading-[11px] cursor-help align-middle" title="Units × Avg Rent × 5% mgmt fee">?</span> <SortIcon field="estimated_annual_revenue" />
                 </th>
                 <th 
                   className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right"

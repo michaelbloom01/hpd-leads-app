@@ -211,7 +211,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
           <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Deal Pipeline</h3>
           <span className="text-xs text-slate-600">
             {leadsInPipeline} active {leadsInPipeline === 1 ? 'deal' : 'deals'}
-            {pipelineRevenue > 0 && ` • ${formatCurrency(pipelineRevenue)}/yr est. revenue`}
+            {pipelineRevenue > 0 && ` • ${formatCurrency(pipelineRevenue)}/yr est. mgmt fee`}
           </span>
         </div>
         <div className="flex gap-1">
@@ -236,10 +236,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
           <p className="text-2xl font-mono font-bold text-white">{highValueCount.toLocaleString()}</p>
           <p className="text-[10px] text-slate-600 mt-0.5">10+ buildings</p>
         </div>
-        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Est. Revenue Pool</p>
+        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4 group relative">
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1">
+            Est. Revenue Pool
+            <span className="inline-block w-3 h-3 rounded-full border border-slate-600 text-[8px] text-slate-500 text-center leading-[11px] cursor-help" title="Units × Avg Rent (by borough &amp; building type) × 5% mgmt fee">?</span>
+          </p>
           <p className="text-2xl font-mono font-bold text-emerald-400">{totalTargetRevenue > 0 ? formatCurrency(totalTargetRevenue) : '—'}</p>
-          <p className="text-[10px] text-slate-600 mt-0.5">Top 100 leads</p>
+          <p className="text-[10px] text-slate-600 mt-0.5">Top 100 leads • 5% mgmt fee</p>
         </div>
         <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4">
           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Follow-Ups Due</p>
@@ -383,7 +386,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                 <th className="text-left py-2 px-3">Company</th>
                 <th className="text-right py-2 px-3">Buildings</th>
                 <th className="text-right py-2 px-3">Units</th>
-                <th className="text-right py-2 px-3">Est. Revenue</th>
+                <th className="text-right py-2 px-3" title="Units × Avg Rent × 5% mgmt fee">Est. Mgmt Fee</th>
                 <th className="text-left py-2 px-3">Boroughs</th>
                 <th className="text-right py-2 px-3">Score</th>
               </tr>
