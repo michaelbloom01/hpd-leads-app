@@ -4,7 +4,7 @@
  */
 
 // API base URL - uses environment variable in production, localhost in dev
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000').trim().replace(/\\r\\n$/, '').replace(/[\r\n]+$/, '');
 
 /**
  * Score breakdown showing component scores (V2)
