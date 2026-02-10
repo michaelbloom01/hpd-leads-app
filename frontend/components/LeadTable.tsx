@@ -39,7 +39,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterBoroughs, setFilterBoroughs] = useState<string[]>([]);
   const [filterMinScore, setFilterMinScore] = useState<string>('');
+  const [filterMaxScore, setFilterMaxScore] = useState<string>('');
   const [filterMinPortfolio, setFilterMinPortfolio] = useState<string>('');
+  const [filterMaxPortfolio, setFilterMaxPortfolio] = useState<string>('');
   const [filterHasPhone, setFilterHasPhone] = useState<boolean | null>(null);
   const [filterHasEmail, setFilterHasEmail] = useState<boolean | null>(null);
   const [filterHasWebsite, setFilterHasWebsite] = useState<boolean | null>(null);
@@ -47,6 +49,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   const [filterOutreachStatus, setFilterOutreachStatus] = useState<string>('');
   const [filterPipelineStage, setFilterPipelineStage] = useState<string>('');
   const [filterMinUnits, setFilterMinUnits] = useState<string>('');
+  const [filterMaxUnits, setFilterMaxUnits] = useState<string>('');
+  const [filterMinUnitsPerBldg, setFilterMinUnitsPerBldg] = useState<string>('');
+  const [filterMaxUnitsPerBldg, setFilterMaxUnitsPerBldg] = useState<string>('');
+  const [filterBuildingTypes, setFilterBuildingTypes] = useState<string[]>([]);
   const [showMoreFilters, setShowMoreFilters] = useState(false);
   
   // Sorting
@@ -67,17 +73,32 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     );
   };
 
+  const toggleBuildingType = (type: string) => {
+    setFilterBuildingTypes(prev =>
+      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+    );
+  };
+
   // Count of secondary filters active (for badge)
   const activeSecondaryFilterCount = [
-    filterEntityType, filterOutreachStatus, filterMinScore, filterMinUnits,
+    filterEntityType, filterOutreachStatus,
+    filterMinScore, filterMaxScore,
+    filterMinUnits, filterMaxUnits,
+    filterMinUnitsPerBldg, filterMaxUnitsPerBldg,
     filterHasWebsite === true ? 'yes' : '',
+    filterBuildingTypes.length > 0 ? 'yes' : '',
   ].filter(Boolean).length;
 
   // Debounced values for server requests (prevents reload on every keystroke)
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [debouncedMinPortfolio, setDebouncedMinPortfolio] = useState('');
+  const [debouncedMaxPortfolio, setDebouncedMaxPortfolio] = useState('');
   const [debouncedMinScore, setDebouncedMinScore] = useState('');
+  const [debouncedMaxScore, setDebouncedMaxScore] = useState('');
   const [debouncedMinUnits, setDebouncedMinUnits] = useState('');
+  const [debouncedMaxUnits, setDebouncedMaxUnits] = useState('');
+  const [debouncedMinUnitsPerBldg, setDebouncedMinUnitsPerBldg] = useState('');
+  const [debouncedMaxUnitsPerBldg, setDebouncedMaxUnitsPerBldg] = useState('');
   
   // Debounce search input (300ms)
   useEffect(() => {
@@ -85,21 +106,15 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
-  // Debounce numeric filter inputs (500ms — longer to allow typing multi-digit numbers)
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedMinPortfolio(filterMinPortfolio), 500);
-    return () => clearTimeout(timer);
-  }, [filterMinPortfolio]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedMinScore(filterMinScore), 500);
-    return () => clearTimeout(timer);
-  }, [filterMinScore]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedMinUnits(filterMinUnits), 500);
-    return () => clearTimeout(timer);
-  }, [filterMinUnits]);
+  // Generic debounce hook for numeric filter inputs (500ms)
+  useEffect(() => { const t = setTimeout(() => setDebouncedMinPortfolio(filterMinPortfolio), 500); return () => clearTimeout(t); }, [filterMinPortfolio]);
+  useEffect(() => { const t = setTimeout(() => setDebouncedMaxPortfolio(filterMaxPortfolio), 500); return () => clearTimeout(t); }, [filterMaxPortfolio]);
+  useEffect(() => { const t = setTimeout(() => setDebouncedMinScore(filterMinScore), 500); return () => clearTimeout(t); }, [filterMinScore]);
+  useEffect(() => { const t = setTimeout(() => setDebouncedMaxScore(filterMaxScore), 500); return () => clearTimeout(t); }, [filterMaxScore]);
+  useEffect(() => { const t = setTimeout(() => setDebouncedMinUnits(filterMinUnits), 500); return () => clearTimeout(t); }, [filterMinUnits]);
+  useEffect(() => { const t = setTimeout(() => setDebouncedMaxUnits(filterMaxUnits), 500); return () => clearTimeout(t); }, [filterMaxUnits]);
+  useEffect(() => { const t = setTimeout(() => setDebouncedMinUnitsPerBldg(filterMinUnitsPerBldg), 500); return () => clearTimeout(t); }, [filterMinUnitsPerBldg]);
+  useEffect(() => { const t = setTimeout(() => setDebouncedMaxUnitsPerBldg(filterMaxUnitsPerBldg), 500); return () => clearTimeout(t); }, [filterMaxUnitsPerBldg]);
 
   // Fetch leads from server with current filters, sort, and search
   const loadLeads = useCallback(async (currentPage: number = 0) => {
@@ -115,9 +130,13 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       
       const minScore = parseFloat(debouncedMinScore);
       if (!isNaN(minScore) && minScore > 0) params.min_score = minScore;
+      const maxScore = parseFloat(debouncedMaxScore);
+      if (!isNaN(maxScore) && maxScore > 0) params.max_score = maxScore;
       
       const minPortfolio = parseInt(debouncedMinPortfolio);
       if (!isNaN(minPortfolio) && minPortfolio > 0) params.min_portfolio = minPortfolio;
+      const maxPortfolio = parseInt(debouncedMaxPortfolio);
+      if (!isNaN(maxPortfolio) && maxPortfolio > 0) params.max_portfolio = maxPortfolio;
       
       if (filterBoroughs.length > 0) params.boro = filterBoroughs.join(',');
       if (filterHasPhone !== null) params.has_phone = filterHasPhone;
@@ -130,6 +149,15 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       
       const minUnits = parseInt(debouncedMinUnits);
       if (!isNaN(minUnits) && minUnits > 0) params.min_units = minUnits;
+      const maxUnits = parseInt(debouncedMaxUnits);
+      if (!isNaN(maxUnits) && maxUnits > 0) params.max_units = maxUnits;
+
+      const minUpb = parseFloat(debouncedMinUnitsPerBldg);
+      if (!isNaN(minUpb) && minUpb > 0) params.min_units_per_bldg = minUpb;
+      const maxUpb = parseFloat(debouncedMaxUnitsPerBldg);
+      if (!isNaN(maxUpb) && maxUpb > 0) params.max_units_per_bldg = maxUpb;
+
+      if (filterBuildingTypes.length > 0) params.building_type_has = filterBuildingTypes.join(',');
       
       const response = await fetchLeads(params);
       setLeads(response.leads);
@@ -140,7 +168,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     } finally {
       setLoading(false);
     }
-  }, [debouncedMinScore, debouncedMinPortfolio, filterBoroughs, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterPipelineStage, debouncedMinUnits, pageSize, sortField, sortDir, debouncedSearch]);
+  }, [debouncedMinScore, debouncedMaxScore, debouncedMinPortfolio, debouncedMaxPortfolio, filterBoroughs, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterPipelineStage, debouncedMinUnits, debouncedMaxUnits, debouncedMinUnitsPerBldg, debouncedMaxUnitsPerBldg, filterBuildingTypes, pageSize, sortField, sortDir, debouncedSearch]);
 
   // R4: Health check on initial mount — show cold-start banner if backend is booting
   useEffect(() => {
@@ -238,7 +266,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     setSearchTerm('');
     setFilterBoroughs([]);
     setFilterMinScore('');
+    setFilterMaxScore('');
     setFilterMinPortfolio('');
+    setFilterMaxPortfolio('');
     setFilterHasPhone(null);
     setFilterHasEmail(null);
     setFilterHasWebsite(null);
@@ -246,6 +276,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     setFilterOutreachStatus('');
     setFilterPipelineStage('');
     setFilterMinUnits('');
+    setFilterMaxUnits('');
+    setFilterMinUnitsPerBldg('');
+    setFilterMaxUnitsPerBldg('');
+    setFilterBuildingTypes([]);
   };
 
   const exportToCsv = async () => {
@@ -255,14 +289,28 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     
     const minScore = parseFloat(filterMinScore);
     if (!isNaN(minScore) && minScore > 0) params.set('min_score', minScore.toString());
+    const maxScore = parseFloat(filterMaxScore);
+    if (!isNaN(maxScore) && maxScore > 0) params.set('max_score', maxScore.toString());
     
     const minPortfolio = parseInt(filterMinPortfolio);
     if (!isNaN(minPortfolio) && minPortfolio > 0) params.set('min_portfolio', minPortfolio.toString());
+    const maxPortfolio = parseInt(filterMaxPortfolio);
+    if (!isNaN(maxPortfolio) && maxPortfolio > 0) params.set('max_portfolio', maxPortfolio.toString());
     
     if (filterBoroughs.length > 0) params.set('boro', filterBoroughs.join(','));
     if (filterHasPhone === true) params.set('has_phone', 'true');
     if (filterHasEmail === true) params.set('has_email', 'true');
     if (filterEntityType) params.set('entity_type', filterEntityType);
+    
+    const minUnits = parseInt(filterMinUnits);
+    if (!isNaN(minUnits) && minUnits > 0) params.set('min_units', minUnits.toString());
+    const maxUnits = parseInt(filterMaxUnits);
+    if (!isNaN(maxUnits) && maxUnits > 0) params.set('max_units', maxUnits.toString());
+    const minUpb = parseFloat(filterMinUnitsPerBldg);
+    if (!isNaN(minUpb) && minUpb > 0) params.set('min_units_per_bldg', minUpb.toString());
+    const maxUpb = parseFloat(filterMaxUnitsPerBldg);
+    if (!isNaN(maxUpb) && maxUpb > 0) params.set('max_units_per_bldg', maxUpb.toString());
+    if (filterBuildingTypes.length > 0) params.set('building_type_has', filterBuildingTypes.join(','));
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/export/csv?${params.toString()}`);
@@ -384,10 +432,12 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
             <option value="due_diligence">Due Diligence</option>
             <option value="closed">Closed</option>
           </select>
-          {/* Min Buildings - promoted to primary row */}
-          <div className="flex items-center gap-1.5" title="Only show leads managing at least this many buildings">
-            <span className="text-[10px] text-slate-600 uppercase">Min Buildings</span>
-            <input type="number" className="w-16 px-2 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100" value={filterMinPortfolio} onChange={(e) => setFilterMinPortfolio(e.target.value)} />
+          {/* Buildings range */}
+          <div className="flex items-center gap-1" title="Filter by number of buildings in portfolio">
+            <span className="text-[10px] text-slate-600 uppercase font-bold">Bldgs</span>
+            <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMinPortfolio} onChange={(e) => setFilterMinPortfolio(e.target.value)} />
+            <span className="text-slate-600 text-xs">—</span>
+            <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMaxPortfolio} onChange={(e) => setFilterMaxPortfolio(e.target.value)} />
           </div>
           <div className="flex gap-1.5">
             <button onClick={() => setFilterHasPhone(filterHasPhone === true ? null : true)}
@@ -414,27 +464,72 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
         </div>
         {/* More Filters (collapsed) */}
         {showMoreFilters && (
-          <div className="flex flex-wrap gap-3 items-center mt-3 pt-3 border-t border-white/5">
-            <select className="px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-300" value={filterEntityType} onChange={(e) => setFilterEntityType(e.target.value)}>
-              <option value="">All Entity Types</option>
-              <option value="company">Company</option>
-              <option value="individual_agent">Individual Agent</option>
-              <option value="owner_operator">Owner-Operator</option>
-            </select>
-            <select className="px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-300" value={filterOutreachStatus} onChange={(e) => setFilterOutreachStatus(e.target.value)}>
-              <option value="">All Outreach</option>
-              <option value="new">New</option>
-              <option value="contacted">Contacted</option>
-              <option value="interested">Interested</option>
-              <option value="not_interested">Not Interested</option>
-              <option value="closed">Closed</option>
-            </select>
-            <input type="number" placeholder="Min Score" className="w-24 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100" value={filterMinScore} onChange={(e) => setFilterMinScore(e.target.value)} />
-            <input type="number" placeholder="Min Units" className="w-24 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100" value={filterMinUnits} onChange={(e) => setFilterMinUnits(e.target.value)} />
-            <button onClick={() => setFilterHasWebsite(filterHasWebsite === true ? null : true)}
-              className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasWebsite === true ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'}`}>
-              {filterHasWebsite === true && <span className="text-emerald-400">✓</span>}Website
-            </button>
+          <div className="mt-3 pt-3 border-t border-white/5 space-y-3">
+            {/* Row 1: Range filters */}
+            <div className="flex flex-wrap gap-4 items-center">
+              {/* Score range */}
+              <div className="flex items-center gap-1" title="Filter by lead quality score (0-100)">
+                <span className="text-[10px] text-slate-600 uppercase font-bold w-12">Score</span>
+                <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMinScore} onChange={(e) => setFilterMinScore(e.target.value)} />
+                <span className="text-slate-600 text-xs">—</span>
+                <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMaxScore} onChange={(e) => setFilterMaxScore(e.target.value)} />
+              </div>
+              {/* Units range */}
+              <div className="flex items-center gap-1" title="Filter by total residential units">
+                <span className="text-[10px] text-slate-600 uppercase font-bold w-12">Units</span>
+                <input type="number" placeholder="Min" className="w-16 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMinUnits} onChange={(e) => setFilterMinUnits(e.target.value)} />
+                <span className="text-slate-600 text-xs">—</span>
+                <input type="number" placeholder="Max" className="w-16 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMaxUnits} onChange={(e) => setFilterMaxUnits(e.target.value)} />
+              </div>
+              {/* Units per Building range */}
+              <div className="flex items-center gap-1" title="Filter by average units per building">
+                <span className="text-[10px] text-slate-600 uppercase font-bold w-12">U/Bldg</span>
+                <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMinUnitsPerBldg} onChange={(e) => setFilterMinUnitsPerBldg(e.target.value)} />
+                <span className="text-slate-600 text-xs">—</span>
+                <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMaxUnitsPerBldg} onChange={(e) => setFilterMaxUnitsPerBldg(e.target.value)} />
+              </div>
+            </div>
+            {/* Row 2: Building types, entity type, outreach, website */}
+            <div className="flex flex-wrap gap-3 items-center">
+              {/* Building type toggles */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-slate-600 uppercase font-bold">Type</span>
+                {([
+                  ['condo', 'Condo'],
+                  ['coop', 'Co-op'],
+                  ['rental_elevator', 'Elevator'],
+                  ['rental_walkup', 'Walkup'],
+                  ['small_residential', 'Small Res'],
+                ] as [string, string][]).map(([val, label]) => (
+                  <button key={val} onClick={() => toggleBuildingType(val)}
+                    className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
+                      filterBuildingTypes.includes(val)
+                        ? 'bg-purple-600/30 text-purple-300 border border-purple-500/40'
+                        : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
+                    }`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <select className="px-3 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-300" value={filterEntityType} onChange={(e) => setFilterEntityType(e.target.value)}>
+                <option value="">All Entity Types</option>
+                <option value="company">Company</option>
+                <option value="individual_agent">Individual Agent</option>
+                <option value="owner_operator">Owner-Operator</option>
+              </select>
+              <select className="px-3 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-300" value={filterOutreachStatus} onChange={(e) => setFilterOutreachStatus(e.target.value)}>
+                <option value="">All Outreach</option>
+                <option value="new">New</option>
+                <option value="contacted">Contacted</option>
+                <option value="interested">Interested</option>
+                <option value="not_interested">Not Interested</option>
+                <option value="closed">Closed</option>
+              </select>
+              <button onClick={() => setFilterHasWebsite(filterHasWebsite === true ? null : true)}
+                className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasWebsite === true ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'}`}>
+                {filterHasWebsite === true && <span className="text-emerald-400">✓</span>}Website
+              </button>
+            </div>
           </div>
         )}
         
@@ -624,15 +719,23 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-1.5" title={`Contact: ${lead.phone || lead.email ? 'Found' : 'Missing'} • Website: ${lead.website ? 'Found' : 'Missing'} • Research: ${lead.enrichment_status}`}>
+                      <div className="flex items-center gap-1.5" title={`Contact: ${lead.phone || lead.email ? 'Found' : 'Missing'}\nWebsite: ${lead.website ? 'Found' : 'Missing'}\nResearch: ${lead.enrichment_status === 'complete' ? 'Complete — all data found' : lead.enrichment_status === 'partial' ? 'Partial — some data found' : lead.enrichment_status === 'failed' ? 'Searched — no results found' : 'Not searched yet'}`}>
                         <span className={`text-[9px] font-medium ${lead.phone || lead.email ? 'text-emerald-400' : 'text-slate-700'}`}>
                           {lead.phone || lead.email ? '● Contact' : '○ Contact'}
                         </span>
                         <span className={`text-[9px] font-medium ${lead.website ? 'text-emerald-400' : 'text-slate-700'}`}>
                           {lead.website ? '●' : '○'}
                         </span>
-                        <span className={`text-[9px] font-medium ${lead.enrichment_status === 'complete' ? 'text-emerald-400' : lead.enrichment_status === 'partial' ? 'text-amber-400' : 'text-slate-700'}`}>
-                          {lead.enrichment_status === 'complete' ? '●' : '○'}
+                        <span className={`text-[9px] font-medium ${
+                          lead.enrichment_status === 'complete' ? 'text-emerald-400' :
+                          lead.enrichment_status === 'partial' ? 'text-amber-400' :
+                          lead.enrichment_status === 'failed' ? 'text-rose-400' :
+                          'text-slate-700'
+                        }`}>
+                          {lead.enrichment_status === 'complete' ? '● Searched' :
+                           lead.enrichment_status === 'partial' ? '◐ Partial' :
+                           lead.enrichment_status === 'failed' ? '● No results' :
+                           '○ Not searched'}
                         </span>
                       </div>
                       {lead.pipeline_stage && lead.pipeline_stage !== 'research' && (

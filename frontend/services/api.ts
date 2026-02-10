@@ -293,7 +293,9 @@ export interface PipelineStats {
  */
 export async function fetchLeads(params?: {
   min_score?: number;
+  max_score?: number;
   min_portfolio?: number;
+  max_portfolio?: number;
   boro?: string;
   has_phone?: boolean;
   has_email?: boolean;
@@ -306,6 +308,10 @@ export async function fetchLeads(params?: {
   sort_by?: string;
   sort_dir?: string;
   min_units?: number;
+  max_units?: number;
+  min_units_per_bldg?: number;
+  max_units_per_bldg?: number;
+  building_type_has?: string;
   limit?: number;
   offset?: number;
 }): Promise<LeadsListResponse> {
@@ -313,7 +319,9 @@ export async function fetchLeads(params?: {
   
   if (params) {
     if (params.min_score !== undefined) searchParams.set('min_score', params.min_score.toString());
+    if (params.max_score !== undefined) searchParams.set('max_score', params.max_score.toString());
     if (params.min_portfolio !== undefined) searchParams.set('min_portfolio', params.min_portfolio.toString());
+    if (params.max_portfolio !== undefined) searchParams.set('max_portfolio', params.max_portfolio.toString());
     if (params.boro) searchParams.set('boro', params.boro);
     if (params.has_phone !== undefined) searchParams.set('has_phone', params.has_phone.toString());
     if (params.has_email !== undefined) searchParams.set('has_email', params.has_email.toString());
@@ -326,6 +334,10 @@ export async function fetchLeads(params?: {
     if (params.sort_by) searchParams.set('sort_by', params.sort_by);
     if (params.sort_dir) searchParams.set('sort_dir', params.sort_dir);
     if (params.min_units !== undefined) searchParams.set('min_units', params.min_units.toString());
+    if (params.max_units !== undefined) searchParams.set('max_units', params.max_units.toString());
+    if (params.min_units_per_bldg !== undefined) searchParams.set('min_units_per_bldg', params.min_units_per_bldg.toString());
+    if (params.max_units_per_bldg !== undefined) searchParams.set('max_units_per_bldg', params.max_units_per_bldg.toString());
+    if (params.building_type_has) searchParams.set('building_type_has', params.building_type_has);
     if (params.limit !== undefined) searchParams.set('limit', params.limit.toString());
     if (params.offset !== undefined) searchParams.set('offset', params.offset.toString());
   }

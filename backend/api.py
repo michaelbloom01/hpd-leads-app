@@ -721,7 +721,9 @@ def _row_to_lead(row_dict: Dict) -> Lead:
 @app.get("/api/leads", response_model=LeadsListResponse)
 async def get_leads(
     min_score: Optional[float] = Query(None, description="Minimum score filter"),
+    max_score: Optional[float] = Query(None, description="Maximum score filter"),
     min_portfolio: Optional[int] = Query(None, description="Minimum portfolio size"),
+    max_portfolio: Optional[int] = Query(None, description="Maximum portfolio size"),
     boro: Optional[str] = Query(None, description="Filter by borough"),
     has_phone: Optional[bool] = Query(None, description="Filter by phone availability"),
     has_email: Optional[bool] = Query(None, description="Filter by email availability"),
@@ -734,6 +736,10 @@ async def get_leads(
     sort_by: str = Query('score', description="Sort column"),
     sort_dir: str = Query('desc', description="Sort direction (asc/desc)"),
     min_units: Optional[int] = Query(None, description="Minimum total residential units"),
+    max_units: Optional[int] = Query(None, description="Maximum total residential units"),
+    min_units_per_bldg: Optional[float] = Query(None, description="Minimum average units per building"),
+    max_units_per_bldg: Optional[float] = Query(None, description="Maximum average units per building"),
+    building_type_has: Optional[str] = Query(None, description="Filter by building type (comma-separated: condo,coop,rental_elevator,rental_walkup,small_residential)"),
     limit: int = Query(50, ge=1, le=1000, description="Max results to return"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
 ):
@@ -743,9 +749,14 @@ async def get_leads(
     """
     db = get_database()
     rows, total = db.get_leads_filtered(
-        min_score=min_score, min_portfolio=min_portfolio, boro=boro,
+        min_score=min_score, max_score=max_score,
+        min_portfolio=min_portfolio, max_portfolio=max_portfolio,
+        boro=boro,
         has_phone=has_phone, has_email=has_email, has_website=has_website,
-        entity_type=entity_type, min_units=min_units,
+        entity_type=entity_type,
+        min_units=min_units, max_units=max_units,
+        min_units_per_bldg=min_units_per_bldg, max_units_per_bldg=max_units_per_bldg,
+        building_type_has=building_type_has,
         enrichment_status=enrichment_status, outreach_status=outreach_status,
         pipeline_stage=pipeline_stage, search=search,
         sort_by=sort_by, sort_dir=sort_dir,
@@ -2692,7 +2703,7 @@ async def research_lead(lead_id: str):
                 'rental_walkup': lead.building_types.rental_walkup,
             }
         
-        ai_description = generate_company_description(
+        ai_description, _ai_reason = generate_company_description(
             company_name=company_name,
             portfolio_size=lead.portfolio_size,
             total_units=lead.total_units,
@@ -2771,7 +2782,7 @@ async def generate_ai_summary(lead_id: str):
     
     # Generate description — DO NOT pass lead.business_summary as website_description
     # (that creates a circular reference where old summaries feed into new ones)
-    description = generate_company_description(
+    description, failure_reason = generate_company_description(
         company_name=company_name,
         portfolio_size=lead.portfolio_size,
         total_units=lead.total_units,
@@ -2784,7 +2795,7 @@ async def generate_ai_summary(lead_id: str):
         return {
             "status": "skipped",
             "lead_id": lead_id,
-            "message": "AI summary not available - ANTHROPIC_API_KEY not configured or anthropic package not installed",
+            "message": failure_reason or "AI summary generation failed for an unknown reason.",
             "ai_description": None,
         }
     

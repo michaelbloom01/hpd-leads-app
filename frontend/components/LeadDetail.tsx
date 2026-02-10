@@ -143,8 +143,14 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
     setIsGeneratingAI(true);
     try {
       const result = await generateAiSummary(lead.lead_id);
-      if (result.ai_description) { setAiDescription(result.ai_description); setEnrichedLead({ ...enrichedLead, business_summary: result.ai_description }); }
-    } catch (err) { console.error('AI summary failed:', err); toast.error('AI summary generation failed'); } 
+      if (result.ai_description) {
+        setAiDescription(result.ai_description);
+        setEnrichedLead({ ...enrichedLead, business_summary: result.ai_description });
+        toast.success('Summary generated');
+      } else {
+        toast.error(result.message || 'Summary generation was skipped — API key may not be configured on the server.');
+      }
+    } catch (err) { console.error('AI summary failed:', err); toast.error('AI summary generation failed — check server logs'); } 
     finally { setIsGeneratingAI(false); }
   };
 
@@ -505,6 +511,24 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
           {/* TAB: CONTACTS & RESEARCH */}
           {activeTab === 'contacts' && (
             <>
+              {/* Enrichment Status Banner */}
+              <div className={`rounded-lg px-3 py-2 text-xs font-medium flex items-center gap-2 ${
+                enrichedLead.enrichment_status === 'complete' ? 'bg-emerald-900/30 border border-emerald-500/20 text-emerald-400' :
+                enrichedLead.enrichment_status === 'partial' ? 'bg-amber-900/30 border border-amber-500/20 text-amber-400' :
+                enrichedLead.enrichment_status === 'failed' ? 'bg-rose-900/30 border border-rose-500/20 text-rose-400' :
+                'bg-slate-800/50 border border-white/5 text-slate-500'
+              }`}>
+                <span className="text-sm">
+                  {enrichedLead.enrichment_status === 'complete' ? '●' :
+                   enrichedLead.enrichment_status === 'partial' ? '◐' :
+                   enrichedLead.enrichment_status === 'failed' ? '●' : '○'}
+                </span>
+                {enrichedLead.enrichment_status === 'complete' ? 'Contact search complete — phone, email, and website found' :
+                 enrichedLead.enrichment_status === 'partial' ? 'Partial contact info found — try searching again for more' :
+                 enrichedLead.enrichment_status === 'failed' ? 'Contact search ran but found nothing — try Research Company' :
+                 'Contact search has not been run yet'}
+              </div>
+
               {/* Contact Actions - prominent when no contacts exist */}
               {!enrichedLead.phone && !enrichedLead.email ? (
                 <div className="bg-gradient-to-r from-emerald-900/30 to-emerald-950/30 border border-emerald-500/30 rounded-xl p-4 text-center">

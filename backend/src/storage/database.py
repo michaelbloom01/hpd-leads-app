@@ -752,13 +752,19 @@ class LeadsDatabase:
     def get_leads_filtered(
         self,
         min_score: Optional[float] = None,
+        max_score: Optional[float] = None,
         min_portfolio: Optional[int] = None,
+        max_portfolio: Optional[int] = None,
         boro: Optional[str] = None,
         has_phone: Optional[bool] = None,
         has_email: Optional[bool] = None,
         has_website: Optional[bool] = None,
         entity_type: Optional[str] = None,
         min_units: Optional[int] = None,
+        max_units: Optional[int] = None,
+        min_units_per_bldg: Optional[float] = None,
+        max_units_per_bldg: Optional[float] = None,
+        building_type_has: Optional[str] = None,
         enrichment_status: Optional[str] = None,
         outreach_status: Optional[str] = None,
         pipeline_stage: Optional[str] = None,
@@ -780,9 +786,15 @@ class LeadsDatabase:
         if min_score is not None:
             where_clauses.append("score >= ?")
             params.append(min_score)
+        if max_score is not None:
+            where_clauses.append("score <= ?")
+            params.append(max_score)
         if min_portfolio is not None:
             where_clauses.append("portfolio_size >= ?")
             params.append(min_portfolio)
+        if max_portfolio is not None:
+            where_clauses.append("portfolio_size <= ?")
+            params.append(max_portfolio)
         if boro is not None:
             # Support comma-separated boroughs for multi-select (e.g., "MANHATTAN,BROOKLYN")
             boro_list = [b.strip().upper() for b in boro.split(',') if b.strip()]
@@ -813,6 +825,22 @@ class LeadsDatabase:
         if min_units is not None:
             where_clauses.append("total_units >= ?")
             params.append(min_units)
+        if max_units is not None:
+            where_clauses.append("total_units <= ?")
+            params.append(max_units)
+        if min_units_per_bldg is not None:
+            where_clauses.append("CASE WHEN portfolio_size > 0 THEN total_units * 1.0 / portfolio_size ELSE 0 END >= ?")
+            params.append(min_units_per_bldg)
+        if max_units_per_bldg is not None:
+            where_clauses.append("CASE WHEN portfolio_size > 0 THEN total_units * 1.0 / portfolio_size ELSE 0 END <= ?")
+            params.append(max_units_per_bldg)
+        if building_type_has is not None:
+            # Support comma-separated building types (e.g., "condo,coop")
+            VALID_TYPES = {'condo', 'coop', 'rental_elevator', 'rental_walkup', 'small_residential'}
+            types = [t.strip().lower() for t in building_type_has.split(',') if t.strip().lower() in VALID_TYPES]
+            if types:
+                type_clauses = [f"CAST(json_extract(building_types, '$.{t}') AS INTEGER) > 0" for t in types]
+                where_clauses.append(f"({' OR '.join(type_clauses)})")
         if enrichment_status is not None:
             where_clauses.append("enrichment_status = ?")
             params.append(enrichment_status)

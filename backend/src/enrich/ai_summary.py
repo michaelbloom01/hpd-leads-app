@@ -37,18 +37,19 @@ def generate_company_description(
         website_description: Description scraped from their website
         
     Returns:
-        2-3 sentence description of the company, or None if API not configured
+        Tuple of (description, None) on success, or (None, reason_string) on failure.
+        For backward compatibility, callers checking `result is None` should use `result[0] is None`.
     """
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        logger.debug("ANTHROPIC_API_KEY not configured, skipping AI summary")
-        return None
+        logger.warning("ANTHROPIC_API_KEY not configured, skipping AI summary")
+        return None, "Anthropic API key is not configured on the server. Set the ANTHROPIC_API_KEY environment variable."
     
     try:
         import anthropic
     except ImportError:
         logger.warning("anthropic package not installed, skipping AI summary")
-        return None
+        return None, "The 'anthropic' Python package is not installed on the server."
     
     # Build context about the company
     context_parts = [
@@ -100,8 +101,8 @@ Write exactly 2-3 sentences in plain text (no markdown, no bullet points, no hea
         
         description = response.content[0].text.strip()
         logger.info(f"Generated AI description for {company_name}")
-        return description
+        return description, None
         
     except Exception as e:
         logger.error(f"AI summary generation failed: {e}")
-        return None
+        return None, f"AI API call failed: {str(e)}"
