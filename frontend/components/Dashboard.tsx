@@ -334,7 +334,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
         </div>
         {enrichmentGaps && enrichmentGaps.unenriched > 0 && (
           <div className="bg-slate-900/50 border border-amber-500/20 rounded-2xl p-4 col-span-2 md:col-span-1" title="Leads that have not been enriched with contact info yet">
-            <p className="text-[10px] font-bold text-amber-500 uppercase tracking-wider mb-1">Needs Enrichment</p>
+            <p className="text-[10px] font-bold text-amber-500 uppercase tracking-wider mb-1">Not Yet Enriched</p>
             <p className="text-2xl font-mono font-bold text-amber-400">{enrichmentGaps.unenriched.toLocaleString()}</p>
             <p className="text-[10px] text-slate-600 mt-0.5">of {enrichmentGaps.total_leads.toLocaleString()} total</p>
           </div>
@@ -530,7 +530,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
               disabled={startingEnrichment}
               className="text-amber-500 hover:text-amber-400 underline disabled:opacity-50"
             >
-              {startingEnrichment ? 'Starting...' : `Find contact info (${enrichedCount} leads have data so far)`}
+              {startingEnrichment ? 'Starting...' : `Enrich leads (${enrichedCount} enriched so far)`}
             </button>
           )}
 

@@ -722,23 +722,22 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-1.5" title={`Contact: ${lead.phone || lead.email ? 'Found' : 'Missing'}\nWebsite: ${lead.website ? 'Found' : 'Missing'}\nResearch: ${lead.enrichment_status === 'complete' ? 'Complete — all data found' : lead.enrichment_status === 'partial' ? 'Partial — some data found' : lead.enrichment_status === 'failed' ? 'Searched — no results found' : 'Not searched yet'}`}>
-                        <span className={`text-[9px] font-medium ${lead.phone || lead.email ? 'text-emerald-400' : 'text-slate-700'}`}>
-                          {lead.phone || lead.email ? '● Contact' : '○ Contact'}
-                        </span>
-                        <span className={`text-[9px] font-medium ${lead.website ? 'text-emerald-400' : 'text-slate-700'}`}>
-                          {lead.website ? '●' : '○'}
-                        </span>
-                        <span className={`text-[9px] font-medium ${
-                          lead.enrichment_status === 'complete' ? 'text-emerald-400' :
-                          lead.enrichment_status === 'partial' ? 'text-amber-400' :
-                          lead.enrichment_status === 'failed' ? 'text-rose-400' :
-                          'text-slate-700'
+                      <div className="flex items-center gap-1.5" title={`Enrichment: ${
+                        lead.enrichment_status === 'complete' ? 'Complete — contacts, website, and summary found' :
+                        lead.enrichment_status === 'partial' ? 'Partial — some data found' :
+                        lead.enrichment_status === 'failed' ? 'Enriched but no data found' :
+                        'Not yet enriched'
+                      }\nPhone: ${lead.phone || 'None'}\nEmail: ${lead.email || 'None'}\nWebsite: ${lead.website || 'None'}`}>
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                          lead.enrichment_status === 'complete' ? 'bg-emerald-500/20 text-emerald-400' :
+                          lead.enrichment_status === 'partial' ? 'bg-amber-500/20 text-amber-400' :
+                          lead.enrichment_status === 'failed' ? 'bg-rose-500/20 text-rose-400' :
+                          'bg-slate-800 text-slate-600'
                         }`}>
-                          {lead.enrichment_status === 'complete' ? '● Searched' :
-                           lead.enrichment_status === 'partial' ? '◐ Partial' :
-                           lead.enrichment_status === 'failed' ? '● No results' :
-                           '○ Not searched'}
+                          {lead.enrichment_status === 'complete' ? 'Enriched' :
+                           lead.enrichment_status === 'partial' ? 'Partial' :
+                           lead.enrichment_status === 'failed' ? 'No Data' :
+                           'Not Enriched'}
                         </span>
                       </div>
                       {lead.pipeline_stage && lead.pipeline_stage !== 'research' && (

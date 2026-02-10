@@ -530,10 +530,10 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                    enrichedLead.enrichment_status === 'partial' ? '◐' :
                    enrichedLead.enrichment_status === 'failed' ? '●' : '○'}
                 </span>
-                {enrichedLead.enrichment_status === 'complete' ? 'Contact search complete — phone, email, and website found' :
-                 enrichedLead.enrichment_status === 'partial' ? 'Partial contact info found — try searching again for more' :
-                 enrichedLead.enrichment_status === 'failed' ? 'Enrichment ran but found nothing — try again or search manually' :
-                 'Contact search has not been run yet'}
+                {enrichedLead.enrichment_status === 'complete' ? 'Fully enriched — contacts, website, and AI summary found' :
+                 enrichedLead.enrichment_status === 'partial' ? 'Partially enriched — some data found. Click "Re-enrich" to try again.' :
+                 enrichedLead.enrichment_status === 'failed' ? 'Enriched but nothing found — try "Re-enrich" or search manually' :
+                 'Not yet enriched — click "Enrich Lead" to find contacts, website, and generate a summary'}
               </div>
 
               {/* Single Enrich Action */}
