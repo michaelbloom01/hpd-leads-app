@@ -17,7 +17,7 @@ cmd = [
     "--workers", "1",
     "--worker-class", "uvicorn.workers.UvicornWorker",
     "--bind", f"0.0.0.0:{port}",
-    "--timeout", "120",
+    "--timeout", "300",
 ]
 
 logger.info(f"Running: {' '.join(cmd)}")

@@ -171,7 +171,7 @@ def estimate_revenue(lead) -> dict:
         breakdown.append({
             "type": btype,
             "label": BUILDING_TYPE_LABELS.get(btype, btype),
-            "buildings": bldg_count,
+            "buildings": bldg_count_map.get(btype, 0),
             "estimated_units": estimated_units,
             "rent_per_unit": effective_rent,
             "monthly_gross": round(type_gross, 2),
