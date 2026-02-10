@@ -273,6 +273,23 @@ export async function fetchStats(): Promise<PipelineStats> {
 }
 
 /**
+ * Data freshness timestamps
+ */
+export interface DataStatus {
+  revenue_computed_at: string | null;
+  revenue_formula_version: string | null;
+  violations_computed_at: string | null;
+  enrichment_completed_at: string | null;
+  last_refresh: string | null;
+}
+
+export async function fetchDataStatus(): Promise<DataStatus> {
+  const response = await fetch(`${API_BASE_URL}/api/data-status`);
+  if (!response.ok) throw new Error(`Failed to fetch data status: ${response.statusText}`);
+  return response.json();
+}
+
+/**
  * Refresh the pipeline - fetch fresh data from HPD
  */
 export async function refreshPipeline(full: boolean = false): Promise<{

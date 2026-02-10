@@ -8,6 +8,8 @@ extreme violations indicate operational risk.
 Data source: https://data.cityofnewyork.us/resource/wvxf-dwi5.json
 """
 import logging
+import os
+import time
 from typing import Dict, List, Optional
 from collections import defaultdict
 
@@ -17,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 HPD_VIOLATIONS_ENDPOINT = "https://data.cityofnewyork.us/resource/wvxf-dwi5.json"
 
-# Socrata app token (optional, increases rate limit)
-SOCRATA_APP_TOKEN = None
+# Socrata app token (optional, increases rate limit from 1000/hr to 10000/hr)
+SOCRATA_APP_TOKEN = os.environ.get('NYC_OPEN_DATA_APP_TOKEN')
 
 
 class HPDViolationsClient:
@@ -29,42 +31,55 @@ class HPDViolationsClient:
         self.app_token = app_token or SOCRATA_APP_TOKEN
         if self.app_token:
             self.session.headers['X-App-Token'] = self.app_token
+            logger.info("HPD Violations client using app token (higher rate limit)")
+        else:
+            logger.warning("HPD Violations client has no app token - will be rate limited")
     
     def fetch_violations_for_buildings(
         self, 
         building_ids: List[str],
-        batch_size: int = 50,
+        batch_size: int = 200,
     ) -> Dict[str, Dict]:
         """
         Fetch violation counts for a set of buildings.
         
         Args:
             building_ids: List of HPD BuildingID values
-            batch_size: How many buildings to query at once
+            batch_size: How many buildings to query at once (max ~200 for URL length)
             
         Returns:
-            Dict keyed by BuildingID with violation counts:
-            {
-                "12345": {
-                    "total": 47,
-                    "class_a": 5,
-                    "class_b": 30,
-                    "class_c": 12,
-                    "open": 15,
-                }
-            }
+            Dict keyed by BuildingID with violation counts
         """
         all_results = {}
+        total_batches = (len(building_ids) + batch_size - 1) // batch_size
+        failed_batches = 0
         
         for i in range(0, len(building_ids), batch_size):
+            batch_num = i // batch_size + 1
             batch = building_ids[i:i + batch_size]
+            
+            if batch_num % 25 == 0 or batch_num == 1:
+                logger.info(f"Violations: batch {batch_num}/{total_batches} ({len(all_results)} buildings with data so far)")
+            
             batch_results = self._fetch_batch(batch)
-            all_results.update(batch_results)
+            if batch_results is None:
+                failed_batches += 1
+                if failed_batches > 10:
+                    logger.error(f"Violations: too many failed batches ({failed_batches}), stopping early")
+                    break
+                time.sleep(2)  # Back off on failure
+            else:
+                all_results.update(batch_results)
+            
+            # Small delay between batches to avoid rate limiting
+            if not self.app_token:
+                time.sleep(0.5)
         
+        logger.info(f"Violations: completed {total_batches} batches, {len(all_results)} buildings with data, {failed_batches} failed")
         return all_results
     
-    def _fetch_batch(self, building_ids: List[str]) -> Dict[str, Dict]:
-        """Fetch violations for a batch of building IDs."""
+    def _fetch_batch(self, building_ids: List[str]) -> Optional[Dict[str, Dict]]:
+        """Fetch violations for a batch of building IDs. Returns None on failure."""
         if not building_ids:
             return {}
         
@@ -81,7 +96,7 @@ class HPDViolationsClient:
             }
             
             response = self.session.get(
-                HPD_VIOLATIONS_ENDPOINT, params=params, timeout=30
+                HPD_VIOLATIONS_ENDPOINT, params=params, timeout=60
             )
             response.raise_for_status()
             rows = response.json()
@@ -113,10 +128,10 @@ class HPDViolationsClient:
             
         except requests.RequestException as e:
             logger.error(f"HPD Violations API error: {e}")
-            return {}
+            return None
         except Exception as e:
             logger.error(f"Unexpected error fetching violations: {e}")
-            return {}
+            return None
     
     def fetch_violations_summary_for_borough(
         self, 

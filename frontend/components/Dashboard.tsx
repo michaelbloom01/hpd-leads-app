@@ -4,9 +4,11 @@ import { toast } from 'react-hot-toast';
 import { 
   fetchLeads, 
   fetchStats,
+  fetchDataStatus,
   ApiLead, 
   PipelineStatus,
   PipelineStats,
+  DataStatus,
   getEnrichmentProgress,
   startBatchEnrichment,
   getFollowUpsDue,
@@ -45,6 +47,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
   const [loading, setLoading] = useState(true);
   const [startingEnrichment, setStartingEnrichment] = useState(false);
   const [refreshingViolations, setRefreshingViolations] = useState(false);
+  const [dataStatus, setDataStatus] = useState<DataStatus | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -55,11 +58,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
         ]);
       };
 
-      const [leadsResult, statsResult, enrichResult, followUpsResult] = await Promise.allSettled([
+      const [leadsResult, statsResult, enrichResult, followUpsResult, dataStatusResult] = await Promise.allSettled([
         withTimeout(fetchLeads({ limit: 100, min_portfolio: 10 }), 15000),
         withTimeout(fetchStats(), 15000),
         withTimeout(getEnrichmentProgress(), 10000),
         withTimeout(getFollowUpsDue(), 10000),
+        withTimeout(fetchDataStatus(), 10000),
       ]);
       
       if (leadsResult.status === 'fulfilled') {
@@ -99,6 +103,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
         setFollowUpsDue(followUpsResult.value);
       } else {
         console.warn('Follow-ups unavailable:', followUpsResult.reason);
+      }
+
+      if (dataStatusResult.status === 'fulfilled') {
+        setDataStatus(dataStatusResult.value);
       }
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
@@ -480,6 +488,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
           
           <span>Data refreshed: {status?.last_refresh ? new Date(status.last_refresh).toLocaleDateString() : 'Never'}</span>
         </div>
+        {/* Data freshness indicators */}
+        {dataStatus && (
+          <div className="flex flex-wrap gap-4 text-[10px] text-slate-600 mt-1">
+            <span>Revenue: {dataStatus.revenue_computed_at ? `computed ${new Date(dataStatus.revenue_computed_at).toLocaleString()} (v${dataStatus.revenue_formula_version || '?'})` : 'not yet computed'}</span>
+            <span>Violations: {dataStatus.violations_computed_at ? `fetched ${new Date(dataStatus.violations_computed_at).toLocaleString()}` : 'computing...'}</span>
+            <span>Enrichment: {dataStatus.enrichment_completed_at ? `completed ${new Date(dataStatus.enrichment_completed_at).toLocaleString()}` : 'in progress'}</span>
+          </div>
+        )}
       </div>
     </div>
   );

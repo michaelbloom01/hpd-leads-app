@@ -212,7 +212,8 @@ def _compute_violations_sync():
         all_building_ids.extend(bids)
     
     logger.info(f"Background: Fetching violations for {len(all_building_ids)} buildings across {len(rows)} leads")
-    violations_data = client.fetch_violations_for_buildings(all_building_ids, batch_size=100)
+    violations_data = client.fetch_violations_for_buildings(all_building_ids, batch_size=200)
+    logger.info(f"Background: Violations API returned data for {len(violations_data)} buildings")
     
     updated = 0
     for lead_id, bids in lead_buildings.items():
@@ -843,6 +844,19 @@ async def get_stats():
     stats = db.get_stats_sql()
     stats["last_refresh"] = _last_refresh.isoformat() if _last_refresh else None
     return stats
+
+
+@app.get("/api/data-status")
+async def get_data_status():
+    """Get data freshness timestamps for revenue, violations, enrichment."""
+    db = get_database()
+    return {
+        "revenue_computed_at": db.get_setting('revenue_computed_at'),
+        "revenue_formula_version": db.get_setting('revenue_formula_version'),
+        "violations_computed_at": db.get_setting('violations_computed_at'),
+        "enrichment_completed_at": db.get_setting('enrichment_completed_at'),
+        "last_refresh": _last_refresh.isoformat() if _last_refresh else None,
+    }
 
 
 def _run_background_refresh(limit: Optional[int], include_pluto: bool = True):
