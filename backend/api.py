@@ -1629,6 +1629,213 @@ def _run_batch_enrichment(
             _enrichment_state["finished_at"] = datetime.now().isoformat()
 
 
+@app.post("/api/enrich/batch-full")
+async def enrich_batch_full(
+    background_tasks: BackgroundTasks,
+    limit: int = Query(100, le=2000, description="Max leads to enrich"),
+    min_units: int = Query(40, description="Only enrich leads with total_units >= this"),
+    min_score: Optional[float] = Query(None, description="Only enrich leads with score >= this"),
+):
+    """
+    Full unified enrichment (contacts + research + AI summary) for leads
+    with >= min_units that haven't been enriched yet.
+    Runs in background. Check progress at GET /api/enrich/status.
+    """
+    global _leads_cache, _enrichment_state
+    
+    with _enrichment_lock:
+        if _enrichment_state["running"]:
+            return {
+                "status": "already_running",
+                "message": "Background enrichment is already in progress",
+                "progress": _enrichment_state["progress"],
+                "total": _enrichment_state["total"],
+            }
+    
+    if not _leads_cache:
+        raise HTTPException(status_code=400, detail="No leads loaded.")
+    
+    # Filter candidates: 40+ units, not yet enriched
+    candidates = [
+        l for l in _leads_cache
+        if (l.total_units or 0) >= min_units
+        and l.enrichment_status not in ["complete", "partial"]
+        and (min_score is None or (l.score or 0) >= min_score)
+    ]
+    candidates.sort(key=lambda l: (l.total_units or 0), reverse=True)
+    batch = candidates[:limit]
+    
+    if not batch:
+        return {"status": "no_candidates", "message": f"No unenriched leads with >= {min_units} units found."}
+    
+    background_tasks.add_task(_run_full_enrichment_batch, [l.lead_id for l in batch])
+    
+    return {
+        "status": "started",
+        "message": f"Full enrichment started for {len(batch)} leads (>= {min_units} units)",
+        "total": len(batch),
+        "total_candidates": len(candidates),
+    }
+
+
+def _run_full_enrichment_batch(lead_ids: list):
+    """Background: unified enrichment (contacts + research + AI) per lead."""
+    global _leads_cache, _enrichment_state, _enrichment_stop_requested
+    
+    _enrichment_stop_requested = False
+    
+    with _enrichment_lock:
+        _enrichment_state["running"] = True
+        _enrichment_state["phase"] = "full_enrichment"
+        _enrichment_state["progress"] = 0
+        _enrichment_state["total"] = len(lead_ids)
+        _enrichment_state["completed"] = 0
+        _enrichment_state["failed"] = 0
+        _enrichment_state["started_at"] = datetime.now().isoformat()
+        _enrichment_state["finished_at"] = None
+        _enrichment_state["error"] = None
+    
+    try:
+        from src.enrich.multi_source import MultiSourceEnricher
+        from src.enrich.web_crawl import WebCrawler
+        from src.enrich.ai_summary import generate_company_description
+        
+        enricher = MultiSourceEnricher()
+        crawler = WebCrawler()
+        db = get_database()
+        
+        lead_index = {l.lead_id: i for i, l in enumerate(_leads_cache)}
+        
+        for idx, lead_id in enumerate(lead_ids):
+            if _enrichment_stop_requested:
+                logger.info("Full enrichment stopped by user request")
+                break
+            
+            cache_idx = lead_index.get(lead_id)
+            if cache_idx is None:
+                continue
+            lead = _leads_cache[cache_idx]
+            company_name = lead.agent_name or lead.owner_name
+            
+            with _enrichment_lock:
+                _enrichment_state["progress"] = idx + 1
+                _enrichment_state["current_lead"] = company_name
+            
+            try:
+                # Step 1: Multi-source contacts
+                try:
+                    result = enricher.enrich(
+                        company_name=company_name,
+                        borough=lead.boro,
+                        address=None,
+                    )
+                    if result.get('phone') and not lead.phone:
+                        lead.phone = result['phone']
+                    if result.get('email') and not lead.email:
+                        lead.email = result['email']
+                    if result.get('website') and not lead.website:
+                        lead.website = result['website']
+                    if result.get('owner_principal') and not lead.owner_principal:
+                        lead.owner_principal = result['owner_principal']
+                except Exception as e:
+                    logger.warning(f"Contact enrichment failed for {lead_id}: {e}")
+                
+                # Step 2: Website discovery + deep scrape
+                try:
+                    if not lead.website:
+                        website = crawler.find_website(company_name + " property management NYC")
+                        if website:
+                            lead.website = website
+                    
+                    if lead.website:
+                        try:
+                            scrape_data = crawler.deep_scrape(lead.website)
+                            if scrape_data.get('phones'):
+                                for p in scrape_data['phones']:
+                                    if not lead.phone:
+                                        lead.phone = p
+                            if scrape_data.get('emails'):
+                                for e in scrape_data['emails']:
+                                    if not lead.email:
+                                        lead.email = e
+                        except Exception:
+                            pass
+                except Exception as e:
+                    logger.warning(f"Research failed for {lead_id}: {e}")
+                
+                # Step 3: AI summary
+                try:
+                    building_types_dict = None
+                    if lead.building_types:
+                        building_types_dict = {
+                            'condo': lead.building_types.condo,
+                            'coop': lead.building_types.coop,
+                            'rental_elevator': lead.building_types.rental_elevator,
+                            'rental_walkup': lead.building_types.rental_walkup,
+                            'small_residential': lead.building_types.small_residential,
+                        }
+                    
+                    description, failure_reason = generate_company_description(
+                        company_name=company_name,
+                        portfolio_size=lead.portfolio_size,
+                        total_units=lead.total_units,
+                        boroughs=lead.boros,
+                        building_types=building_types_dict,
+                        owner_names=[lead.owner_principal] if lead.owner_principal else None,
+                    )
+                    if description:
+                        lead.business_summary = description
+                except Exception as e:
+                    logger.warning(f"AI summary failed for {lead_id}: {e}")
+                
+                # Update status
+                has_contact = bool(lead.phone or lead.email)
+                has_website = bool(lead.website)
+                if has_contact and has_website:
+                    lead.enrichment_status = 'complete'
+                elif has_contact or has_website:
+                    lead.enrichment_status = 'partial'
+                else:
+                    lead.enrichment_status = 'failed'
+                
+                _leads_cache[cache_idx] = lead
+                
+                # Persist to DB
+                db.update_lead(lead_id, {
+                    "phone": lead.phone,
+                    "email": lead.email,
+                    "website": lead.website,
+                    "owner_principal": lead.owner_principal,
+                    "enrichment_status": lead.enrichment_status,
+                    "business_summary": lead.business_summary,
+                })
+                
+                with _enrichment_lock:
+                    _enrichment_state["completed"] = _enrichment_state.get("completed", 0) + 1
+                
+                logger.info(f"Full enrichment [{idx+1}/{len(lead_ids)}]: {company_name} -> {lead.enrichment_status}")
+                
+            except Exception as e:
+                logger.error(f"Full enrichment failed for {lead_id}: {e}")
+                with _enrichment_lock:
+                    _enrichment_state["failed"] = _enrichment_state.get("failed", 0) + 1
+            
+            # Rate limiting: small delay between leads to avoid hammering APIs
+            import time
+            time.sleep(2)
+    
+    except Exception as e:
+        logger.error(f"Full enrichment batch error: {e}")
+        with _enrichment_lock:
+            _enrichment_state["error"] = str(e)
+    finally:
+        with _enrichment_lock:
+            _enrichment_state["running"] = False
+            _enrichment_state["phase"] = None
+            _enrichment_state["current_lead"] = None
+            _enrichment_state["finished_at"] = datetime.now().isoformat()
+
+
 @app.post("/api/enrich/batch")
 async def enrich_batch(
     background_tasks: BackgroundTasks,
