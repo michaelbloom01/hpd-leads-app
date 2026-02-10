@@ -13,7 +13,7 @@ Full-stack lead generation platform for acquiring Property Management companies 
 ## Live Deployment
 
 - **Backend:** https://hpd-leads-app-production.up.railway.app
-- **Frontend:** https://hpd-leads-app.vercel.app
+- **Frontend:** https://frontend-nine-psi-58.vercel.app
 - **Database:** SQLite with Railway persistent storage
 
 ## Quick Start

@@ -37,7 +37,7 @@ app = FastAPI(
 
 # Enable CORS for frontend (Phase 4.3: locked down to actual frontend URL)
 import os
-_cors_default = "https://hpd-leads-app.vercel.app,http://localhost:5173,http://localhost:3000"
+_cors_default = "https://hpd-leads-app.vercel.app,https://frontend-nine-psi-58.vercel.app,http://localhost:5173,http://localhost:3000"
 _cors_origins = os.environ.get("CORS_ORIGINS", _cors_default)
 _allowed_origins = [o.strip() for o in _cors_origins.split(",")]
 

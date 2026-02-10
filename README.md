@@ -2,7 +2,7 @@
 
 NYC property management lead generation platform for PE acquisition targets. Identifies **management companies** from the HPD database, scores them with a multi-dimensional V2 algorithm, enriches with contact info, estimates revenue, tracks violations, and provides a full sourcing workflow.
 
-**Live App:** https://hpd-leads-app.vercel.app  
+**Live App:** https://frontend-nine-psi-58.vercel.app  
 **Backend API:** https://hpd-leads-app-production.up.railway.app  
 **GitHub:** https://github.com/michaelbloom01/hpd-leads-app
 
