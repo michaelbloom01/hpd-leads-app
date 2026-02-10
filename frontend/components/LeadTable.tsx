@@ -73,14 +73,33 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     filterHasWebsite === true ? 'yes' : '',
   ].filter(Boolean).length;
 
-  // Debounced search term for server requests
+  // Debounced values for server requests (prevents reload on every keystroke)
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [debouncedMinPortfolio, setDebouncedMinPortfolio] = useState('');
+  const [debouncedMinScore, setDebouncedMinScore] = useState('');
+  const [debouncedMinUnits, setDebouncedMinUnits] = useState('');
   
   // Debounce search input (300ms)
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchTerm), 300);
     return () => clearTimeout(timer);
   }, [searchTerm]);
+
+  // Debounce numeric filter inputs (500ms — longer to allow typing multi-digit numbers)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedMinPortfolio(filterMinPortfolio), 500);
+    return () => clearTimeout(timer);
+  }, [filterMinPortfolio]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedMinScore(filterMinScore), 500);
+    return () => clearTimeout(timer);
+  }, [filterMinScore]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedMinUnits(filterMinUnits), 500);
+    return () => clearTimeout(timer);
+  }, [filterMinUnits]);
 
   // Fetch leads from server with current filters, sort, and search
   const loadLeads = useCallback(async (currentPage: number = 0) => {
@@ -94,10 +113,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
         sort_dir: sortDir,
       };
       
-      const minScore = parseFloat(filterMinScore);
+      const minScore = parseFloat(debouncedMinScore);
       if (!isNaN(minScore) && minScore > 0) params.min_score = minScore;
       
-      const minPortfolio = parseInt(filterMinPortfolio);
+      const minPortfolio = parseInt(debouncedMinPortfolio);
       if (!isNaN(minPortfolio) && minPortfolio > 0) params.min_portfolio = minPortfolio;
       
       if (filterBoroughs.length > 0) params.boro = filterBoroughs.join(',');
@@ -109,7 +128,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       if (filterPipelineStage) params.pipeline_stage = filterPipelineStage;
       if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
       
-      const minUnits = parseInt(filterMinUnits);
+      const minUnits = parseInt(debouncedMinUnits);
       if (!isNaN(minUnits) && minUnits > 0) params.min_units = minUnits;
       
       const response = await fetchLeads(params);
@@ -121,7 +140,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     } finally {
       setLoading(false);
     }
-  }, [filterMinScore, filterMinPortfolio, filterBoroughs, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterPipelineStage, filterMinUnits, pageSize, sortField, sortDir, debouncedSearch]);
+  }, [debouncedMinScore, debouncedMinPortfolio, filterBoroughs, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterPipelineStage, debouncedMinUnits, pageSize, sortField, sortDir, debouncedSearch]);
 
   // R4: Health check on initial mount — show cold-start banner if backend is booting
   useEffect(() => {
@@ -219,7 +238,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     setSearchTerm('');
     setFilterBoroughs([]);
     setFilterMinScore('');
-    setFilterMinPortfolio('10');
+    setFilterMinPortfolio('');
     setFilterHasPhone(null);
     setFilterHasEmail(null);
     setFilterHasWebsite(null);
@@ -466,6 +485,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                 <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('total_units')}>
                   Units <SortIcon field="total_units" />
                 </th>
+                <th className="px-4 py-3 text-right" title="Average residential units per building">
+                  Units/Bldg
+                </th>
                 <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('score')}
                   title="Lead quality score (0–100) based on portfolio size, building types, registration status, and data completeness. Higher = stronger acquisition target.">
                   Score <SortIcon field="score" />
@@ -533,12 +555,17 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                     <span className="text-slate-300 font-mono text-sm">{lead.portfolio_size}</span>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <span className="text-blue-400 font-mono text-sm">{lead.total_units.toLocaleString()}</span>
+                    <span className="text-blue-400 font-mono text-sm">{(lead.total_units || 0).toLocaleString()}</span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <span className="text-slate-400 font-mono text-sm">
+                      {(lead.portfolio_size || 0) > 0 ? ((lead.total_units || 0) / lead.portfolio_size).toFixed(0) : '—'}
+                    </span>
                   </td>
                   <td className="px-4 py-3 text-right">
                     <span className={`font-mono text-sm font-bold ${scoreColor(lead.score)}`}
-                      title={`Score ${lead.score.toFixed(1)}/100 — ${lead.score >= 60 ? 'Strong target' : lead.score >= 40 ? 'Moderate potential' : 'Lower priority'}`}>
-                      {lead.score.toFixed(0)}
+                      title={`Score ${(lead.score || 0).toFixed(1)}/100 — ${(lead.score || 0) >= 60 ? 'Strong target' : (lead.score || 0) >= 40 ? 'Moderate potential' : 'Lower priority'}`}>
+                      {(lead.score || 0).toFixed(0)}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right">
@@ -551,20 +578,20 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {lead.violations_per_unit > 0 ? (
-                      <div className="flex items-center justify-end gap-1.5" title={`${lead.violation_count.toLocaleString()} total open violations\nPer unit: ${lead.violations_per_unit.toFixed(2)}\nClass A (non-hazardous): ${lead.violation_class_a}\nClass B (hazardous): ${lead.violation_class_b}\nClass C (immediately hazardous): ${lead.violation_class_c}`}>
+                    {(lead.violations_per_unit || 0) > 0 ? (
+                      <div className="flex items-center justify-end gap-1.5" title={`${(lead.violation_count || 0).toLocaleString()} total open violations\nPer unit: ${(lead.violations_per_unit || 0).toFixed(2)}\nClass A (non-hazardous): ${lead.violation_class_a || 0}\nClass B (hazardous): ${lead.violation_class_b || 0}\nClass C (immediately hazardous): ${lead.violation_class_c || 0}`}>
                         <span className={`w-2 h-2 rounded-full ${
-                          lead.violations_per_unit > 1.0 ? 'bg-rose-500' :
-                          lead.violations_per_unit > 0.3 ? 'bg-amber-500' : 'bg-emerald-500'
+                          (lead.violations_per_unit || 0) > 1.0 ? 'bg-rose-500' :
+                          (lead.violations_per_unit || 0) > 0.3 ? 'bg-amber-500' : 'bg-emerald-500'
                         }`} />
                         <span className={`font-mono text-sm ${
-                          lead.violations_per_unit > 1.0 ? 'text-rose-400' :
-                          lead.violations_per_unit > 0.3 ? 'text-amber-400' : 'text-slate-300'
-                        }`}>{lead.violations_per_unit.toFixed(2)}</span>
+                          (lead.violations_per_unit || 0) > 1.0 ? 'text-rose-400' :
+                          (lead.violations_per_unit || 0) > 0.3 ? 'text-amber-400' : 'text-slate-300'
+                        }`}>{(lead.violations_per_unit || 0).toFixed(2)}</span>
                         <span className="text-[9px] text-slate-600">per unit</span>
                       </div>
-                    ) : lead.violation_count > 0 ? (
-                      <span className="font-mono text-sm text-slate-400" title={`${lead.violation_count} total violations (per-unit data not yet available)`}>{lead.violation_count}</span>
+                    ) : (lead.violation_count || 0) > 0 ? (
+                      <span className="font-mono text-sm text-slate-400" title={`${lead.violation_count || 0} total violations (per-unit data not yet available)`}>{lead.violation_count}</span>
                     ) : (
                       <span className="text-slate-700" title="No open HPD violations on record, or data not yet loaded">—</span>
                     )}
@@ -666,18 +693,21 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   </div>
                 </div>
                 <span className={`font-mono text-lg font-bold ${scoreColor(lead.score)}`}>
-                  {lead.score.toFixed(0)}
+                  {(lead.score || 0).toFixed(0)}
                 </span>
               </div>
               <div className="flex items-center gap-4 text-xs">
-                <span className="text-slate-400"><span className="font-mono text-slate-300">{lead.portfolio_size}</span> bldgs</span>
-                <span className="text-slate-400"><span className="font-mono text-blue-400">{lead.total_units.toLocaleString()}</span> units</span>
-                {lead.estimated_annual_revenue > 0 && (
+                <span className="text-slate-400"><span className="font-mono text-slate-300">{lead.portfolio_size || 0}</span> bldgs</span>
+                <span className="text-slate-400"><span className="font-mono text-blue-400">{(lead.total_units || 0).toLocaleString()}</span> units</span>
+                {(lead.portfolio_size || 0) > 0 && (
+                  <span className="text-slate-500"><span className="font-mono text-slate-400">{((lead.total_units || 0) / lead.portfolio_size).toFixed(0)}</span> u/b</span>
+                )}
+                {(lead.estimated_annual_revenue || 0) > 0 && (
                   <span className="font-mono text-emerald-400">{formatCurrency(lead.estimated_annual_revenue)}</span>
                 )}
-                {lead.violations_per_unit > 0 && (
-                  <span className={`font-mono ${lead.violations_per_unit > 1.0 ? 'text-rose-400' : 'text-amber-400'}`}>
-                    {lead.violations_per_unit.toFixed(2)} v/u
+                {(lead.violations_per_unit || 0) > 0 && (
+                  <span className={`font-mono ${(lead.violations_per_unit || 0) > 1.0 ? 'text-rose-400' : 'text-amber-400'}`}>
+                    {(lead.violations_per_unit || 0).toFixed(2)} v/u
                   </span>
                 )}
               </div>

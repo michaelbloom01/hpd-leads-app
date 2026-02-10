@@ -353,7 +353,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
               </span>
             </div>
             <div className="space-y-2 max-h-52 overflow-y-auto">
-              {followUpsDue.leads.slice(0, 5).map((lead: any, i: number) => {
+              {(followUpsDue.leads || []).slice(0, 5).map((lead: any, i: number) => {
                 const dueDate = lead.next_follow_up ? new Date(lead.next_follow_up as string) : null;
                 const today = new Date(new Date().toDateString());
                 const isOverdue = dueDate && dueDate < today;

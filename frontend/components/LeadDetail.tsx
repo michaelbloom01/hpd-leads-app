@@ -196,7 +196,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
     { id: 'overview', label: 'Overview' },
     { id: 'contacts', label: 'Contacts' },
     { id: 'pipeline', label: 'Pipeline' },
-    { id: 'buildings', label: `Buildings (${enrichedLead.portfolio_size})` },
+    { id: 'buildings', label: `Buildings (${enrichedLead.portfolio_size || 0})` },
     { id: 'dd', label: 'Due Diligence' },
   ];
 
@@ -241,7 +241,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                 <div className="text-[9px] text-slate-500 uppercase font-bold">Score</div>
               </div>
               {/* Revenue */}
-              {enrichedLead.estimated_annual_revenue > 0 && (
+              {(enrichedLead.estimated_annual_revenue || 0) > 0 && (
                 <div className="text-right" title="Estimated annual management fee if acquired: Total Units × Avg Rent (by borough & building type) × 5% management fee">
                   <div className="text-lg font-bold font-mono text-emerald-400">{formatCurrency(enrichedLead.estimated_annual_revenue)}<span className="text-xs text-emerald-600">/yr</span></div>
                   <div className="text-[9px] text-slate-500 uppercase font-bold">Mgmt Fee</div>
@@ -338,7 +338,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="bg-gradient-to-br from-emerald-900/20 to-emerald-950/20 border border-emerald-500/20 rounded-xl p-4">
                   <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-2">Estimated Management Fee</h3>
-                  {enrichedLead.estimated_annual_revenue > 0 ? (
+                  {(enrichedLead.estimated_annual_revenue || 0) > 0 ? (
                     <div>
                       <div className="text-2xl font-bold font-mono text-emerald-400">{formatCurrency(enrichedLead.estimated_annual_revenue)}<span className="text-sm text-emerald-600">/yr</span></div>
                       <div className="text-sm font-mono text-slate-400 mt-1">{formatCurrency(enrichedLead.estimated_monthly_revenue)}<span className="text-xs text-slate-600">/mo</span></div>
@@ -365,7 +365,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                       </details>
                     </div>
                   ) : (
-                    <div className="text-slate-600 text-sm">{enrichedLead.total_units > 0 ? 'Revenue calculating...' : 'No unit data available'}</div>
+                    <div className="text-slate-600 text-sm">{(enrichedLead.total_units || 0) > 0 ? 'Revenue calculating...' : 'No unit data available'}</div>
                   )}
                 </div>
                 <div className={`bg-gradient-to-br ${
@@ -754,7 +754,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               {/* Building List */}
               <div className="space-y-1 max-h-96 overflow-y-auto">
                 {(enrichedLead.buildings || [])
-                  .filter((b: string) => !buildingSearch || b.toLowerCase().includes(buildingSearch.toLowerCase()))
+                  .filter((b: string) => !buildingSearch || String(b || '').toLowerCase().includes(buildingSearch.toLowerCase()))
                   .map((building: string, i: number) => (
                     <div key={i} className="flex items-center justify-between p-2 bg-slate-800/30 rounded-lg hover:bg-slate-800/50">
                       <span className="text-sm text-slate-300">{building}</span>
