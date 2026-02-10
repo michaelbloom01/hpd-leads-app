@@ -3896,7 +3896,14 @@ async def agent_chat(request: AgentChatRequest):
         ):
             yield event
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(
+        event_generator(),
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @app.get("/api/agent/conversations")

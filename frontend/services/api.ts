@@ -833,7 +833,7 @@ export function agentChat(
           if (line.startsWith('event: ')) {
             currentEvent = line.slice(7).trim();
           } else if (line.startsWith('data: ')) {
-            currentData = line.slice(6);
+            currentData = line.slice(6).trim();
           } else if (line === '' && currentEvent) {
             // End of SSE message — dispatch
             try {

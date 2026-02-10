@@ -5,6 +5,7 @@ The orchestrator is an async generator that yields SSE-formatted events
 as the conversation progresses. This is the core of the agent.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -39,11 +40,8 @@ _active_conversations: set[str] = set()
 
 
 def _sse_event(event_type: str, data) -> dict:
-    """Format an SSE event as a dict for sse-starlette."""
-    if isinstance(data, str):
-        payload = data
-    else:
-        payload = json.dumps(data)
+    """Format an SSE event as a dict for sse-starlette. Always JSON-encode so frontend can parse consistently."""
+    payload = json.dumps(data)
     return {"event": event_type, "data": payload}
 
 
@@ -123,16 +121,14 @@ async def run_agent(
             yield _sse_event(SSEEventType.done, {"conversation_id": conversation_id})
             return
 
-        agent_model = os.environ.get("AGENT_MODEL", "claude-sonnet-4-20250514")
-        client = anthropic.Anthropic(api_key=api_key)
+        agent_model = os.environ.get("AGENT_MODEL", "claude-opus-4-6")
+        # Timeout so we don't hang forever; run in thread so we don't block the event loop
+        timeout_secs = float(os.environ.get("AGENT_CLAUDE_TIMEOUT", "120"))
+        client = anthropic.Anthropic(api_key=api_key, timeout=timeout_secs)
 
         # 2. Handle confirmation flow
         if confirmation:
             yield _sse_event(SSEEventType.status, "Processing confirmation...")
-            await _handle_confirmation(
-                client, agent_model, conversation_id, confirmation, _sse_event_gen=None
-            )
-            # Use a separate generator approach for confirmations
             async for event in _handle_confirmation_flow(
                 client, agent_model, conversation_id, confirmation
             ):
@@ -141,6 +137,7 @@ async def run_agent(
 
         # 3. Normal message flow
         yield _sse_event(SSEEventType.status, "Thinking...")
+        logger.info("Agent: yielded status Thinking..., building messages")
 
         # Build messages from history
         claude_messages = _build_claude_messages(conversation_id)
@@ -170,23 +167,32 @@ async def run_agent(
         while round_count < MAX_ROUNDS:
             round_count += 1
             start_time = time.time()
+            logger.info(f"Agent: round {round_count}, calling Claude (timeout={timeout_secs}s)")
 
             try:
-                response = client.messages.create(
-                    model=agent_model,
-                    max_tokens=4096,
-                    system=SYSTEM_PROMPT,
-                    tools=TOOL_SCHEMAS,
-                    messages=claude_messages,
+                # Run blocking Claude call in thread pool; wrap in wait_for for guaranteed timeout
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        client.messages.create,
+                        model=agent_model,
+                        max_tokens=4096,
+                        system=SYSTEM_PROMPT,
+                        tools=TOOL_SCHEMAS,
+                        messages=claude_messages,
+                    ),
+                    timeout=timeout_secs + 10,
                 )
+            except asyncio.TimeoutError:
+                logger.warning("Agent: Claude call timed out (wait_for)")
+                yield _sse_event(SSEEventType.error, "Request timed out. Try a simpler query.")
+                break
             except anthropic.APIError as e:
                 if e.status_code == 429:
-                    # Rate limited — retry once
                     yield _sse_event(SSEEventType.status, "Rate limited, retrying...")
-                    import asyncio
                     await asyncio.sleep(5)
                     try:
-                        response = client.messages.create(
+                        response = await asyncio.to_thread(
+                            client.messages.create,
                             model=agent_model,
                             max_tokens=4096,
                             system=SYSTEM_PROMPT,
@@ -200,7 +206,11 @@ async def run_agent(
                     yield _sse_event(SSEEventType.error, f"AI service error: {str(e)}")
                     break
             except Exception as e:
-                yield _sse_event(SSEEventType.error, f"Request failed: {str(e)}")
+                err_lower = str(e).lower()
+                if "timeout" in err_lower or "timed out" in err_lower:
+                    yield _sse_event(SSEEventType.error, "Request timed out. Try a simpler query.")
+                else:
+                    yield _sse_event(SSEEventType.error, f"Request failed: {str(e)}")
                 break
 
             duration_ms = int((time.time() - start_time) * 1000)
@@ -396,7 +406,8 @@ async def _handle_confirmation_flow(
         claude_messages = _build_claude_messages(conversation_id)
 
         try:
-            response = client.messages.create(
+            response = await asyncio.to_thread(
+                client.messages.create,
                 model=agent_model,
                 max_tokens=2048,
                 system=SYSTEM_PROMPT,
