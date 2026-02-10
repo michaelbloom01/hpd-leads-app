@@ -514,6 +514,22 @@ export async function enrichLeadContacts(leadId: string): Promise<ContactEnrichm
 }
 
 /**
+ * Unified enrichment: contacts + research + AI summary in one call.
+ * This is the single "Enrich Lead" action for the simplified UX.
+ */
+export async function enrichLeadAll(leadId: string): Promise<{
+  lead_id: string;
+  contacts: { phones_found: number; emails_found: number; website_found: boolean };
+  research: { owner_names: string[]; year_established: string | null; website_scraped: boolean };
+  ai_summary: { generated: boolean; description: string | null };
+  errors: string[];
+}> {
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/enrich-all`, { method: 'POST' }, 1, 120000);
+  if (!response.ok) throw new Error(`Failed to enrich lead: ${response.statusText}`);
+  return response.json();
+}
+
+/**
  * Add an outreach attempt to a lead (legacy)
  */
 export async function addOutreachAttempt(

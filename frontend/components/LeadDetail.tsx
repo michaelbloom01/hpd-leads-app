@@ -1,6 +1,6 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { toast } from 'react-hot-toast';
-import { ApiLead, updateLead, researchLead, addOutreachAttempt, enrichLeadContacts, generateAiSummary, getDueDiligence, CompanyResearch, OutreachAttempt, DOSInfo } from '../services/api';
+import { ApiLead, updateLead, researchLead, addOutreachAttempt, enrichLeadContacts, generateAiSummary, enrichLeadAll, getDueDiligence, CompanyResearch, OutreachAttempt, DOSInfo } from '../services/api';
 
 // Lazy-load map to avoid large initial bundle
 const PortfolioMap = lazy(() => import('./PortfolioMap'));
@@ -44,8 +44,7 @@ interface Props {
 const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   const [isEnriching, setIsEnriching] = useState(false);
-  const [isResearching, setIsResearching] = useState(false);
-  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+  // isResearching and isGeneratingAI removed — unified into isEnriching via handleEnrichAll
   const [isSaving, setIsSaving] = useState(false);
   const [enrichedLead, setEnrichedLead] = useState(lead);
   const [notes, setNotes] = useState(lead.notes || '');
@@ -125,53 +124,61 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
     finally { setIsLoadingDD(false); }
   };
 
-  const handleResearch = async () => {
-    setIsResearching(true);
-    try {
-      const result = await researchLead(lead.lead_id);
-      setCompanyResearch(result);
-      if (result.phones?.length || result.emails?.length) {
-        setEnrichedLead({ ...enrichedLead, phone: result.phones?.[0] || enrichedLead.phone, email: result.emails?.[0] || enrichedLead.email });
-      }
-      if (result.ai_description) setAiDescription(result.ai_description);
-      toast.success('Research complete');
-    } catch (err) { console.error('Research failed:', err); toast.error('Research failed'); } 
-    finally { setIsResearching(false); }
-  };
-
-  const handleGenerateAI = async () => {
-    setIsGeneratingAI(true);
-    try {
-      const result = await generateAiSummary(lead.lead_id);
-      if (result.ai_description) {
-        setAiDescription(result.ai_description);
-        setEnrichedLead({ ...enrichedLead, business_summary: result.ai_description });
-        toast.success('Summary generated');
-      } else {
-        toast.error(result.message || 'Summary generation was skipped — API key may not be configured on the server.');
-      }
-    } catch (err) { console.error('AI summary failed:', err); toast.error('AI summary generation failed — check server logs'); } 
-    finally { setIsGeneratingAI(false); }
-  };
-
-  const handleEnrichContacts = async () => {
+  // Unified enrichment: contacts + research + AI summary in one call
+  const handleEnrichAll = async () => {
     setIsEnriching(true);
     try {
-      const result = await enrichLeadContacts(lead.lead_id);
-      setEnrichedLead({
-        ...enrichedLead,
-        phone: result.phones[0]?.value || enrichedLead.phone,
-        email: result.emails[0]?.value || enrichedLead.email,
-        phones: result.phones,
-        emails: result.emails,
-        website: result.website || enrichedLead.website,
-        enrichment_status: (result.phones.length || result.emails.length) ? 'complete' : 'partial',
-      });
-      if (result.dos_info) setDosInfo(result.dos_info);
-      toast.success('Contact enrichment complete');
-    } catch (err) { console.error('Enrichment failed:', err); toast.error('Contact enrichment failed'); } 
+      const result = await enrichLeadAll(lead.lead_id);
+      
+      // Update lead with any new data
+      const updated = { ...enrichedLead };
+      if (result.contacts.phones_found > 0 || result.contacts.emails_found > 0 || result.contacts.website_found) {
+        // Re-fetch the lead to get updated data from the server
+      }
+      if (result.ai_summary.description) {
+        setAiDescription(result.ai_summary.description);
+        updated.business_summary = result.ai_summary.description;
+      }
+      
+      // Update enrichment status
+      if (result.contacts.phones_found > 0 || result.contacts.emails_found > 0) {
+        updated.enrichment_status = result.contacts.website_found ? 'complete' : 'partial';
+      } else if (result.contacts.website_found) {
+        updated.enrichment_status = 'partial';
+      } else {
+        updated.enrichment_status = 'failed';
+      }
+      
+      setEnrichedLead(updated);
+      
+      // Build summary toast
+      const found: string[] = [];
+      if (result.contacts.phones_found > 0) found.push(`${result.contacts.phones_found} phone(s)`);
+      if (result.contacts.emails_found > 0) found.push(`${result.contacts.emails_found} email(s)`);
+      if (result.contacts.website_found) found.push('website');
+      if (result.ai_summary.generated) found.push('AI summary');
+      if (result.research.website_scraped) found.push('web research');
+      
+      if (found.length > 0) {
+        toast.success(`Enrichment complete: found ${found.join(', ')}`);
+      } else {
+        toast.error('Enrichment complete but no new data found');
+      }
+      
+      if (result.errors.length > 0) {
+        console.warn('Enrichment partial errors:', result.errors);
+      }
+      
+      // Reload the lead detail to reflect all server-side updates
+      window.location.reload();
+    } catch (err) { console.error('Enrichment failed:', err); toast.error('Enrichment failed — check server logs'); } 
     finally { setIsEnriching(false); }
   };
+
+  // Keep individual handlers for backward compatibility but mark as legacy
+  const handleResearch = handleEnrichAll;
+  const handleGenerateAI = handleEnrichAll;
+  const handleEnrichContacts = handleEnrichAll;
 
   const handleAddOutreachAttempt = async () => {
     if (!newOutreach.method || !newOutreach.outcome) return;
@@ -302,8 +309,8 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
             <button onClick={openWebsite} className="px-3 py-1.5 bg-purple-600 text-white text-xs font-bold rounded-lg hover:bg-purple-500 transition-colors">
               {enrichedLead.website ? 'Website' : 'Search'}
             </button>
-            <button onClick={handleResearch} disabled={isResearching} className="px-3 py-1.5 bg-slate-700 text-slate-300 text-xs font-bold rounded-lg hover:bg-slate-600 disabled:opacity-50 transition-colors" title="Searches the web for owner names, contact info, and company background">
-              {isResearching ? 'Researching...' : 'Research Company'}
+            <button onClick={handleEnrichAll} disabled={isEnriching} className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors" title="Find contacts, scrape website, and generate AI summary — all in one step">
+              {isEnriching ? 'Enriching...' : 'Enrich Lead'}
             </button>
             <div className="flex-1" />
             {/* Pipeline selector - dropdown for readability */}
@@ -444,8 +451,8 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               <div className="bg-slate-800/30 rounded-xl p-4">
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Company Overview</h3>
-                  <button onClick={handleGenerateAI} disabled={isGeneratingAI} className="text-[10px] text-blue-400 hover:text-blue-300 disabled:opacity-50">
-                    {isGeneratingAI ? 'Generating...' : aiDescription ? 'Regenerate Summary' : 'Generate Summary'}
+                  <button onClick={handleEnrichAll} disabled={isEnriching} className="text-[10px] text-blue-400 hover:text-blue-300 disabled:opacity-50">
+                    {isEnriching ? 'Enriching...' : aiDescription ? 'Refresh' : 'Enrich to Generate'}
                   </button>
                 </div>
                 {aiDescription ? (
@@ -459,7 +466,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                       .trim()
                   }</p>
                 ) : (
-                  <p className="text-sm text-slate-600 italic">Click "Generate Summary" for a research-backed overview of this company's operations and background</p>
+                  <p className="text-sm text-slate-600 italic">Click "Enrich Lead" to generate contacts and an AI summary</p>
                 )}
               </div>
 
@@ -525,37 +532,22 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                 </span>
                 {enrichedLead.enrichment_status === 'complete' ? 'Contact search complete — phone, email, and website found' :
                  enrichedLead.enrichment_status === 'partial' ? 'Partial contact info found — try searching again for more' :
-                 enrichedLead.enrichment_status === 'failed' ? 'Contact search ran but found nothing — try Research Company' :
+                 enrichedLead.enrichment_status === 'failed' ? 'Enrichment ran but found nothing — try again or search manually' :
                  'Contact search has not been run yet'}
               </div>
 
-              {/* Contact Actions - prominent when no contacts exist */}
-              {!enrichedLead.phone && !enrichedLead.email ? (
-                <div className="bg-gradient-to-r from-emerald-900/30 to-emerald-950/30 border border-emerald-500/30 rounded-xl p-4 text-center">
-                  <p className="text-slate-400 text-sm mb-3">No phone, email, or website found yet</p>
-                  <div className="flex gap-2 justify-center">
-                    <button onClick={handleEnrichContacts} disabled={isEnriching}
-                      className="px-6 py-2.5 bg-emerald-600 text-white text-sm font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors">
-                      {isEnriching ? 'Searching...' : 'Find Contact Info'}
-                    </button>
-                    <button onClick={handleResearch} disabled={isResearching}
-                      className="px-4 py-2.5 bg-slate-700 text-slate-300 text-sm font-bold rounded-lg hover:bg-slate-600 disabled:opacity-50 transition-colors" title="Searches the web for owner names, contact info, and company background">
-                      {isResearching ? 'Researching...' : 'Research Company'}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex gap-2 flex-wrap">
-                  <button onClick={handleEnrichContacts} disabled={isEnriching}
-                    className="px-4 py-2 bg-emerald-600 text-white text-sm font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors">
-                    {isEnriching ? 'Finding Contacts...' : 'Find More Contacts'}
-                  </button>
-                  <button onClick={handleResearch} disabled={isResearching}
-                    className="px-4 py-2 bg-slate-700 text-slate-300 text-sm font-bold rounded-lg hover:bg-slate-600 disabled:opacity-50 transition-colors" title="Searches the web for owner names, contact info, and company background">
-                    {isResearching ? 'Researching...' : 'Research Company'}
-                  </button>
-                </div>
-              )}
+              {/* Single Enrich Action */}
+              <div className={`${!enrichedLead.phone && !enrichedLead.email ? 'bg-gradient-to-r from-emerald-900/30 to-emerald-950/30 border border-emerald-500/30 rounded-xl p-4 text-center' : ''}`}>
+                {!enrichedLead.phone && !enrichedLead.email && (
+                  <p className="text-slate-400 text-sm mb-3">No contact info found yet</p>
+                )}
+                <button onClick={handleEnrichAll} disabled={isEnriching}
+                  className={`${!enrichedLead.phone && !enrichedLead.email ? 'px-6 py-2.5' : 'px-4 py-2'} bg-emerald-600 text-white text-sm font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors`}
+                  title="Finds contacts (phone, email, website) via Google Places, NY DOS, web scraping, and Hunter.io — then generates an AI summary">
+                  {isEnriching ? 'Enriching...' : enrichedLead.enrichment_status === 'none' ? 'Enrich Lead' : 'Re-enrich Lead'}
+                </button>
+                <p className="text-[10px] text-slate-600 mt-1.5">Searches Google Places, NY DOS, web, and Hunter.io for contacts, then generates an AI summary.</p>
+              </div>
 
               {/* All Contact Info */}
               <div className="bg-slate-800/30 rounded-xl p-4 space-y-3">

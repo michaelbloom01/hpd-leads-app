@@ -2819,6 +2819,175 @@ async def generate_ai_summary(lead_id: str):
     }
 
 
+@app.post("/api/leads/{lead_id}/enrich-all")
+async def enrich_lead_all(lead_id: str):
+    """
+    Unified enrichment: contacts (multi-source) + deep research + AI summary.
+    One button, one call, does everything.
+    """
+    results = {
+        "lead_id": lead_id,
+        "contacts": {"phones_found": 0, "emails_found": 0, "website_found": False},
+        "research": {"owner_names": [], "year_established": None, "website_scraped": False},
+        "ai_summary": {"generated": False, "description": None},
+        "errors": [],
+    }
+    
+    # Find the lead
+    lead = None
+    for l in _leads_cache:
+        if l.lead_id == lead_id:
+            lead = l
+            break
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    db = get_database()
+    company_name = lead.agent_name or lead.owner_name
+    
+    # Step 1: Multi-source contact enrichment (Google Places, NY DOS, Web Crawl, Hunter)
+    try:
+        from src.enrich.multi_source import MultiSourceEnricher
+        enricher = MultiSourceEnricher()
+        enrich_result = enricher.enrich(
+            company_name=company_name,
+            borough=lead.boro,
+            address=None,
+        )
+        
+        if enrich_result.get('phone') and not lead.phone:
+            lead.phone = enrich_result['phone']
+        if enrich_result.get('email') and not lead.email:
+            lead.email = enrich_result['email']
+        if enrich_result.get('website') and not lead.website:
+            lead.website = enrich_result['website']
+        if enrich_result.get('owner_principal') and not lead.owner_principal:
+            lead.owner_principal = enrich_result['owner_principal']
+        
+        # Collect all phones/emails from multi-source
+        phones = enrich_result.get('phones', [])
+        emails = enrich_result.get('emails', [])
+        if enrich_result.get('phone') and enrich_result['phone'] not in phones:
+            phones.append(enrich_result['phone'])
+        if enrich_result.get('email') and enrich_result['email'] not in emails:
+            emails.append(enrich_result['email'])
+        
+        results["contacts"]["phones_found"] = len(phones)
+        results["contacts"]["emails_found"] = len(emails)
+        results["contacts"]["website_found"] = bool(enrich_result.get('website'))
+        
+        # Update enrichment status
+        has_contact = bool(lead.phone or lead.email)
+        has_website = bool(lead.website)
+        if has_contact and has_website:
+            lead.enrichment_status = 'complete'
+        elif has_contact or has_website:
+            lead.enrichment_status = 'partial'
+        else:
+            lead.enrichment_status = 'failed'
+    except Exception as e:
+        logger.error(f"Contact enrichment failed for {lead_id}: {e}")
+        results["errors"].append(f"Contact enrichment: {str(e)}")
+    
+    # Step 2: Deep research (website scrape + DOS + more contacts)
+    try:
+        from src.enrich.web_crawl import WebCrawler
+        crawler = WebCrawler()
+        
+        # Find website if still missing
+        if not lead.website:
+            website = crawler.find_website(company_name + " property management NYC")
+            if website:
+                lead.website = website
+                results["contacts"]["website_found"] = True
+        
+        # Deep scrape if we have a website
+        if lead.website:
+            try:
+                scrape_data = crawler.deep_scrape(lead.website)
+                results["research"]["website_scraped"] = True
+                
+                if scrape_data.get('owner_names'):
+                    results["research"]["owner_names"] = scrape_data['owner_names']
+                if scrape_data.get('year_established'):
+                    results["research"]["year_established"] = scrape_data['year_established']
+                # Pick up any additional phones/emails from scraping
+                if scrape_data.get('phones'):
+                    for p in scrape_data['phones']:
+                        if not lead.phone:
+                            lead.phone = p
+                if scrape_data.get('emails'):
+                    for e in scrape_data['emails']:
+                        if not lead.email:
+                            lead.email = e
+            except Exception as scrape_err:
+                logger.warning(f"Deep scrape failed for {lead_id}: {scrape_err}")
+                results["errors"].append(f"Website scrape: {str(scrape_err)}")
+    except Exception as e:
+        logger.error(f"Research failed for {lead_id}: {e}")
+        results["errors"].append(f"Research: {str(e)}")
+    
+    # Step 3: AI summary
+    try:
+        from src.enrich.ai_summary import generate_company_description
+        
+        building_types_dict = None
+        if lead.building_types:
+            building_types_dict = {
+                'condo': lead.building_types.condo,
+                'coop': lead.building_types.coop,
+                'rental_elevator': lead.building_types.rental_elevator,
+                'rental_walkup': lead.building_types.rental_walkup,
+                'small_residential': lead.building_types.small_residential,
+            }
+        
+        description, failure_reason = generate_company_description(
+            company_name=company_name,
+            portfolio_size=lead.portfolio_size,
+            total_units=lead.total_units,
+            boroughs=lead.boros,
+            building_types=building_types_dict,
+            owner_names=results["research"].get("owner_names") or ([lead.owner_principal] if lead.owner_principal else None),
+        )
+        
+        if description:
+            lead.business_summary = description
+            results["ai_summary"]["generated"] = True
+            results["ai_summary"]["description"] = description
+        else:
+            results["errors"].append(f"AI summary: {failure_reason or 'Unknown error'}")
+    except Exception as e:
+        logger.error(f"AI summary failed for {lead_id}: {e}")
+        results["errors"].append(f"AI summary: {str(e)}")
+    
+    # Update enrichment status based on final state
+    has_contact = bool(lead.phone or lead.email)
+    has_website = bool(lead.website)
+    if has_contact and has_website:
+        lead.enrichment_status = 'complete'
+    elif has_contact or has_website:
+        lead.enrichment_status = 'partial'
+    elif lead.enrichment_status == 'none':
+        lead.enrichment_status = 'failed'
+    
+    # Persist to cache and DB
+    for i, l in enumerate(_leads_cache):
+        if l.lead_id == lead_id:
+            _leads_cache[i] = lead
+            break
+    
+    db.update_lead(lead_id, {
+        "phone": lead.phone,
+        "email": lead.email,
+        "website": lead.website,
+        "owner_principal": lead.owner_principal,
+        "enrichment_status": lead.enrichment_status,
+        "business_summary": lead.business_summary,
+    })
+    
+    return results
+
+
 @app.post("/api/leads/{lead_id}/outreach")
 async def add_outreach_attempt(lead_id: str, request: OutreachAttemptRequest):
     """
