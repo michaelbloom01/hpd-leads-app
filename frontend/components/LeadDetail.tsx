@@ -1,6 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
-import { ApiLead, updateLead, researchLead, addOutreachAttempt, enrichLeadContacts, generateAiSummary, CompanyResearch, OutreachAttempt, DOSInfo } from '../services/api';
+import { ApiLead, updateLead, researchLead, addOutreachAttempt, enrichLeadContacts, generateAiSummary, getDueDiligence, CompanyResearch, OutreachAttempt, DOSInfo } from '../services/api';
+
+const PIPELINE_STAGES = [
+  { value: 'research', label: 'Research' },
+  { value: 'first_contact', label: 'First Contact' },
+  { value: 'follow_up', label: 'Follow-Up' },
+  { value: 'meeting_scheduled', label: 'Meeting Scheduled' },
+  { value: 'meeting_done', label: 'Meeting Done' },
+  { value: 'loi', label: 'LOI' },
+  { value: 'due_diligence', label: 'Due Diligence' },
+  { value: 'closed', label: 'Closed' },
+];
+
+const formatCurrency = (amount: number): string => {
+  if (amount >= 1_000_000) return `$${(amount / 1_000_000).toFixed(1)}m`;
+  if (amount >= 1_000) return `$${(amount / 1_000).toFixed(0)}k`;
+  return `$${amount.toFixed(0)}`;
+};
 
 interface Props {
   lead: ApiLead;
@@ -32,6 +49,12 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
   const [outreachAttempts, setOutreachAttempts] = useState<OutreachAttempt[]>(lead.outreach_attempts || []);
   const [showAddOutreach, setShowAddOutreach] = useState(false);
   const [newOutreach, setNewOutreach] = useState({ method: 'phone', outcome: 'no_answer', notes: '' });
+  const [pipelineStage, setPipelineStage] = useState(lead.pipeline_stage || 'research');
+  const [priorityRank, setPriorityRank] = useState(lead.priority_rank || 0);
+  const [nextFollowUp, setNextFollowUp] = useState(lead.next_follow_up || '');
+  const [showDDModal, setShowDDModal] = useState(false);
+  const [ddReport, setDdReport] = useState<{ report_markdown: string; comparables: any[] } | null>(null);
+  const [isLoadingDD, setIsLoadingDD] = useState(false);
 
   // Sync state when lead prop changes
   useEffect(() => {
@@ -40,6 +63,9 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
     setOutreachStatus(lead.outreach_status || 'new');
     setOutreachAttempts(lead.outreach_attempts || []);
     setAiDescription(lead.business_summary || null);
+    setPipelineStage(lead.pipeline_stage || 'research');
+    setPriorityRank(lead.priority_rank || 0);
+    setNextFollowUp(lead.next_follow_up || '');
     setDosInfo(null);
     setCompanyResearch(null);
   }, [lead]);
@@ -64,6 +90,53 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
       console.error('Failed to save notes:', err);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handlePipelineChange = async (stage: string) => {
+    setPipelineStage(stage);
+    try {
+      await updateLead(lead.lead_id, { pipeline_stage: stage });
+      toast.success(`Pipeline → ${PIPELINE_STAGES.find(s => s.value === stage)?.label}`);
+    } catch (err) {
+      console.error('Failed to update pipeline stage:', err);
+      toast.error('Failed to update pipeline stage');
+    }
+  };
+
+  const handlePriorityChange = async (rank: number) => {
+    const newRank = rank === priorityRank ? 0 : rank; // Toggle off if clicking same star
+    setPriorityRank(newRank);
+    try {
+      await updateLead(lead.lead_id, { priority_rank: newRank });
+    } catch (err) {
+      console.error('Failed to update priority:', err);
+    }
+  };
+
+  const handleFollowUpChange = async (date: string) => {
+    setNextFollowUp(date);
+    try {
+      await updateLead(lead.lead_id, { next_follow_up: date || null });
+      toast.success(date ? `Follow-up set for ${date}` : 'Follow-up cleared');
+    } catch (err) {
+      console.error('Failed to update follow-up:', err);
+      toast.error('Failed to update follow-up');
+    }
+  };
+
+  const handleGenerateDD = async () => {
+    setIsLoadingDD(true);
+    setShowDDModal(true);
+    try {
+      const result = await getDueDiligence(lead.lead_id);
+      setDdReport(result);
+    } catch (err) {
+      console.error('Failed to generate DD report:', err);
+      toast.error('Failed to generate due diligence report');
+      setShowDDModal(false);
+    } finally {
+      setIsLoadingDD(false);
     }
   };
 
@@ -320,6 +393,76 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               <div className="text-xs text-slate-500 mt-1 uppercase tracking-wider">Units</div>
             </div>
           </div>
+
+          {/* Revenue & Violations */}
+          {(enrichedLead.estimated_annual_revenue > 0 || enrichedLead.violation_count > 0) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Revenue */}
+              <div className="bg-gradient-to-br from-emerald-900/20 to-emerald-950/20 border border-emerald-500/20 rounded-xl p-5">
+                <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-3">Est. Revenue</h3>
+                {enrichedLead.estimated_annual_revenue > 0 ? (
+                  <div className="space-y-2">
+                    <div className="text-2xl font-bold font-mono text-emerald-400">
+                      {formatCurrency(enrichedLead.estimated_annual_revenue)}<span className="text-sm text-emerald-600">/yr</span>
+                    </div>
+                    <div className="text-sm font-mono text-slate-400">
+                      {formatCurrency(enrichedLead.estimated_monthly_revenue)}<span className="text-xs text-slate-600">/mo</span>
+                    </div>
+                    <p className="text-[10px] text-slate-600 mt-2">Based on unit count, borough, and building type with 5% mgmt fee assumption</p>
+                  </div>
+                ) : (
+                  <div className="text-slate-600 text-sm">Not estimated yet</div>
+                )}
+              </div>
+
+              {/* Violations */}
+              <div className={`bg-gradient-to-br ${
+                enrichedLead.violations_per_unit > 1.0 ? 'from-rose-900/20 to-rose-950/20 border-rose-500/20' :
+                enrichedLead.violation_count > 0 ? 'from-amber-900/20 to-amber-950/20 border-amber-500/20' :
+                'from-slate-900/20 to-slate-950/20 border-white/5'
+              } border rounded-xl p-5`}>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">HPD Violations</h3>
+                  {enrichedLead.violations_per_unit > 1.0 && (
+                    <span className="px-2 py-0.5 bg-rose-600/30 text-rose-400 text-[10px] font-bold rounded uppercase">High Distress</span>
+                  )}
+                </div>
+                {enrichedLead.violation_count > 0 ? (
+                  <div className="space-y-3">
+                    <div className="text-2xl font-bold font-mono text-white">{enrichedLead.violation_count.toLocaleString()}</div>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-500">Class A (Non-hazardous)</span>
+                        <span className="font-mono text-slate-400">{enrichedLead.violation_class_a}</span>
+                      </div>
+                      <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                        <div className="h-full bg-slate-400 rounded-full" style={{ width: `${enrichedLead.violation_count > 0 ? (enrichedLead.violation_class_a / enrichedLead.violation_count) * 100 : 0}%` }} />
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-amber-500">Class B (Hazardous)</span>
+                        <span className="font-mono text-amber-400">{enrichedLead.violation_class_b}</span>
+                      </div>
+                      <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                        <div className="h-full bg-amber-500 rounded-full" style={{ width: `${enrichedLead.violation_count > 0 ? (enrichedLead.violation_class_b / enrichedLead.violation_count) * 100 : 0}%` }} />
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-rose-500">Class C (Immediately Hazardous)</span>
+                        <span className="font-mono text-rose-400">{enrichedLead.violation_class_c}</span>
+                      </div>
+                      <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                        <div className="h-full bg-rose-500 rounded-full" style={{ width: `${enrichedLead.violation_count > 0 ? (enrichedLead.violation_class_c / enrichedLead.violation_count) * 100 : 0}%` }} />
+                      </div>
+                    </div>
+                    <div className="pt-2 border-t border-white/5 text-xs text-slate-500">
+                      <span className="font-mono text-slate-300">{enrichedLead.violations_per_unit.toFixed(2)}</span> violations per unit
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-slate-600 text-sm">No violations on record</div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Building Type Composition */}
           {enrichedLead.building_types && enrichedLead.building_types.total > 0 && (
@@ -580,6 +723,18 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               {isResearching ? 'Researching...' : 'Deep Research'}
             </button>
           </div>
+
+          {/* Generate DD Report Button */}
+          <button
+            onClick={handleGenerateDD}
+            disabled={isLoadingDD}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-sm font-medium rounded-xl hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 transition-all"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            {isLoadingDD ? 'Generating DD Report...' : 'Generate Due Diligence Report'}
+          </button>
 
           {/* Company Research Results */}
           {companyResearch && (
@@ -912,24 +1067,98 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
             </div>
           )}
 
-          {/* Outreach Status */}
-          <div className="bg-slate-800/30 rounded-xl p-5">
-            <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-3">Outreach Status</h3>
-            <div className="flex flex-wrap gap-2">
-              {OUTREACH_STATUSES.map((status) => (
-                <button
-                  key={status.value}
-                  onClick={() => handleSaveStatus(status.value)}
-                  disabled={isSaving}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                    outreachStatus === status.value 
-                      ? `${status.color} ring-2 ring-offset-2 ring-offset-slate-900 ring-white/20` 
-                      : 'bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300'
-                  }`}
-                >
-                  {status.label}
-                </button>
-              ))}
+          {/* Pipeline Manager */}
+          <div className="bg-slate-800/30 rounded-xl p-5 space-y-5">
+            <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider">Deal Pipeline</h3>
+            
+            {/* Pipeline Stage Selector */}
+            <div>
+              <div className="flex gap-0.5 overflow-x-auto pb-1">
+                {PIPELINE_STAGES.map((stage, idx) => {
+                  const isActive = stage.value === pipelineStage;
+                  const currentIdx = PIPELINE_STAGES.findIndex(s => s.value === pipelineStage);
+                  const isPast = idx < currentIdx;
+                  return (
+                    <button
+                      key={stage.value}
+                      onClick={() => handlePipelineChange(stage.value)}
+                      className={`flex-1 min-w-[80px] px-2 py-2 text-[10px] font-bold uppercase tracking-wider transition-all border-b-2 ${
+                        isActive
+                          ? 'bg-blue-600/30 text-blue-300 border-blue-400'
+                          : isPast
+                          ? 'bg-emerald-600/10 text-emerald-500 border-emerald-500/50'
+                          : 'bg-slate-800/50 text-slate-600 border-slate-700 hover:bg-slate-700/50 hover:text-slate-400'
+                      } ${idx === 0 ? 'rounded-l-lg' : ''} ${idx === PIPELINE_STAGES.length - 1 ? 'rounded-r-lg' : ''}`}
+                    >
+                      {stage.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Priority & Follow-Up Row */}
+            <div className="grid grid-cols-2 gap-4">
+              {/* Priority Stars */}
+              <div>
+                <label className="text-xs text-slate-500 uppercase tracking-wider block mb-2">Priority</label>
+                <div className="flex gap-1">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      onClick={() => handlePriorityChange(star)}
+                      className="transition-transform hover:scale-110"
+                    >
+                      <svg className={`w-6 h-6 ${star <= priorityRank ? 'text-amber-400' : 'text-slate-700'}`} fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                      </svg>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Follow-Up Date */}
+              <div>
+                <label className="text-xs text-slate-500 uppercase tracking-wider block mb-2">Next Follow-Up</label>
+                <div className="relative">
+                  <input
+                    type="date"
+                    value={nextFollowUp}
+                    onChange={(e) => handleFollowUpChange(e.target.value)}
+                    className={`w-full px-3 py-1.5 bg-slate-800 border rounded-lg text-sm font-mono ${
+                      nextFollowUp && new Date(nextFollowUp) < new Date(new Date().toDateString())
+                        ? 'border-rose-500/50 text-rose-400'
+                        : nextFollowUp && new Date(nextFollowUp).toDateString() === new Date().toDateString()
+                        ? 'border-amber-500/50 text-amber-400'
+                        : 'border-slate-700 text-slate-300'
+                    }`}
+                  />
+                  {nextFollowUp && new Date(nextFollowUp) < new Date(new Date().toDateString()) && (
+                    <span className="absolute -top-2 right-2 px-1.5 py-0.5 bg-rose-600 text-[9px] font-bold text-white rounded">OVERDUE</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            {/* Outreach Status (kept below pipeline) */}
+            <div className="pt-3 border-t border-white/5">
+              <label className="text-xs text-slate-500 uppercase tracking-wider block mb-2">Outreach Status</label>
+              <div className="flex flex-wrap gap-2">
+                {OUTREACH_STATUSES.map((status) => (
+                  <button
+                    key={status.value}
+                    onClick={() => handleSaveStatus(status.value)}
+                    disabled={isSaving}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                      outreachStatus === status.value 
+                        ? `${status.color} ring-2 ring-offset-2 ring-offset-slate-900 ring-white/20` 
+                        : 'bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300'
+                    }`}
+                  >
+                    {status.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -1211,6 +1440,86 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
           )}
         </div>
       </div>
+      {/* Due Diligence Modal */}
+      {showDDModal && (
+        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4" onClick={() => setShowDDModal(false)}>
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b border-slate-800">
+              <h2 className="text-lg font-bold text-white">Due Diligence Report</h2>
+              <div className="flex gap-2">
+                {ddReport && (
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(ddReport.report_markdown);
+                      toast.success('Report copied to clipboard');
+                    }}
+                    className="px-3 py-1.5 bg-slate-700 text-slate-300 text-xs font-medium rounded-lg hover:bg-slate-600 transition-colors"
+                  >
+                    Copy Markdown
+                  </button>
+                )}
+                <button onClick={() => setShowDDModal(false)} className="px-3 py-1.5 bg-slate-800 text-slate-400 text-xs rounded-lg hover:bg-slate-700">
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="p-5 overflow-y-auto flex-1">
+              {isLoadingDD ? (
+                <div className="flex flex-col items-center justify-center py-20">
+                  <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
+                  <p className="text-slate-400 text-sm">Generating due diligence report...</p>
+                  <p className="text-slate-600 text-xs mt-1">This may take 15-30 seconds</p>
+                </div>
+              ) : ddReport ? (
+                <div className="space-y-6">
+                  <div className="prose prose-invert prose-sm max-w-none">
+                    {ddReport.report_markdown.split('\n').map((line, i) => {
+                      if (line.startsWith('# ')) return <h1 key={i} className="text-xl font-bold text-white mt-6 mb-2">{line.slice(2)}</h1>;
+                      if (line.startsWith('## ')) return <h2 key={i} className="text-lg font-bold text-blue-400 mt-5 mb-2">{line.slice(3)}</h2>;
+                      if (line.startsWith('### ')) return <h3 key={i} className="text-sm font-bold text-slate-300 mt-4 mb-1">{line.slice(4)}</h3>;
+                      if (line.startsWith('- ')) return <li key={i} className="text-slate-300 text-sm ml-4">{line.slice(2)}</li>;
+                      if (line.startsWith('**') && line.endsWith('**')) return <p key={i} className="text-white font-bold text-sm">{line.slice(2, -2)}</p>;
+                      if (line.trim() === '') return <br key={i} />;
+                      return <p key={i} className="text-slate-400 text-sm leading-relaxed">{line}</p>;
+                    })}
+                  </div>
+                  {ddReport.comparables && ddReport.comparables.length > 0 && (
+                    <div className="border-t border-slate-800 pt-4">
+                      <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-3">Comparable Leads</h3>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-slate-500 text-xs uppercase">
+                              <th className="text-left py-2 px-3">Name</th>
+                              <th className="text-right py-2 px-3">Score</th>
+                              <th className="text-right py-2 px-3">Buildings</th>
+                              <th className="text-right py-2 px-3">Units</th>
+                              <th className="text-right py-2 px-3">Revenue</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800">
+                            {ddReport.comparables.map((comp: any, i: number) => (
+                              <tr key={i} className="text-slate-300">
+                                <td className="py-2 px-3 font-medium">{comp.name || comp.lead_name}</td>
+                                <td className="py-2 px-3 text-right font-mono">{comp.score?.toFixed(1)}</td>
+                                <td className="py-2 px-3 text-right font-mono">{comp.portfolio_size || comp.buildings}</td>
+                                <td className="py-2 px-3 text-right font-mono">{comp.total_units?.toLocaleString() || comp.units}</td>
+                                <td className="py-2 px-3 text-right font-mono text-emerald-400">{comp.estimated_annual_revenue ? formatCurrency(comp.estimated_annual_revenue) : '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-slate-500 text-center py-10">No report data</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

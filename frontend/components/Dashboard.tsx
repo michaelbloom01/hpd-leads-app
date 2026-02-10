@@ -11,6 +11,7 @@ import {
   PipelineStats,
   getEnrichmentProgress,
   startBatchEnrichment,
+  getFollowUpsDue,
   EnrichmentProgress 
 } from '../services/api';
 
@@ -24,6 +25,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
   const [status, setStatus] = useState<PipelineStatus | null>(null);
   const [stats, setStats] = useState<PipelineStats | null>(null);
   const [enrichmentStatus, setEnrichmentStatus] = useState<EnrichmentProgress | null>(null);
+  const [followUpsDue, setFollowUpsDue] = useState<{ count: number; leads: Array<Record<string, unknown>> } | null>(null);
   const [loading, setLoading] = useState(true);
   const [startingEnrichment, setStartingEnrichment] = useState(false);
 
@@ -38,10 +40,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
         ]);
       };
 
-      const [leadsResult, statsResult, enrichResult] = await Promise.allSettled([
+      const [leadsResult, statsResult, enrichResult, followUpsResult] = await Promise.allSettled([
         withTimeout(fetchLeads({ limit: 50, min_portfolio: 10 }), 15000),
         withTimeout(fetchStats(), 15000),
         withTimeout(getEnrichmentProgress(), 10000),
+        withTimeout(getFollowUpsDue(), 10000),
       ]);
       
       // Process leads (most important)
@@ -78,6 +81,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
         setEnrichmentStatus(enrichResult.value);
       } else {
         console.warn('Enrichment status unavailable:', enrichResult.reason);
+      }
+
+      // Process follow-ups due
+      if (followUpsResult.status === 'fulfilled') {
+        setFollowUpsDue(followUpsResult.value);
+      } else {
+        console.warn('Follow-ups unavailable:', followUpsResult.reason);
       }
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
@@ -301,6 +311,67 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Follow-Ups Due Widget */}
+        {followUpsDue && followUpsDue.count > 0 && (
+          <div className="bg-gradient-to-br from-rose-900/30 to-rose-950/30 border border-rose-500/30 rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-white">Follow-Ups Due</h3>
+              <span className="px-2 py-1 bg-rose-600 text-white text-xs font-bold rounded-lg">
+                {followUpsDue.count} due
+              </span>
+            </div>
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {followUpsDue.leads.slice(0, 5).map((lead: any, i: number) => {
+                const dueDate = lead.next_follow_up ? new Date(lead.next_follow_up as string) : null;
+                const today = new Date(new Date().toDateString());
+                const isOverdue = dueDate && dueDate < today;
+                const isDueToday = dueDate && dueDate.toDateString() === today.toDateString();
+                const daysOverdue = dueDate ? Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)) : 0;
+
+                return (
+                  <div 
+                    key={lead.lead_id as string || i}
+                    onClick={() => {
+                      // Try to find the lead in topLeads for full data
+                      const fullLead = topLeads.find(l => l.lead_id === lead.lead_id);
+                      if (fullLead) onSelectLead?.(fullLead);
+                    }}
+                    className="flex items-center justify-between p-3 bg-slate-900/50 rounded-xl hover:bg-slate-800/50 cursor-pointer transition-colors"
+                  >
+                    <div>
+                      <p className="text-white font-medium text-sm">{lead.agent_name || lead.owner_name || lead.company_name || 'Unknown'}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {lead.pipeline_stage && (
+                          <span className="text-[10px] px-1.5 py-0.5 bg-blue-900/30 text-blue-400 rounded">
+                            {(lead.pipeline_stage as string).replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}
+                          </span>
+                        )}
+                        {lead.phone && (
+                          <svg className="w-3 h-3 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
+                          </svg>
+                        )}
+                        {lead.email && (
+                          <svg className="w-3 h-3 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                          </svg>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className={`text-xs font-bold ${
+                        isOverdue ? 'text-rose-400' : isDueToday ? 'text-amber-400' : 'text-slate-500'
+                      }`}>
+                        {isOverdue ? `${daysOverdue}d overdue` : isDueToday ? 'Due today' : lead.next_follow_up}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

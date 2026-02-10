@@ -284,7 +284,7 @@ export async function updateLead(
     outreach_status?: string; 
     notes?: string;
     pipeline_stage?: string;
-    next_follow_up?: string;
+    next_follow_up?: string | null;
     priority_rank?: number;
   }
 ): Promise<{

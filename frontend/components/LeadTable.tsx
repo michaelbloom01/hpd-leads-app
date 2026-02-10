@@ -6,7 +6,7 @@ interface Props {
   onSelectLead: (lead: ApiLead) => void;
 }
 
-type SortField = 'agent_name' | 'portfolio_size' | 'total_units' | 'score' | 'boro' | 'enrichment_status';
+type SortField = 'agent_name' | 'portfolio_size' | 'total_units' | 'score' | 'boro' | 'enrichment_status' | 'estimated_annual_revenue' | 'violation_count';
 type SortDir = 'asc' | 'desc';
 
 const BOROUGHS = ['MANHATTAN', 'BROOKLYN', 'QUEENS', 'BRONX', 'STATEN ISLAND'];
@@ -135,6 +135,14 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
         aVal = a.enrichment_status || '';
         bVal = b.enrichment_status || '';
         break;
+      case 'estimated_annual_revenue':
+        aVal = a.estimated_annual_revenue || 0;
+        bVal = b.estimated_annual_revenue || 0;
+        break;
+      case 'violation_count':
+        aVal = a.violation_count || 0;
+        bVal = b.violation_count || 0;
+        break;
     }
     if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
     if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
@@ -227,11 +235,13 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     } catch (err) {
       console.error('Server export failed, falling back to client export:', err);
       // Fallback: export current page
-      const headers = ['Management Company','Company Name','Entity Type','Primary Contact','Owner Name','Boroughs','Buildings','Units','Score','Phone','Email','Website','Enrichment Status','Outreach Status'];
+      const headers = ['Management Company','Company Name','Entity Type','Primary Contact','Owner Name','Boroughs','Buildings','Units','Score','Est Annual Revenue','Violations','Violations/Unit','Phone','Email','Website','Enrichment Status','Outreach Status','Pipeline Stage','Priority','Next Follow-Up'];
       const rows = displayLeads.map(lead => [
         lead.agent_name || '', lead.company_name || '', lead.entity_type || '', lead.primary_contact || '',
         lead.owner_name || '', lead.boros?.join(', ') || lead.boro || '', lead.portfolio_size, lead.total_units,
-        lead.score.toFixed(1), lead.phone || '', lead.email || '', lead.website || '', lead.enrichment_status, lead.outreach_status || 'new'
+        lead.score.toFixed(1), lead.estimated_annual_revenue || 0, lead.violation_count || 0, lead.violations_per_unit || 0,
+        lead.phone || '', lead.email || '', lead.website || '', lead.enrichment_status, lead.outreach_status || 'new',
+        lead.pipeline_stage || '', lead.priority_rank || 0, lead.next_follow_up || ''
       ]);
       const escapeValue = (val: string | number) => {
         const str = String(val);
@@ -474,6 +484,18 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                 >
                   Score <SortIcon field="score" />
                 </th>
+                <th 
+                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right"
+                  onClick={() => handleSort('estimated_annual_revenue')}
+                >
+                  Revenue <SortIcon field="estimated_annual_revenue" />
+                </th>
+                <th 
+                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right"
+                  onClick={() => handleSort('violation_count')}
+                >
+                  Violations <SortIcon field="violation_count" />
+                </th>
                 <th className="px-4 py-3">Contact</th>
                 <th 
                   className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors"
@@ -572,6 +594,32 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                       {lead.score.toFixed(1)}
                     </span>
                   </td>
+                  <td className="px-4 py-3 text-right">
+                    {lead.estimated_annual_revenue > 0 ? (
+                      <span className="font-mono text-sm text-emerald-400">
+                        {lead.estimated_annual_revenue >= 1_000_000
+                          ? `$${(lead.estimated_annual_revenue / 1_000_000).toFixed(1)}m`
+                          : lead.estimated_annual_revenue >= 1_000
+                          ? `$${(lead.estimated_annual_revenue / 1_000).toFixed(0)}k`
+                          : `$${lead.estimated_annual_revenue}`}
+                      </span>
+                    ) : (
+                      <span className="text-slate-700">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {lead.violation_count > 0 ? (
+                      <div className="flex items-center justify-end gap-1.5">
+                        <span className={`w-2 h-2 rounded-full ${
+                          lead.violations_per_unit > 1.0 ? 'bg-rose-500' :
+                          lead.violations_per_unit > 0.5 ? 'bg-amber-500' : 'bg-emerald-500'
+                        }`} />
+                        <span className="font-mono text-sm text-slate-300">{lead.violation_count.toLocaleString()}</span>
+                      </div>
+                    ) : (
+                      <span className="text-slate-700">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                     <div className="flex gap-1.5">
                       {lead.phone && (
@@ -619,14 +667,21 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`px-2 py-0.5 text-xs rounded ${
-                      lead.enrichment_status === 'complete' ? 'bg-emerald-900/30 text-emerald-400' :
-                      lead.enrichment_status === 'partial' ? 'bg-amber-900/30 text-amber-400' :
-                      lead.enrichment_status === 'failed' ? 'bg-rose-900/30 text-rose-400' :
-                      'bg-slate-800 text-slate-500'
-                    }`}>
-                      {lead.enrichment_status}
-                    </span>
+                    <div className="flex flex-col gap-1">
+                      <span className={`px-2 py-0.5 text-xs rounded inline-block w-fit ${
+                        lead.enrichment_status === 'complete' ? 'bg-emerald-900/30 text-emerald-400' :
+                        lead.enrichment_status === 'partial' ? 'bg-amber-900/30 text-amber-400' :
+                        lead.enrichment_status === 'failed' ? 'bg-rose-900/30 text-rose-400' :
+                        'bg-slate-800 text-slate-500'
+                      }`}>
+                        {lead.enrichment_status}
+                      </span>
+                      {lead.pipeline_stage && lead.pipeline_stage !== 'research' && (
+                        <span className="px-2 py-0.5 text-[10px] rounded bg-blue-900/30 text-blue-400 inline-block w-fit">
+                          {lead.pipeline_stage.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                        </span>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
