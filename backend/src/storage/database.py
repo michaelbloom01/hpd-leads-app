@@ -120,6 +120,50 @@ class LeadsDatabase:
                 except sqlite3.OperationalError:
                     pass  # Column already exists
             
+            # Migration: Add enrichment retry column (Phase 2.7)
+            try:
+                conn.execute("ALTER TABLE leads ADD COLUMN enrichment_retries INTEGER DEFAULT 0")
+                logger.info("Added enrichment_retries column to leads table")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            
+            # Migration: Add revenue estimation columns (Phase 5.1)
+            for col, col_type in [
+                ("estimated_monthly_revenue", "REAL"),
+                ("estimated_annual_revenue", "REAL"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE leads ADD COLUMN {col} {col_type}")
+                    logger.info(f"Added {col} column to leads table")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+            
+            # Migration: Add violations columns (Phase 5.2)
+            for col, col_type in [
+                ("violation_count", "INTEGER DEFAULT 0"),
+                ("violation_class_a", "INTEGER DEFAULT 0"),
+                ("violation_class_b", "INTEGER DEFAULT 0"),
+                ("violation_class_c", "INTEGER DEFAULT 0"),
+                ("violations_per_unit", "REAL DEFAULT 0.0"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE leads ADD COLUMN {col} {col_type}")
+                    logger.info(f"Added {col} column to leads table")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+            
+            # Migration: Add pipeline columns (Phase 5.3)
+            for col, col_type in [
+                ("pipeline_stage", "TEXT DEFAULT 'research'"),
+                ("next_follow_up", "TEXT"),
+                ("priority_rank", "INTEGER DEFAULT 0"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE leads ADD COLUMN {col} {col_type}")
+                    logger.info(f"Added {col} column to leads table")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+            
             conn.executescript("""
                 
                 -- Lead user data (notes, status, etc.) - kept for backward compatibility
@@ -192,6 +236,51 @@ class LeadsDatabase:
                 CREATE INDEX IF NOT EXISTS idx_leads_outreach ON leads(outreach_status);
                 CREATE INDEX IF NOT EXISTS idx_leads_score_portfolio ON leads(score DESC, portfolio_size DESC);
                 CREATE INDEX IF NOT EXISTS idx_leads_entity_type ON leads(entity_type);
+                CREATE INDEX IF NOT EXISTS idx_leads_pipeline_stage ON leads(pipeline_stage);
+                CREATE INDEX IF NOT EXISTS idx_leads_next_follow_up ON leads(next_follow_up);
+                CREATE INDEX IF NOT EXISTS idx_leads_priority_rank ON leads(priority_rank DESC);
+                
+                -- NY DOS cache (Phase 2.7c)
+                CREATE TABLE IF NOT EXISTS dos_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    result TEXT,  -- JSON serialized DOSEntity or null
+                    cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                -- Google Places cache (Phase 2.7d)
+                CREATE TABLE IF NOT EXISTS places_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    result TEXT,  -- JSON serialized result
+                    cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                -- Change alerts (Phase 5.4)
+                CREATE TABLE IF NOT EXISTS change_alerts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    alert_type TEXT NOT NULL,  -- new_company, portfolio_change, contact_change, buildings_added, buildings_removed
+                    lead_id TEXT,
+                    description TEXT NOT NULL,
+                    details TEXT,  -- JSON
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    dismissed INTEGER DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_change_alerts_created ON change_alerts(created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_change_alerts_dismissed ON change_alerts(dismissed);
+                
+                -- Outreach events (Phase 5.3) - richer than outreach_attempts
+                CREATE TABLE IF NOT EXISTS outreach_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    lead_id TEXT NOT NULL,
+                    stage TEXT NOT NULL,
+                    method TEXT,
+                    outcome TEXT,
+                    notes TEXT,
+                    next_follow_up TEXT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (lead_id) REFERENCES leads(lead_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_outreach_events_lead ON outreach_events(lead_id);
+                CREATE INDEX IF NOT EXISTS idx_outreach_events_stage ON outreach_events(stage);
             """)
             conn.commit()
             logger.info(f"Database initialized at {self.db_path}")
@@ -369,6 +458,9 @@ class LeadsDatabase:
             'dos_id', 'dos_status', 'notes', 'outreach_status',
             'entity_type', 'company_name', 'primary_contact', 'primary_contact_title',
             'enrichment_sources', 'score', 'score_breakdown',
+            'enrichment_retries', 'estimated_monthly_revenue', 'estimated_annual_revenue',
+            'violation_count', 'violation_class_a', 'violation_class_b', 'violation_class_c',
+            'violations_per_unit', 'pipeline_stage', 'next_follow_up', 'priority_rank',
         }
         
         # Filter to allowed fields
@@ -985,6 +1077,165 @@ class LeadsDatabase:
                 "with_email": with_email,
                 "with_website": with_website,
             }
+    
+    # === DOS Cache (Phase 2.7c) ===
+    
+    def get_dos_cache(self, cache_key: str) -> Optional[Dict]:
+        """Get cached NY DOS lookup result."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT result, cached_at FROM dos_cache WHERE cache_key = ?",
+                (cache_key,)
+            ).fetchone()
+            if row:
+                return json.loads(row['result']) if row['result'] else None
+            return None  # Cache miss (returns None - differentiate from cached "not found")
+    
+    def has_dos_cache(self, cache_key: str) -> bool:
+        """Check if a DOS cache entry exists (even if result is null = not found)."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM dos_cache WHERE cache_key = ?",
+                (cache_key,)
+            ).fetchone()
+            return row is not None
+    
+    def set_dos_cache(self, cache_key: str, result: Optional[Dict]):
+        """Cache a NY DOS lookup result (can be None for 'not found')."""
+        with self._get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO dos_cache (cache_key, result, cached_at) VALUES (?, ?, ?)",
+                (cache_key, json.dumps(result) if result else None, datetime.now().isoformat())
+            )
+            conn.commit()
+    
+    # === Google Places Cache (Phase 2.7d) ===
+    
+    def get_places_cache(self, cache_key: str) -> Optional[Dict]:
+        """Get cached Google Places result."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT result, cached_at FROM places_cache WHERE cache_key = ?",
+                (cache_key,)
+            ).fetchone()
+            if row:
+                return json.loads(row['result']) if row['result'] else None
+            return None
+    
+    def has_places_cache(self, cache_key: str) -> bool:
+        """Check if a Places cache entry exists."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM places_cache WHERE cache_key = ?",
+                (cache_key,)
+            ).fetchone()
+            return row is not None
+    
+    def set_places_cache(self, cache_key: str, result: Optional[Dict]):
+        """Cache a Google Places result."""
+        with self._get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO places_cache (cache_key, result, cached_at) VALUES (?, ?, ?)",
+                (cache_key, json.dumps(result) if result else None, datetime.now().isoformat())
+            )
+            conn.commit()
+    
+    # === Outreach Events (Phase 5.3) ===
+    
+    def add_outreach_event(self, lead_id: str, event: Dict) -> int:
+        """Add an outreach event and return its ID."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """INSERT INTO outreach_events (lead_id, stage, method, outcome, notes, next_follow_up, timestamp)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (lead_id, event['stage'], event.get('method'), event.get('outcome'),
+                 event.get('notes'), event.get('next_follow_up'),
+                 event.get('timestamp', datetime.now().isoformat()))
+            )
+            conn.commit()
+            return cursor.lastrowid
+    
+    def get_outreach_events(self, lead_id: str) -> List[Dict]:
+        """Get all outreach events for a lead, most recent first."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """SELECT id, stage, method, outcome, notes, next_follow_up, timestamp
+                   FROM outreach_events WHERE lead_id = ? ORDER BY timestamp DESC""",
+                (lead_id,)
+            ).fetchall()
+            return [dict(row) for row in rows]
+    
+    def get_follow_ups_due(self, before_date: Optional[str] = None) -> List[Dict]:
+        """Get leads with follow-ups due on or before the given date."""
+        if before_date is None:
+            before_date = datetime.now().strftime("%Y-%m-%d")
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """SELECT l.lead_id, l.agent_name, l.company_name, l.phone, l.email,
+                          l.pipeline_stage, l.next_follow_up, l.priority_rank, l.score, l.portfolio_size
+                   FROM leads l
+                   WHERE l.next_follow_up IS NOT NULL AND l.next_follow_up <= ?
+                   ORDER BY l.priority_rank DESC, l.next_follow_up ASC""",
+                (before_date,)
+            ).fetchall()
+            return [dict(row) for row in rows]
+    
+    # === Change Alerts (Phase 5.4) ===
+    
+    def add_change_alert(self, alert_type: str, description: str, lead_id: Optional[str] = None, details: Optional[Dict] = None):
+        """Add a change alert."""
+        with self._get_connection() as conn:
+            conn.execute(
+                """INSERT INTO change_alerts (alert_type, lead_id, description, details)
+                   VALUES (?, ?, ?, ?)""",
+                (alert_type, lead_id, description, json.dumps(details) if details else None)
+            )
+            conn.commit()
+    
+    def get_change_alerts(self, limit: int = 50, include_dismissed: bool = False) -> List[Dict]:
+        """Get recent change alerts."""
+        with self._get_connection() as conn:
+            where = "" if include_dismissed else "WHERE dismissed = 0"
+            rows = conn.execute(
+                f"""SELECT id, alert_type, lead_id, description, details, created_at, dismissed
+                    FROM change_alerts {where}
+                    ORDER BY created_at DESC LIMIT ?""",
+                (limit,)
+            ).fetchall()
+            result = []
+            for row in rows:
+                d = dict(row)
+                if d.get('details'):
+                    d['details'] = json.loads(d['details'])
+                result.append(d)
+            return result
+    
+    def dismiss_alert(self, alert_id: int):
+        """Dismiss a change alert."""
+        with self._get_connection() as conn:
+            conn.execute("UPDATE change_alerts SET dismissed = 1 WHERE id = ?", (alert_id,))
+            conn.commit()
+    
+    # === Lead by ID from DB (Phase 4.2) ===
+    
+    def get_lead_by_id(self, lead_id: str) -> Optional[Dict]:
+        """Get a single lead by ID directly from DB."""
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT * FROM leads WHERE lead_id = ?", (lead_id,)).fetchone()
+            return dict(row) if row else None
+    
+    def increment_enrichment_retries(self, lead_id: str) -> int:
+        """Increment enrichment retry count and return new value."""
+        with self._get_connection() as conn:
+            conn.execute(
+                "UPDATE leads SET enrichment_retries = COALESCE(enrichment_retries, 0) + 1 WHERE lead_id = ?",
+                (lead_id,)
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT enrichment_retries FROM leads WHERE lead_id = ?", (lead_id,)
+            ).fetchone()
+            return row[0] if row else 0
 
 
 # Singleton instance

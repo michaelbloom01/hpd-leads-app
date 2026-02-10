@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Startup script that reads PORT from environment and starts gunicorn."""
+import logging
 import os
 import subprocess
 import sys
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 port = os.environ.get("PORT", "8000")
-print(f"Starting server on port {port}")
+logger.info(f"Starting server on port {port}")
 
 cmd = [
     "gunicorn",
@@ -16,5 +20,5 @@ cmd = [
     "--timeout", "120",
 ]
 
-print(f"Running: {' '.join(cmd)}")
+logger.info(f"Running: {' '.join(cmd)}")
 sys.exit(subprocess.call(cmd))

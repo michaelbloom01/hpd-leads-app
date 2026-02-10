@@ -1,81 +1,77 @@
-# HPD Leads Pipeline
+# HPD Leads App - Backend
 
-Generate acquisition leads for Property Management and HOA/COA firms in NYC by aggregating HPD registration data and enriching with contact information.
+Python FastAPI backend for the HPD Leads property management lead generation platform.
 
 ## Quick Start
 
 ```bash
-# Clone and setup
-cd C:\Users\micha\Projects\hpd-leads
-python -m venv venv
-venv\Scripts\activate
 pip install -r requirements.txt
-
-# Configure
-cp .env.example .env
-# Edit .env with your API keys
-
-# Run backfill (first time)
-python scripts/backfill.py
-
-# Run daily update
-python scripts/daily_run.py
+python -m uvicorn api:app --reload --port 8000
 ```
 
-## Output
+API docs at http://localhost:8000/docs
 
-Google Sheet with:
-- Lead name, contact info, website
-- Portfolio size (buildings managed)
-- Score and tier (A/B/C/D/F)
-- Business summary
-- Tags for filtering
-
-## Data Sources
-
-1. **HPD Multiple Dwelling Registrations** — NYC Open Data
-2. **NY DOS Corporation Database** — NY State Open Data
-3. **Web crawl** — Company websites
-4. **Paid APIs** — Apollo.io (optional)
-
-## Project Structure
+## Architecture
 
 ```
-hpd-leads/
-├── docs/           # Knowledge base (read before coding)
-├── src/            # Source code
-│   ├── ingest/     # HPD API client
-│   ├── transform/  # Normalization
-│   ├── enrich/     # Web/API enrichment
-│   ├── score/      # Lead scoring
-│   └── publish/    # Google Sheets writer
-├── scripts/        # Runnable scripts
-├── config/         # Settings and weights
-├── data/           # Cached data (gitignored)
-├── tasks/          # Task tracking
-└── skills/         # Extracted learnings
+backend/
+├── api.py                    # FastAPI app with all endpoints
+├── start.py                  # Gunicorn startup script (Railway)
+├── Dockerfile                # Railway deployment
+├── requirements.txt          # Python dependencies
+├── config/
+│   └── scoring_weights.yaml  # Scoring V2 configuration
+├── src/
+│   ├── ingest/
+│   │   ├── hpd_client.py     # HPD Buildings & Contacts API
+│   │   ├── pluto_client.py   # PLUTO building classification
+│   │   └── hpd_violations.py # HPD Violations API
+│   ├── transform/
+│   │   ├── normalize.py      # Building data normalization
+│   │   └── aggregate.py      # Lead aggregation + entity classification
+│   ├── score/
+│   │   ├── scorer.py         # Scoring V2 (8 dimensions)
+│   │   └── revenue.py        # Revenue estimation
+│   ├── enrich/
+│   │   ├── enricher.py       # Enrichment orchestrator
+│   │   ├── contact_sources.py # Google Places, Hunter.io, MultiSourceEnricher
+│   │   ├── ny_dos.py         # NY DOS corporation lookup (with SQLite cache)
+│   │   └── web_crawl.py      # Web crawling for phone/email
+│   └── storage/
+│       └── database.py       # SQLite database (leads, caches, events, alerts)
+├── data/                     # SQLite database files (gitignored)
+├── scripts/                  # Utility scripts
+├── tasks/
+│   ├── todo.md               # Task tracker
+│   └── lessons.md            # Lessons learned
+└── docs/                     # Architecture documentation
 ```
 
-## Documentation
+## Key API Endpoints
 
-See `docs/` folder for detailed documentation:
-- `00-project-overview.md` — Goals and scope
-- `01-data-sources.md` — API details
-- `02-data-model.md` — Lead schema
-- `03-scoring-rules.md` — How scoring works
-- `04-enrichment-strategy.md` — Web/API enrichment
-- `05-google-sheet-design.md` — Output format
-- `06-pipeline-architecture.md` — Technical flow
-- `07-scheduling-ops.md` — Daily runs
-- `08-compliance-notes.md` — Legal/ethical notes
+See root README.md for the full endpoint list.
 
-## Requirements
+## Database Schema
 
-- Python 3.10+
-- Google Cloud service account with Sheets API
-- NYC Open Data app token (optional but recommended)
-- Apollo.io API key (optional, for enrichment)
+The SQLite database (`data/leads.db`) contains:
 
-## License
+- **leads** - 102k+ lead records with scores, contacts, revenue, violations, pipeline stage
+- **lead_user_data** - User-entered outreach status and notes (legacy)
+- **enrichment_cache** - Cached enrichment results
+- **outreach_attempts** - Legacy outreach log
+- **outreach_events** - Pipeline outreach events (Phase 5.3)
+- **enrichment_jobs** - Background enrichment job tracking
+- **dos_cache** - Persisted NY DOS lookup cache
+- **places_cache** - Persisted Google Places lookup cache
+- **change_alerts** - Data change detection alerts
 
-Private project for Michael Bloom's acquisition search.
+## Environment Variables
+
+```
+PORT=8000                              # Server port (Railway sets this)
+DATABASE_PATH=/data/leads.db           # SQLite path (Railway volume)
+ANTHROPIC_API_KEY=sk-ant-...           # AI summaries
+GOOGLE_PLACES_API_KEY=AIza...          # Google Places enrichment
+HUNTER_API_KEY=...                     # Hunter.io email finder
+CORS_ORIGINS=https://hpd-leads-app.vercel.app,http://localhost:5173
+```

@@ -224,6 +224,11 @@ class Enricher:
             if skip_enriched and lead.enrichment_status in ["complete", "partial"]:
                 continue
             
+            # Skip leads that have been retried too many times (Phase 2.7)
+            retries = getattr(lead, 'enrichment_retries', 0) or 0
+            if retries >= 3 and lead.enrichment_status == "failed":
+                continue
+            
             # Filter by score
             if min_score is not None and lead.score < min_score:
                 continue
@@ -257,6 +262,13 @@ class Enricher:
             except Exception as e:
                 logger.warning(f"Failed to enrich {lead.agent_name}: {e}")
                 lead.enrichment_status = "failed"
+                # Increment retry counter (Phase 2.7)
+                try:
+                    from src.storage.database import get_database
+                    db = get_database()
+                    db.increment_enrichment_retries(lead.lead_id)
+                except Exception:
+                    pass
                 enriched.append(lead)
         
         logger.info(f"Enrichment complete: {success_count}/{len(batch)} successful")

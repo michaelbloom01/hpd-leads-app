@@ -1,12 +1,21 @@
-# Scoring Configuration
-# Adjust these weights to change how leads are prioritized
+# Scoring Configuration V2
+# When revenue/violations data is available, V2 weights are used.
+# Otherwise falls back to V1 weights (portfolio-heavy).
 
+# V2 Weights (used when revenue data is available)
 weights:
-  portfolio: 0.50    # Weight for portfolio size score
-  units: 0.20        # Weight for total units score
-  professional: 0.15 # Weight for professional indicators
-  contact: 0.15      # Weight for contact completeness
-  concentration_bonus: 0.10  # Bonus for geographically focused operators (0-10 points)
+  portfolio: 0.25       # Portfolio size (number of buildings)
+  units: 0.10           # Total residential units
+  professional: 0.15    # Entity type, corporate indicators
+  contact: 0.10         # Phone/email/website completeness
+  concentration_bonus: 0.05  # Geographic focus bonus
+  revenue: 0.15         # Estimated management fee revenue
+  distress: 0.05        # HPD violations as opportunity/risk signal
+  deal_fit: 0.15        # Composite PE acquisition criteria match
+
+# V1 Fallback Weights (used when no revenue data)
+# portfolio: 0.50, units: 0.20, professional: 0.15, contact: 0.15
+# concentration_bonus: 0.10
 
 # Thresholds for portfolio size scoring
 portfolio_thresholds:
@@ -15,16 +24,14 @@ portfolio_thresholds:
   tier_60: 25    # 25-49 buildings = 60 points
   tier_40: 10    # 10-24 buildings = 40 points
   tier_20: 5     # 5-9 buildings = 20 points
-  # < 5 buildings = 10 points
 
 # Thresholds for unit count scoring
 unit_thresholds:
   tier_100: 1000  # 1000+ units = 100 points
-  tier_80: 500    # 500-999 units = 80 points
-  tier_60: 250    # 250-499 units = 60 points
-  tier_40: 100    # 100-249 units = 40 points
-  tier_20: 50     # 50-99 units = 20 points
-  # < 50 units = 10 points
+  tier_80: 500
+  tier_60: 250
+  tier_40: 100
+  tier_20: 50
 
 # Keywords indicating professional management
 professional_keywords:
@@ -46,6 +53,12 @@ tier_labels:
   C: "Moderate"      # 40-59
   D: "Low Priority"  # 20-39
   F: "Minimal"       # 0-19
+
+# Revenue target range for deal_fit scoring
+# PE target: $500K-$1.5M EBITDA, revenue is rough proxy
+revenue_target:
+  min: 300000    # $300K annual management revenue
+  max: 2000000   # $2M annual management revenue
 
 # Minimum score to include in output (set to 0 for all)
 min_score_threshold: 0

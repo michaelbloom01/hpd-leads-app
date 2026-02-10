@@ -35,10 +35,11 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Enable CORS for frontend
+# Enable CORS for frontend (Phase 4.3: locked down to actual frontend URL)
 import os
-_cors_origins = os.environ.get("CORS_ORIGINS", "*")
-_allowed_origins = _cors_origins.split(",") if _cors_origins != "*" else ["*"]
+_cors_default = "https://hpd-leads-app.vercel.app,http://localhost:5173,http://localhost:3000"
+_cors_origins = os.environ.get("CORS_ORIGINS", _cors_default)
+_allowed_origins = [o.strip() for o in _cors_origins.split(",")]
 
 app.add_middleware(
     CORSMiddleware,
@@ -124,6 +125,17 @@ async def startup_load():
         import asyncio
         asyncio.create_task(_continuous_enrichment_scheduler())
         logger.info("Startup: Continuous enrichment scheduler started")
+        
+        # Check for stale data and create alerts (Phase 5.4)
+        from datetime import timedelta
+        if _last_refresh and (datetime.now() - _last_refresh) > timedelta(days=7):
+            days_stale = (datetime.now() - _last_refresh).days
+            db.add_change_alert(
+                "stale_data",
+                f"Data hasn't been refreshed in {days_stale} days. Consider running /api/refresh.",
+                details={"last_refresh": _last_refresh.isoformat(), "days_stale": days_stale},
+            )
+            logger.warning(f"Startup: Data is {days_stale} days stale")
     else:
         logger.info("Startup: No leads in database, run /api/refresh to populate")
 
@@ -232,11 +244,11 @@ async def _resume_enrichment_job(job: dict):
     
     logger.info(f"Resume enrichment: Resuming job {job['id']} with {len(remaining_ids)} leads")
     
-    # Run in thread to not block
+    # Run in thread to not block (Phase 4.2: removed unused min_score param)
     import threading
     thread = threading.Thread(
         target=_run_background_enrichment_with_job, 
-        args=(job['id'], remaining_ids, job.get('config', {}).get('min_score'))
+        args=(job['id'], remaining_ids)
     )
     thread.daemon = True
     thread.start()
@@ -249,13 +261,15 @@ async def health_check():
     db = get_database()
     lead_count = db.get_leads_count()
     
-    # Count unenriched high-value leads
-    unenriched_count = sum(1 for lead in _leads_cache 
-                          if lead.portfolio_size >= 10 and lead.enrichment_status in ['none', None, ''])
+    # Thread-safe snapshot of cache (Phase 4.1)
+    with _leads_lock:
+        cache_size = len(_leads_cache)
+        unenriched_count = sum(1 for lead in _leads_cache 
+                              if lead.portfolio_size >= 10 and lead.enrichment_status in ['none', None, ''])
     
     return {
         "status": "healthy",
-        "leads_in_cache": len(_leads_cache),
+        "leads_in_cache": cache_size,
         "leads_in_db": lead_count,
         "enrichment_running": _enrichment_state.get("running", False),
         "unenriched_high_value": unenriched_count,
@@ -263,14 +277,79 @@ async def health_check():
     }
 
 
+@app.get("/api/health/detailed")
+async def health_detailed():
+    """Comprehensive health and diagnostics endpoint (Phase 4.4)."""
+    import time
+    start = time.time()
+    
+    db = get_database()
+    lead_count = db.get_leads_count()
+    enrichment_stats = db.get_enrichment_stats()
+    
+    # DB file size
+    db_size_bytes = 0
+    try:
+        db_size_bytes = db.db_path.stat().st_size if db.db_path.exists() else 0
+    except Exception:
+        pass
+    
+    with _leads_lock:
+        cache_size = len(_leads_cache)
+    
+    # Active enrichment job
+    active_job = db.get_active_enrichment_job()
+    
+    # Follow-ups due
+    follow_ups = db.get_follow_ups_due()
+    
+    # Recent alerts
+    alerts = db.get_change_alerts(limit=10)
+    
+    return {
+        "status": "healthy",
+        "uptime_check_ms": round((time.time() - start) * 1000, 1),
+        "database": {
+            "path": str(db.db_path),
+            "size_mb": round(db_size_bytes / (1024 * 1024), 2),
+            "total_leads": lead_count,
+        },
+        "cache": {
+            "leads_in_cache": cache_size,
+        },
+        "enrichment": {
+            "running": _enrichment_state.get("running", False),
+            "by_status": enrichment_stats.get("by_status", {}),
+            "with_phone": enrichment_stats.get("with_phone", 0),
+            "with_email": enrichment_stats.get("with_email", 0),
+            "with_website": enrichment_stats.get("with_website", 0),
+            "active_job": {
+                "id": active_job["id"],
+                "status": active_job["status"],
+                "processed": active_job.get("processed", 0),
+                "total": active_job.get("total_leads", 0),
+                "remaining": len(active_job.get("lead_ids_remaining", [])),
+            } if active_job else None,
+        },
+        "pipeline": {
+            "follow_ups_due": len(follow_ups),
+            "recent_alerts": len(alerts),
+        },
+        "last_refresh": _last_refresh.isoformat() if _last_refresh else None,
+    }
+
+
 @app.get("/api/enrichment/queue")
 async def get_enrichment_queue():
     """Get info about leads waiting for enrichment."""
-    # Count by enrichment status
+    # Thread-safe snapshot of cache (Phase 4.1)
+    with _leads_lock:
+        cache_snapshot = list(_leads_cache)
+    
     status_counts = {"none": 0, "partial": 0, "complete": 0, "failed": 0}
     high_value_unenriched = []
     
-    for lead in _leads_cache:
+    for lead in cache_snapshot:
         status = lead.enrichment_status or "none"
         if status in status_counts:
             status_counts[status] += 1
@@ -288,7 +367,7 @@ async def get_enrichment_queue():
     high_value_unenriched.sort(key=lambda x: x["score"], reverse=True)
     
     return {
-        "total_leads": len(_leads_cache),
+        "total_leads": len(cache_snapshot),
         "status_counts": status_counts,
         "high_value_unenriched_count": len(high_value_unenriched),
         "next_in_queue": high_value_unenriched[:10],  # Top 10 waiting
@@ -373,6 +452,19 @@ class LeadResponse(BaseModel):
     company_name: Optional[str] = None
     primary_contact: Optional[str] = None
     primary_contact_title: Optional[str] = None
+    # Revenue estimation (Phase 5.1)
+    estimated_monthly_revenue: float = 0.0
+    estimated_annual_revenue: float = 0.0
+    # Violations (Phase 5.2)
+    violation_count: int = 0
+    violation_class_a: int = 0
+    violation_class_b: int = 0
+    violation_class_c: int = 0
+    violations_per_unit: float = 0.0
+    # Pipeline (Phase 5.3)
+    pipeline_stage: str = "research"
+    next_follow_up: Optional[str] = None
+    priority_rank: int = 0
 
 
 class PipelineStatus(BaseModel):
@@ -389,9 +481,21 @@ class EnrichmentRequest(BaseModel):
 
 
 class UpdateLeadRequest(BaseModel):
-    """Request to update lead status/notes."""
+    """Request to update lead status/notes/pipeline."""
     outreach_status: Optional[str] = None  # new, contacted, interested, not_interested, closed
     notes: Optional[str] = None
+    pipeline_stage: Optional[str] = None  # research, first_contact, follow_up, meeting_scheduled, meeting_done, loi, due_diligence, closed
+    next_follow_up: Optional[str] = None  # ISO date string (YYYY-MM-DD)
+    priority_rank: Optional[int] = None  # 1-5 stars
+
+
+class OutreachEventRequest(BaseModel):
+    """Request to log an outreach event (Phase 5.3)."""
+    stage: str  # Pipeline stage at time of event
+    method: Optional[str] = None  # call, email, linkedin, meeting, other
+    outcome: Optional[str] = None  # connected, voicemail, no_answer, replied, bounced, scheduled, etc.
+    notes: Optional[str] = None
+    next_follow_up: Optional[str] = None  # ISO date for next action
 
 
 @app.get("/")
@@ -468,6 +572,21 @@ def _row_to_lead(row_dict: Dict) -> Lead:
         company_name=row_dict.get('company_name'),
         primary_contact=row_dict.get('primary_contact'),
         primary_contact_title=row_dict.get('primary_contact_title'),
+        # Revenue (Phase 5.1)
+        estimated_monthly_revenue=row_dict.get('estimated_monthly_revenue') or 0.0,
+        estimated_annual_revenue=row_dict.get('estimated_annual_revenue') or 0.0,
+        # Violations (Phase 5.2)
+        violation_count=row_dict.get('violation_count') or 0,
+        violation_class_a=row_dict.get('violation_class_a') or 0,
+        violation_class_b=row_dict.get('violation_class_b') or 0,
+        violation_class_c=row_dict.get('violation_class_c') or 0,
+        violations_per_unit=row_dict.get('violations_per_unit') or 0.0,
+        # Pipeline (Phase 5.3)
+        pipeline_stage=row_dict.get('pipeline_stage') or 'research',
+        next_follow_up=row_dict.get('next_follow_up'),
+        priority_rank=row_dict.get('priority_rank') or 0,
+        # Retry tracking (Phase 2.7)
+        enrichment_retries=row_dict.get('enrichment_retries') or 0,
     )
 
 
@@ -511,29 +630,40 @@ async def get_leads(
 
 @app.get("/api/leads/{lead_id}", response_model=LeadResponse)
 async def get_lead(lead_id: str):
-    """Get a single lead by ID."""
-    for lead in _leads_cache:
-        if lead.lead_id == lead_id:
-            return _lead_to_response(lead)
+    """Get a single lead by ID (reads from DB for reliability, Phase 4.2)."""
+    db = get_database()
+    row = db.get_lead_by_id(lead_id)
+    if row:
+        lead = _row_to_lead(row)
+        return _lead_to_response(lead)
     raise HTTPException(status_code=404, detail="Lead not found")
 
 
 @app.patch("/api/leads/{lead_id}")
 async def update_lead(lead_id: str, request: UpdateLeadRequest):
     """
-    Update a lead's outreach status and/or notes.
-    
-    Valid statuses: new, contacted, interested, not_interested, closed
+    Update a lead's outreach status, notes, pipeline stage, follow-up, and priority.
     """
     global _leads_cache
     
     valid_statuses = {"new", "contacted", "interested", "not_interested", "closed"}
+    valid_stages = {"research", "first_contact", "follow_up", "meeting_scheduled", 
+                    "meeting_done", "loi", "due_diligence", "closed"}
     
     if request.outreach_status and request.outreach_status not in valid_statuses:
         raise HTTPException(
             status_code=400, 
             detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
         )
+    
+    if request.pipeline_stage and request.pipeline_stage not in valid_stages:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid pipeline stage. Must be one of: {', '.join(valid_stages)}"
+        )
+    
+    if request.priority_rank is not None and not (0 <= request.priority_rank <= 5):
+        raise HTTPException(status_code=400, detail="priority_rank must be 0-5")
     
     # Use lock to prevent race conditions
     with _leads_lock:
@@ -543,37 +673,115 @@ async def update_lead(lead_id: str, request: UpdateLeadRequest):
                     lead.outreach_status = request.outreach_status
                 if request.notes is not None:
                     lead.notes = request.notes
+                if request.pipeline_stage is not None:
+                    lead.pipeline_stage = request.pipeline_stage
+                if request.next_follow_up is not None:
+                    lead.next_follow_up = request.next_follow_up
+                if request.priority_rank is not None:
+                    lead.priority_rank = request.priority_rank
                 lead.updated_at = datetime.now()
                 _leads_cache[i] = lead
                 
-                # Persist to database (both user_data table for backward compat and leads table)
+                # Persist to database
                 db = get_database()
+                updates = {}
+                if request.outreach_status is not None:
+                    updates['outreach_status'] = request.outreach_status
+                if request.notes is not None:
+                    updates['notes'] = request.notes
+                if request.pipeline_stage is not None:
+                    updates['pipeline_stage'] = request.pipeline_stage
+                if request.next_follow_up is not None:
+                    updates['next_follow_up'] = request.next_follow_up
+                if request.priority_rank is not None:
+                    updates['priority_rank'] = request.priority_rank
+                
+                if updates:
+                    db.update_lead(lead_id, updates)
+                
+                # Also update legacy user_data table
                 db.save_lead_user_data(
                     lead_id=lead_id,
                     outreach_status=request.outreach_status,
                     notes=request.notes
                 )
-                # Also update the main leads table
-                db.save_leads([lead])
                 
                 return {
                     "status": "success",
                     "lead_id": lead_id,
                     "outreach_status": lead.outreach_status,
+                    "pipeline_stage": lead.pipeline_stage,
+                    "next_follow_up": lead.next_follow_up,
+                    "priority_rank": lead.priority_rank,
                     "notes": lead.notes,
                 }
     
     raise HTTPException(status_code=404, detail="Lead not found")
 
 
+@app.post("/api/leads/{lead_id}/outreach-event")
+async def log_outreach_event(lead_id: str, request: OutreachEventRequest):
+    """Log an outreach event for a lead (Phase 5.3)."""
+    db = get_database()
+    
+    # Verify lead exists
+    lead_row = db.get_lead_by_id(lead_id)
+    if not lead_row:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    # Save the event
+    event_id = db.add_outreach_event(lead_id, {
+        "stage": request.stage,
+        "method": request.method,
+        "outcome": request.outcome,
+        "notes": request.notes,
+        "next_follow_up": request.next_follow_up,
+    })
+    
+    # Update the lead's pipeline stage and follow-up
+    updates = {"pipeline_stage": request.stage}
+    if request.next_follow_up:
+        updates["next_follow_up"] = request.next_follow_up
+    db.update_lead(lead_id, updates)
+    
+    # Update cache
+    with _leads_lock:
+        for lead in _leads_cache:
+            if lead.lead_id == lead_id:
+                lead.pipeline_stage = request.stage
+                if request.next_follow_up:
+                    lead.next_follow_up = request.next_follow_up
+                break
+    
+    return {"status": "success", "event_id": event_id}
+
+
+@app.get("/api/leads/{lead_id}/outreach-events")
+async def get_lead_outreach_events(lead_id: str):
+    """Get all outreach events for a lead (Phase 5.3)."""
+    db = get_database()
+    events = db.get_outreach_events(lead_id)
+    return {"lead_id": lead_id, "events": events}
+
+
+@app.get("/api/follow-ups")
+async def get_follow_ups_due(before: Optional[str] = None):
+    """Get leads with follow-ups due on or before a date (Phase 5.3)."""
+    db = get_database()
+    follow_ups = db.get_follow_ups_due(before)
+    return {"count": len(follow_ups), "leads": follow_ups}
+
+
 @app.get("/api/status", response_model=PipelineStatus)
 async def get_status():
-    """Get pipeline status."""
-    enriched = len([l for l in _leads_cache if l.enrichment_status in ["complete", "partial"]])
-    top = max((l.score for l in _leads_cache), default=0)
+    """Get pipeline status (thread-safe, Phase 4.1)."""
+    with _leads_lock:
+        enriched = len([l for l in _leads_cache if l.enrichment_status in ["complete", "partial"]])
+        top = max((l.score for l in _leads_cache), default=0)
+        total = len(_leads_cache)
     
     return PipelineStatus(
-        total_leads=len(_leads_cache),
+        total_leads=total,
         last_refresh=_last_refresh.isoformat() if _last_refresh else None,
         enriched_count=enriched,
         top_score=top,
@@ -2533,6 +2741,19 @@ def _lead_to_response(lead: Lead) -> LeadResponse:
         company_name=getattr(lead, 'company_name', None),
         primary_contact=getattr(lead, 'primary_contact', None),
         primary_contact_title=getattr(lead, 'primary_contact_title', None),
+        # Revenue estimation (Phase 5.1)
+        estimated_monthly_revenue=getattr(lead, 'estimated_monthly_revenue', 0.0) or 0.0,
+        estimated_annual_revenue=getattr(lead, 'estimated_annual_revenue', 0.0) or 0.0,
+        # Violations (Phase 5.2)
+        violation_count=getattr(lead, 'violation_count', 0) or 0,
+        violation_class_a=getattr(lead, 'violation_class_a', 0) or 0,
+        violation_class_b=getattr(lead, 'violation_class_b', 0) or 0,
+        violation_class_c=getattr(lead, 'violation_class_c', 0) or 0,
+        violations_per_unit=getattr(lead, 'violations_per_unit', 0.0) or 0.0,
+        # Pipeline (Phase 5.3)
+        pipeline_stage=getattr(lead, 'pipeline_stage', 'research') or 'research',
+        next_follow_up=getattr(lead, 'next_follow_up', None),
+        priority_rank=getattr(lead, 'priority_rank', 0) or 0,
     )
 
 
@@ -2552,6 +2773,413 @@ def _get_outreach_attempts_for_lead(lead_id: str) -> List[OutreachAttemptRespons
     ]
 
 
+@app.get("/api/leads/{lead_id}/due-diligence")
+async def generate_due_diligence(lead_id: str):
+    """
+    Generate a structured due diligence snapshot for a lead (Phase 5.5).
+    Returns both structured JSON and a markdown report.
+    """
+    db = get_database()
+    row = db.get_lead_by_id(lead_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    
+    lead = _row_to_lead(row)
+    
+    # Get outreach history
+    outreach_events = db.get_outreach_events(lead_id)
+    outreach_attempts = db.get_outreach_attempts(lead_id)
+    
+    # Find comparable leads (same borough, similar portfolio size)
+    comparable_rows, _ = db.get_leads_filtered(
+        boro=lead.boro if lead.boro else None,
+        min_portfolio=max(1, lead.portfolio_size - 20),
+        limit=6,
+        offset=0,
+    )
+    comparables = []
+    for r in comparable_rows:
+        if r['lead_id'] != lead_id:
+            comparables.append({
+                "lead_id": r['lead_id'],
+                "name": r.get('company_name') or r.get('agent_name') or r.get('owner_name'),
+                "portfolio_size": r.get('portfolio_size', 0),
+                "total_units": r.get('total_units', 0),
+                "score": r.get('score', 0),
+                "entity_type": r.get('entity_type', 'unknown'),
+            })
+    comparables = comparables[:5]
+    
+    # Build markdown report
+    company_display = lead.company_name or lead.agent_name or lead.owner_name
+    md_lines = [
+        f"# Due Diligence: {company_display}",
+        "",
+        "## Company Overview",
+        f"- **Entity Type:** {lead.entity_type}",
+        f"- **Company Name:** {lead.company_name or 'N/A'}",
+        f"- **Agent/Owner:** {lead.agent_name}",
+        f"- **Owner:** {lead.owner_name}",
+        f"- **Primary Contact:** {lead.primary_contact or 'N/A'} ({lead.primary_contact_title or 'N/A'})",
+        f"- **Borough:** {lead.boro}",
+        f"- **Score:** {lead.score}/100",
+        f"- **Pipeline Stage:** {lead.pipeline_stage}",
+        f"- **Priority:** {'*' * lead.priority_rank if lead.priority_rank else 'Unranked'}",
+    ]
+    
+    if lead.dos_id:
+        md_lines.extend([
+            "",
+            "### NY DOS Corporation Info",
+            f"- **DOS ID:** {lead.dos_id}",
+            f"- **Status:** {lead.dos_status or 'N/A'}",
+        ])
+    
+    if lead.business_summary:
+        md_lines.extend(["", f"### Business Summary", lead.business_summary])
+    
+    md_lines.extend([
+        "",
+        "## Portfolio",
+        f"- **Buildings:** {lead.portfolio_size}",
+        f"- **Total Units:** {lead.total_units}",
+        f"- **Boroughs:** {', '.join(lead.boros) if lead.boros else lead.boro}",
+    ])
+    
+    if lead.building_types:
+        bt = lead.building_types
+        md_lines.extend([
+            "",
+            "### Building Type Breakdown",
+            f"- Condo: {bt.condo}" if bt.condo else "",
+            f"- Coop: {bt.coop}" if bt.coop else "",
+            f"- Rental Elevator: {bt.rental_elevator}" if bt.rental_elevator else "",
+            f"- Rental Walkup: {bt.rental_walkup}" if bt.rental_walkup else "",
+            f"- Small Residential: {bt.small_residential}" if bt.small_residential else "",
+            f"- Other: {bt.other}" if bt.other else "",
+        ])
+    
+    md_lines.extend([
+        "",
+        "## Financial Estimate",
+        f"- **Estimated Monthly Revenue:** ${lead.estimated_monthly_revenue:,.0f}" if lead.estimated_monthly_revenue else "- **Estimated Monthly Revenue:** N/A",
+        f"- **Estimated Annual Revenue:** ${lead.estimated_annual_revenue:,.0f}" if lead.estimated_annual_revenue else "- **Estimated Annual Revenue:** N/A",
+        f"- *Based on 5% management fee rate, borough-adjusted rent estimates*",
+    ])
+    
+    if lead.violation_count > 0:
+        md_lines.extend([
+            "",
+            "## Operational Risk: Violations",
+            f"- **Total Violations:** {lead.violation_count}",
+            f"- **Class A (non-hazardous):** {lead.violation_class_a}",
+            f"- **Class B (hazardous):** {lead.violation_class_b}",
+            f"- **Class C (immediately hazardous):** {lead.violation_class_c}",
+            f"- **Violations per Unit:** {lead.violations_per_unit}",
+        ])
+    
+    md_lines.extend([
+        "",
+        "## Contact Information",
+        f"- **Phone:** {lead.phone or 'N/A'}",
+        f"- **Email:** {lead.email or 'N/A'}",
+        f"- **Website:** {lead.website or 'N/A'}",
+        f"- **Address:** {lead.address or 'N/A'}",
+    ])
+    
+    if lead.contacts:
+        md_lines.extend(["", "### HPD Registered Contacts"])
+        for c in lead.contacts[:10]:
+            name = c.get('name', 'Unknown')
+            ctype = c.get('type', '')
+            title = c.get('title', '')
+            md_lines.append(f"- {name} ({ctype}{', ' + title if title else ''})")
+    
+    if outreach_events or outreach_attempts:
+        md_lines.extend(["", "## Outreach History"])
+        for e in outreach_events[:10]:
+            md_lines.append(
+                f"- [{e.get('timestamp', 'N/A')[:10]}] {e.get('stage', '')} - "
+                f"{e.get('method', '')} - {e.get('outcome', '')} "
+                f"{'/ ' + e.get('notes', '') if e.get('notes') else ''}"
+            )
+        for a in outreach_attempts[:10]:
+            md_lines.append(
+                f"- [{a.get('timestamp', 'N/A')[:10]}] {a.get('method', '')} - {a.get('outcome', '')}"
+            )
+    
+    if comparables:
+        md_lines.extend(["", "## Comparable Companies"])
+        for comp in comparables:
+            md_lines.append(
+                f"- {comp['name']} - {comp['portfolio_size']} buildings, "
+                f"{comp['total_units']} units, score: {comp['score']}"
+            )
+    
+    md_lines.extend([
+        "",
+        "### Building Addresses",
+    ])
+    for addr in lead.buildings[:50]:
+        md_lines.append(f"- {addr}")
+    if len(lead.buildings) > 50:
+        md_lines.append(f"- ... and {len(lead.buildings) - 50} more")
+    
+    # Filter empty lines from conditional sections
+    md_lines = [l for l in md_lines if l is not None and l != ""]
+    markdown_report = "\n".join(md_lines)
+    
+    return {
+        "lead_id": lead_id,
+        "company_name": company_display,
+        "report_markdown": markdown_report,
+        "data": {
+            "entity_type": lead.entity_type,
+            "portfolio_size": lead.portfolio_size,
+            "total_units": lead.total_units,
+            "score": lead.score,
+            "estimated_annual_revenue": lead.estimated_annual_revenue,
+            "violation_count": lead.violation_count,
+            "violations_per_unit": lead.violations_per_unit,
+            "phone": lead.phone,
+            "email": lead.email,
+            "website": lead.website,
+            "pipeline_stage": lead.pipeline_stage,
+            "priority_rank": lead.priority_rank,
+            "contacts_count": len(lead.contacts),
+            "outreach_events_count": len(outreach_events),
+            "comparables_count": len(comparables),
+        },
+        "comparables": comparables,
+    }
+
+
+@app.post("/api/refresh/check-updates")
+async def check_for_updates():
+    """
+    Compare current HPD data against DB and detect changes (Phase 5.4).
+    Detects: new high-value companies, portfolio changes, contact changes.
+    """
+    db = get_database()
+    
+    # Get current high-value leads from DB
+    rows, total = db.get_leads_filtered(min_portfolio=10, limit=5000, offset=0)
+    current_leads = {}
+    for row in rows:
+        current_leads[row['lead_id']] = {
+            'portfolio_size': row.get('portfolio_size', 0),
+            'agent_name': row.get('agent_name', ''),
+            'phone': row.get('phone'),
+            'email': row.get('email'),
+        }
+    
+    # Fetch fresh data from HPD (limited check)
+    from src.ingest.hpd_client import HPDClient
+    client = HPDClient()
+    
+    alerts_created = 0
+    
+    try:
+        # Check for new registrations (just count to see if total changed)
+        import requests as _req
+        resp = _req.get(
+            "https://data.cityofnewyork.us/resource/tesw-yqqr.json",
+            params={"$select": "COUNT(*) as cnt"},
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            new_count = int(data[0].get('cnt', 0)) if data else 0
+            
+            # If significantly more buildings, flag it
+            if new_count > total * 1.01:  # More than 1% growth
+                db.add_change_alert(
+                    "data_growth",
+                    f"HPD building count increased: {new_count} total (our DB has {total} high-value leads)",
+                    details={"hpd_count": new_count, "our_count": total},
+                )
+                alerts_created += 1
+    except Exception as e:
+        logger.warning(f"Failed to check HPD building count: {e}")
+    
+    # Check for leads with stale data (not refreshed in 7+ days)
+    from datetime import timedelta
+    stale_cutoff = (datetime.now() - timedelta(days=7)).isoformat()
+    
+    with db._get_connection() as conn:
+        stale_count = conn.execute(
+            "SELECT COUNT(*) FROM leads WHERE updated_at < ? AND portfolio_size >= 10",
+            (stale_cutoff,)
+        ).fetchone()[0]
+    
+    if stale_count > 100:
+        db.add_change_alert(
+            "stale_data",
+            f"{stale_count} high-value leads haven't been refreshed in 7+ days",
+            details={"stale_count": stale_count},
+        )
+        alerts_created += 1
+    
+    return {
+        "status": "success",
+        "alerts_created": alerts_created,
+        "high_value_leads": len(current_leads),
+    }
+
+
+@app.get("/api/alerts")
+async def get_alerts(limit: int = Query(50, le=200)):
+    """Get recent change alerts (Phase 5.4)."""
+    db = get_database()
+    alerts = db.get_change_alerts(limit=limit)
+    return {"count": len(alerts), "alerts": alerts}
+
+
+@app.post("/api/alerts/{alert_id}/dismiss")
+async def dismiss_alert(alert_id: int):
+    """Dismiss a change alert (Phase 5.4)."""
+    db = get_database()
+    db.dismiss_alert(alert_id)
+    return {"status": "success", "alert_id": alert_id}
+
+
+@app.post("/api/violations/refresh")
+async def refresh_violations():
+    """
+    Fetch HPD violations data and aggregate per lead (Phase 5.2).
+    Processes high-value leads (portfolio >= 10) in batches.
+    """
+    from src.ingest.hpd_violations import HPDViolationsClient, aggregate_violations_for_lead
+    
+    db = get_database()
+    
+    # Get high-value leads with their building IDs
+    rows, total = db.get_leads_filtered(min_portfolio=10, limit=5000, offset=0)
+    
+    if not rows:
+        return {"status": "no_leads", "message": "No high-value leads found"}
+    
+    client = HPDViolationsClient()
+    
+    # Collect all building IDs
+    import json as _json
+    all_building_ids = []
+    lead_buildings = {}  # lead_id -> [building_ids]
+    lead_units = {}  # lead_id -> total_units
+    
+    for row in rows:
+        lead_id = row['lead_id']
+        bids = _json.loads(row.get('building_ids') or '[]')
+        lead_buildings[lead_id] = bids
+        lead_units[lead_id] = row.get('total_units', 0) or 0
+        all_building_ids.extend(bids)
+    
+    # Fetch violations in bulk
+    logger.info(f"Fetching violations for {len(all_building_ids)} buildings across {len(rows)} leads")
+    violations_data = client.fetch_violations_for_buildings(all_building_ids, batch_size=100)
+    
+    # Aggregate per lead and save
+    updated = 0
+    for lead_id, bids in lead_buildings.items():
+        agg = aggregate_violations_for_lead(bids, violations_data, lead_units.get(lead_id, 0))
+        
+        if agg["violation_count"] > 0:
+            db.update_lead(lead_id, agg)
+            updated += 1
+    
+    # Update cache too
+    with _leads_lock:
+        for lead in _leads_cache:
+            if lead.lead_id in lead_buildings:
+                agg = aggregate_violations_for_lead(
+                    lead_buildings[lead.lead_id], 
+                    violations_data, 
+                    lead_units.get(lead.lead_id, 0)
+                )
+                lead.violation_count = agg["violation_count"]
+                lead.violation_class_a = agg["violation_class_a"]
+                lead.violation_class_b = agg["violation_class_b"]
+                lead.violation_class_c = agg["violation_class_c"]
+                lead.violations_per_unit = agg["violations_per_unit"]
+    
+    return {
+        "status": "success",
+        "leads_checked": len(rows),
+        "leads_with_violations": updated,
+        "buildings_checked": len(all_building_ids),
+        "buildings_with_violations": len(violations_data),
+    }
+
+
+@app.post("/api/rescore")
+async def rescore_all_leads():
+    """Re-score all leads using Scoring V2 (Phase 5.6)."""
+    from src.score.scorer import Scorer
+    
+    db = get_database()
+    leads = db.load_all_leads()
+    scorer = Scorer()
+    
+    updated = 0
+    for lead in leads:
+        old_score = lead.score
+        scorer.score_lead(lead)
+        
+        if lead.score != old_score:
+            import json as _j
+            db.update_lead(lead.lead_id, {
+                "score": lead.score,
+                "score_breakdown": _j.dumps(lead.score_breakdown),
+            })
+            updated += 1
+    
+    # Update cache
+    with _leads_lock:
+        for lead in _leads_cache:
+            scorer.score_lead(lead)
+    
+    return {
+        "status": "success",
+        "leads_rescored": len(leads),
+        "leads_changed": updated,
+    }
+
+
+@app.post("/api/estimate-revenue")
+async def estimate_all_revenue():
+    """Run revenue estimation on all leads in the database (Phase 5.1)."""
+    from src.score.revenue import estimate_revenue
+    
+    db = get_database()
+    leads = db.load_all_leads()
+    updated = 0
+    
+    for lead in leads:
+        rev = estimate_revenue(lead)
+        monthly = rev["estimated_monthly_revenue"]
+        annual = rev["estimated_annual_revenue"]
+        
+        if monthly > 0:
+            db.update_lead(lead.lead_id, {
+                "estimated_monthly_revenue": monthly,
+                "estimated_annual_revenue": annual,
+            })
+            updated += 1
+    
+    # Also update cache
+    with _leads_lock:
+        for lead in _leads_cache:
+            rev = estimate_revenue(lead)
+            lead.estimated_monthly_revenue = rev["estimated_monthly_revenue"]
+            lead.estimated_annual_revenue = rev["estimated_annual_revenue"]
+    
+    return {
+        "status": "success",
+        "leads_updated": updated,
+        "total_leads": len(leads),
+    }
+
+
 @app.get("/api/export/csv")
 async def export_leads_csv(
     min_score: Optional[float] = None,
@@ -2568,20 +3196,16 @@ async def export_leads_csv(
     import csv
     import io
     
-    # Filter leads
-    filtered = list(_leads_cache)
-    
-    if min_score is not None:
-        filtered = [l for l in filtered if l.score >= min_score]
-    if min_portfolio is not None:
-        filtered = [l for l in filtered if l.portfolio_size >= min_portfolio]
-    if boro:
-        boro_upper = boro.upper()
-        filtered = [l for l in filtered if l.boro.upper() == boro_upper]
-    
-    # Sort by portfolio size and limit
-    filtered.sort(key=lambda l: l.portfolio_size, reverse=True)
-    filtered = filtered[:limit]
+    # Use DB query for thread safety (Phase 4.1)
+    db = get_database()
+    rows, total = db.get_leads_filtered(
+        min_score=min_score,
+        min_portfolio=min_portfolio,
+        boro=boro,
+        limit=limit,
+        offset=0,
+    )
+    filtered = [_row_to_lead(r) for r in rows]
     
     # Generate CSV
     output = io.StringIO()

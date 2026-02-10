@@ -104,6 +104,21 @@ class Lead:
     company_name: Optional[str] = None  # Resolved company name (esp. for person-named leads)
     primary_contact: Optional[str] = None  # Best person name to contact
     primary_contact_title: Optional[str] = None  # Their role/title
+    # Revenue estimation (Phase 5.1)
+    estimated_monthly_revenue: float = 0.0
+    estimated_annual_revenue: float = 0.0
+    # Violations (Phase 5.2)
+    violation_count: int = 0
+    violation_class_a: int = 0
+    violation_class_b: int = 0
+    violation_class_c: int = 0
+    violations_per_unit: float = 0.0
+    # Pipeline (Phase 5.3)
+    pipeline_stage: str = "research"  # research, first_contact, follow_up, meeting_scheduled, meeting_done, loi, due_diligence, closed
+    next_follow_up: Optional[str] = None  # ISO date string
+    priority_rank: int = 0  # 1-5 stars, 0 = unranked
+    # Enrichment retry tracking (Phase 2.7)
+    enrichment_retries: int = 0
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
 

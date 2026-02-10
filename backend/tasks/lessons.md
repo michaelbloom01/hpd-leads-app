@@ -1,28 +1,45 @@
-# HPD Leads — Lessons Learned
+# Lessons Learned
 
-Record mistakes and corrections here so future agents don't repeat them.
+## Data & Architecture
 
-## Format
+1. **HPD contacts have no phone/email** - The HPD Contacts dataset (feu5-w2e2) has 15 columns but phone/email are redacted from the bulk API. Business addresses (79% coverage) and person names (84% coverage) ARE available and are the best enrichment signals.
 
-```
-### [Date] Issue Title
-**Mistake:** What went wrong
-**Correction:** What the fix was
-**Prevention:** Rule to follow in future
-```
+2. **Address-based Google Places search > name-based** - Searching by the HPD business address returns far better results than searching by legal entity name. Most NYC property management companies don't have Google Business listings under their legal LLC name.
 
----
+3. **Entity classification matters** - ~14% of high-value leads are person-named agents who represent real companies. The `_classify_entity` function resolves company names from CorporateOwner contacts and HPD data, which dramatically improves enrichment targeting.
 
-## Lessons
+4. **In-memory processing doesn't scale** - With 102k leads, Python-side filtering caused API timeouts. SQL-indexed queries with `LIMIT`/`OFFSET` reduced response times from 60s+ to <1s.
 
-*None yet — this file will be updated as we encounter issues.*
+5. **SQLite is sufficient for this scale** - 102k leads with full enrichment data fits comfortably in SQLite. The key was proper indexing (9+ indexes) and moving aggregation to SQL.
 
----
+## Enrichment
+
+6. **Persist all API caches to SQLite** - The NY DOS in-memory cache was lost on every Railway restart. Persisting to SQLite (`dos_cache`, `places_cache` tables) saves both money and API quota.
+
+7. **Retry logic with a cap** - Failed enrichments should be retried up to 3 times. Beyond that, the lead likely has genuinely unfindable contact info.
+
+8. **Rate limiting is essential** - Google Places, Hunter.io, and the free web search APIs all have rate limits. The enrichment cascade needs deliberate pacing.
+
+## Frontend & UX
+
+9. **Server-side pagination is mandatory** - Never fetch 100k+ leads to the client. The frontend uses `limit`/`offset` and the backend handles filtering in SQL.
+
+10. **Default to high-value view** - Setting `min_portfolio=10` by default shows ~1,300 leads instead of 102k, making the tool immediately useful.
+
+## DevOps
+
+11. **PowerShell != Bash** - `&&` doesn't work in PowerShell (use `;` or separate commands). `curl` in PowerShell is an alias for `Invoke-WebRequest`, use `curl.exe` for actual curl. Heredocs don't work for git commit messages in PowerShell.
+
+12. **CORS must be locked down** - Default `*` CORS origins are a security risk in production. Lock to the actual frontend URL + localhost.
+
+13. **Thread safety matters even with GIL** - FastAPI with background threads for enrichment creates race conditions on shared `_leads_cache`. All reads need locks or should go through DB queries.
 
 ## Patterns to Follow
 
-1. **Always read docs/ before coding a module** — Context is already there
-2. **Test with small data first** — Use `$limit=100` on API calls during dev
-3. **Cache API responses** — Don't re-fetch the same data repeatedly
-4. **Check rate limits** — Especially for enrichment APIs
-5. **Preserve manual columns** — Never overwrite user-edited sheet columns
+- Read docs before coding
+- Test with small data first
+- Cache API responses (both in-memory and persistent)
+- Respect rate limits
+- Preserve user-entered data (notes, outreach status) across refreshes
+- Use SQL for filtering/aggregation, not Python
+- Always provide DB-backed fallback for cache reads
