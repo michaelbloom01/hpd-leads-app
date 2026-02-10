@@ -35,7 +35,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   
   // Server-side pagination
   const [page, setPage] = useState(0);
-  const pageSize = 50;
+  const [pageSize, setPageSize] = useState(50);
   
   // Selection for bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -79,7 +79,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     } finally {
       setLoading(false);
     }
-  }, [filterMinScore, filterMinPortfolio, filterBorough, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterMinUnits]);
+  }, [filterMinScore, filterMinPortfolio, filterBorough, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterMinUnits, pageSize]);
 
   // Initial load + reload on filter change
   useEffect(() => {
@@ -95,7 +95,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   const totalPages = Math.ceil(totalLeads / pageSize);
 
   // Client-side search filter (search within current page results since it's a text search)
-  const displayLeads = searchTerm 
+  const filteredLeads = searchTerm 
     ? leads.filter(lead => {
         const term = searchTerm.toLowerCase();
         return (lead.agent_name || '').toLowerCase().includes(term) ||
@@ -105,6 +105,41 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
           (lead.address || '').toLowerCase().includes(term);
       })
     : leads;
+
+  // Client-side sorting
+  const displayLeads = [...filteredLeads].sort((a, b) => {
+    let aVal: string | number = '';
+    let bVal: string | number = '';
+    switch (sortField) {
+      case 'agent_name':
+        aVal = (a.company_name || a.agent_name || a.owner_name || '').toLowerCase();
+        bVal = (b.company_name || b.agent_name || b.owner_name || '').toLowerCase();
+        break;
+      case 'portfolio_size':
+        aVal = a.portfolio_size;
+        bVal = b.portfolio_size;
+        break;
+      case 'total_units':
+        aVal = a.total_units;
+        bVal = b.total_units;
+        break;
+      case 'score':
+        aVal = a.score;
+        bVal = b.score;
+        break;
+      case 'boro':
+        aVal = (a.boros?.[0] || a.boro || '').toLowerCase();
+        bVal = (b.boros?.[0] || b.boro || '').toLowerCase();
+        break;
+      case 'enrichment_status':
+        aVal = a.enrichment_status || '';
+        bVal = b.enrichment_status || '';
+        break;
+    }
+    if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
+    if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -160,75 +195,59 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     setFilterMinUnits('');
   };
 
-  const exportToCsv = () => {
-    const headers = [
-      'Management Company',
-      'Company Name',
-      'Entity Type',
-      'Primary Contact',
-      'Contact Title',
-      'Owner Name',
-      'Owner Type',
-      'All Boroughs',
-      'Buildings',
-      'Total Units',
-      'Score',
-      'Phone',
-      'Email',
-      'Website',
-      'Address',
-      'AI Summary',
-      'Enrichment Status',
-      'Outreach Status',
-      'Notes',
-      'Building Addresses'
-    ];
+  const exportToCsv = async () => {
+    // Export ALL matching leads (not just current page) by using the server-side CSV endpoint
+    const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000').trim().replace(/\\r\\n$/, '').replace(/[\r\n]+$/, '');
+    const params = new URLSearchParams();
+    params.set('limit', totalLeads.toString()); // Export all matching leads
     
-    const rows = displayLeads.map(lead => [
-      lead.agent_name || '',
-      lead.company_name || '',
-      lead.entity_type || '',
-      lead.primary_contact || '',
-      lead.primary_contact_title || '',
-      lead.owner_name || '',
-      lead.owner_type || '',
-      lead.boros?.join(', ') || lead.boro || '',
-      lead.portfolio_size,
-      lead.total_units,
-      lead.score.toFixed(1),
-      lead.phone || '',
-      lead.email || '',
-      lead.website || '',
-      lead.address || '',
-      lead.business_summary || '',
-      lead.enrichment_status,
-      lead.outreach_status || 'new',
-      lead.notes || '',
-      lead.buildings.slice(0, 5).join('; ') + (lead.buildings.length > 5 ? '...' : '')
-    ]);
+    const minScore = parseFloat(filterMinScore);
+    if (!isNaN(minScore) && minScore > 0) params.set('min_score', minScore.toString());
     
-    const escapeValue = (val: string | number) => {
-      const str = String(val);
-      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-        return `"${str.replace(/"/g, '""')}"`;
-      }
-      return str;
-    };
+    const minPortfolio = parseInt(filterMinPortfolio);
+    if (!isNaN(minPortfolio) && minPortfolio > 0) params.set('min_portfolio', minPortfolio.toString());
     
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(escapeValue).join(','))
-    ].join('\n');
-    
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `hpd_leads_${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    if (filterBorough) params.set('boro', filterBorough);
+    if (filterHasPhone === true) params.set('has_phone', 'true');
+    if (filterHasEmail === true) params.set('has_email', 'true');
+    if (filterEntityType) params.set('entity_type', filterEntityType);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/export/csv?${params.toString()}`);
+      if (!response.ok) throw new Error('Export failed');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `hpd_leads_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Server export failed, falling back to client export:', err);
+      // Fallback: export current page
+      const headers = ['Management Company','Company Name','Entity Type','Primary Contact','Owner Name','Boroughs','Buildings','Units','Score','Phone','Email','Website','Enrichment Status','Outreach Status'];
+      const rows = displayLeads.map(lead => [
+        lead.agent_name || '', lead.company_name || '', lead.entity_type || '', lead.primary_contact || '',
+        lead.owner_name || '', lead.boros?.join(', ') || lead.boro || '', lead.portfolio_size, lead.total_units,
+        lead.score.toFixed(1), lead.phone || '', lead.email || '', lead.website || '', lead.enrichment_status, lead.outreach_status || 'new'
+      ]);
+      const escapeValue = (val: string | number) => {
+        const str = String(val);
+        return (str.includes(',') || str.includes('"') || str.includes('\n')) ? `"${str.replace(/"/g, '""')}"` : str;
+      };
+      const csvContent = [headers.join(','), ...rows.map(row => row.map(escapeValue).join(','))].join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `hpd_leads_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
   };
 
   const SortIcon = ({ field }: { field: SortField }) => (
@@ -482,15 +501,15 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   <td className="px-4 py-3">
                     <div className="font-medium text-slate-200 text-sm">{lead.company_name || lead.agent_name || lead.owner_name}</div>
                     <div className="text-xs text-slate-600 truncate max-w-[250px] flex items-center gap-1.5">
-                      <span className={`px-1 py-0 rounded text-[9px] font-bold uppercase ${
+                      <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
                         lead.entity_type === 'company' ? 'bg-blue-900/40 text-blue-400' :
                         lead.entity_type === 'individual_agent' ? 'bg-amber-900/40 text-amber-400' :
                         lead.entity_type === 'owner_operator' ? 'bg-purple-900/40 text-purple-400' :
                         'bg-slate-800 text-slate-600'
                       }`}>
-                        {lead.entity_type === 'company' ? 'CO' : 
-                         lead.entity_type === 'individual_agent' ? 'AGT' : 
-                         lead.entity_type === 'owner_operator' ? 'OWN' : '?'}
+                        {lead.entity_type === 'company' ? 'Company' : 
+                         lead.entity_type === 'individual_agent' ? 'Individual' : 
+                         lead.entity_type === 'owner_operator' ? 'Owner-Op' : 'Unknown'}
                       </span>
                       {lead.primary_contact && (
                         <span className="text-slate-500 truncate">{lead.primary_contact}</span>
@@ -500,8 +519,8 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-1">
                       {(lead.boros?.length > 0 ? lead.boros : [lead.boro]).map((b, i) => (
-                        <span key={i} className="px-1.5 py-0.5 bg-slate-800 text-slate-400 text-[10px] rounded">
-                          {b.slice(0, 3).toUpperCase()}
+                        <span key={i} className="px-1.5 py-0.5 bg-slate-800 text-slate-400 text-[10px] rounded capitalize">
+                          {b.charAt(0) + b.slice(1).toLowerCase()}
                         </span>
                       ))}
                     </div>
@@ -514,30 +533,30 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   </td>
                   <td className="px-4 py-3">
                     {lead.building_types && lead.building_types.total > 0 ? (
-                      <div className="flex gap-1 items-center">
+                      <div className="flex gap-1 items-center flex-wrap">
                         {lead.building_types.condo > 0 && (
                           <span className="px-1.5 py-0.5 bg-blue-900/30 text-blue-400 text-[10px] rounded" title="Condos">
-                            {lead.building_types.condo}C
+                            {lead.building_types.condo} Condo
                           </span>
                         )}
                         {lead.building_types.coop > 0 && (
                           <span className="px-1.5 py-0.5 bg-purple-900/30 text-purple-400 text-[10px] rounded" title="Coops">
-                            {lead.building_types.coop}Co
+                            {lead.building_types.coop} Coop
                           </span>
                         )}
                         {lead.building_types.rental_elevator > 0 && (
                           <span className="px-1.5 py-0.5 bg-emerald-900/30 text-emerald-400 text-[10px] rounded" title="Elevator Rentals">
-                            {lead.building_types.rental_elevator}E
+                            {lead.building_types.rental_elevator} Elevator
                           </span>
                         )}
                         {lead.building_types.rental_walkup > 0 && (
                           <span className="px-1.5 py-0.5 bg-amber-900/30 text-amber-400 text-[10px] rounded" title="Walk-up Rentals">
-                            {lead.building_types.rental_walkup}W
+                            {lead.building_types.rental_walkup} Walk-up
                           </span>
                         )}
                         {(lead.building_types.small_residential + lead.building_types.other + lead.building_types.unknown) > 0 && (
                           <span className="px-1.5 py-0.5 bg-slate-800 text-slate-500 text-[10px] rounded" title="Other/Small">
-                            {lead.building_types.small_residential + lead.building_types.other + lead.building_types.unknown}O
+                            {lead.building_types.small_residential + lead.building_types.other + lead.building_types.unknown} Other
                           </span>
                         )}
                       </div>
@@ -616,27 +635,41 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
         </div>
         
         {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-white/5 bg-slate-950/50">
-            <button
-              onClick={() => setPage(Math.max(0, page - 1))}
-              disabled={page === 0}
-              className="px-3 py-1 text-sm text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            >
-              ← Previous
-            </button>
+        <div className="flex items-center justify-between px-4 py-3 border-t border-white/5 bg-slate-950/50">
+          <button
+            onClick={() => setPage(Math.max(0, page - 1))}
+            disabled={page === 0}
+            className="px-3 py-1 text-sm text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            ← Previous
+          </button>
+          <div className="flex items-center gap-4">
             <div className="text-sm text-slate-500">
-              Page {page + 1} of {totalPages}
+              Page {page + 1} of {totalPages || 1}
             </div>
-            <button
-              onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
-              disabled={page >= totalPages - 1}
-              className="px-3 py-1 text-sm text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            >
-              Next →
-            </button>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-600">Per page:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }}
+                className="px-2 py-1 bg-slate-800 border border-white/10 rounded text-xs text-slate-300 focus:outline-none"
+              >
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={250}>250</option>
+                <option value={500}>500</option>
+              </select>
+            </div>
           </div>
-        )}
+          <button
+            onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
+            disabled={page >= totalPages - 1}
+            className="px-3 py-1 text-sm text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            Next →
+          </button>
+        </div>
       </div>
     </div>
   );

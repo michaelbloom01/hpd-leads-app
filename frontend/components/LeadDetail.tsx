@@ -1106,12 +1106,12 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               <div className="rounded-lg overflow-hidden border border-white/10">
                 {import.meta.env.VITE_GOOGLE_MAPS_KEY ? (
                   <img
-                    src={`https://maps.googleapis.com/maps/api/staticmap?size=600x300&scale=2&maptype=roadmap${
+                    src={`https://maps.googleapis.com/maps/api/staticmap?size=600x300&scale=2&maptype=roadmap&center=40.7128,-73.95&zoom=11${
                       // Add markers for up to 25 buildings (API limit is ~8KB URL)
                       enrichedLead.buildings.slice(0, 25).map((addr, i) => 
                         `&markers=color:${i === 0 ? 'red' : 'blue'}%7Csize:small%7C${encodeURIComponent(addr + ', New York, NY')}`
                       ).join('')
-                    }&key=${import.meta.env.VITE_GOOGLE_MAPS_KEY}`}
+                    }&key=${(import.meta.env.VITE_GOOGLE_MAPS_KEY || '').trim().replace(/\\r\\n$/, '').replace(/[\r\n]+$/, '')}`}
                     alt={`Map showing ${Math.min(enrichedLead.buildings.length, 25)} building locations`}
                     className="w-full h-[250px] object-cover"
                     loading="lazy"
@@ -1132,33 +1132,46 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
             </div>
           )}
 
-          {/* HPD Contacts */}
-          {enrichedLead.contacts && enrichedLead.contacts.length > 0 && (
-            <div className="bg-slate-800/30 rounded-xl p-5">
-              <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-3">
-                HPD Registered Contacts ({enrichedLead.contacts.length})
-              </h3>
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {enrichedLead.contacts.map((contact, i) => (
-                  <div key={i} className="flex items-center justify-between text-sm py-1.5 px-3 bg-slate-900/50 rounded">
-                    <div>
-                      <span className="text-slate-300">{contact.name}</span>
-                      {contact.title && <span className="text-slate-600 ml-2 text-xs">{contact.title}</span>}
+          {/* HPD Contacts (deduplicated) */}
+          {enrichedLead.contacts && enrichedLead.contacts.length > 0 && (() => {
+            // Deduplicate contacts by name (case-insensitive), keeping the first occurrence
+            const seen = new Set<string>();
+            const uniqueContacts = enrichedLead.contacts.filter(contact => {
+              const key = (contact.name || '').trim().toUpperCase();
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            });
+            return (
+              <div className="bg-slate-800/30 rounded-xl p-5">
+                <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-3">
+                  HPD Registered Contacts ({uniqueContacts.length})
+                </h3>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {uniqueContacts.map((contact, i) => (
+                    <div key={i} className="flex items-center justify-between text-sm py-1.5 px-3 bg-slate-900/50 rounded">
+                      <div>
+                        <span className="text-slate-300">{contact.name}</span>
+                        {contact.title && <span className="text-slate-600 ml-2 text-xs">{contact.title}</span>}
+                      </div>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                        contact.type === 'Agent' ? 'bg-blue-900/40 text-blue-400' :
+                        contact.type === 'CorporateOwner' ? 'bg-purple-900/40 text-purple-400' :
+                        contact.type === 'IndividualOwner' ? 'bg-amber-900/40 text-amber-400' :
+                        contact.type === 'SiteManager' ? 'bg-emerald-900/40 text-emerald-400' :
+                        'bg-slate-800 text-slate-500'
+                      }`}>
+                        {contact.type === 'CorporateOwner' ? 'Corporate Owner' :
+                         contact.type === 'IndividualOwner' ? 'Individual Owner' :
+                         contact.type === 'SiteManager' ? 'Site Manager' :
+                         contact.type}
+                      </span>
                     </div>
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                      contact.type === 'Agent' ? 'bg-blue-900/40 text-blue-400' :
-                      contact.type === 'CorporateOwner' ? 'bg-purple-900/40 text-purple-400' :
-                      contact.type === 'IndividualOwner' ? 'bg-amber-900/40 text-amber-400' :
-                      contact.type === 'SiteManager' ? 'bg-emerald-900/40 text-emerald-400' :
-                      'bg-slate-800 text-slate-500'
-                    }`}>
-                      {contact.type}
-                    </span>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Buildings List */}
           <div className="bg-slate-800/30 rounded-xl p-5">

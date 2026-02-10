@@ -346,7 +346,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                     <div className="flex gap-1 flex-wrap">
                       {(lead.boros || [lead.boro]).slice(0, 3).map((b, j) => (
                         <span key={j} className="px-1.5 py-0.5 bg-slate-800 text-slate-400 text-[9px] rounded">
-                          {b?.slice(0, 3).toUpperCase()}
+                          {b ? b.charAt(0) + b.slice(1).toLowerCase() : ''}
                         </span>
                       ))}
                       {(lead.boros?.length || 0) > 3 && (
