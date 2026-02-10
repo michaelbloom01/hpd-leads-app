@@ -2057,17 +2057,19 @@ def _run_api_enrichment(limit: int, min_portfolio: int = 5, boro: Optional[str] 
                             lead.owner_principal = dos_entity.process_name
                         
                         if not lead.business_summary:
-                            parts = []
-                            if dos_entity.entity_type:
-                                parts.append(f"Entity: {dos_entity.entity_type}")
-                            if dos_entity.status:
-                                parts.append(f"Status: {dos_entity.status}")
+                            # Format DOS data as a readable sentence (not raw pipe-delimited string)
+                            sentence_parts = []
+                            entity_type = (dos_entity.entity_type or "").replace("_", " ").title()
+                            if entity_type:
+                                sentence_parts.append(f"Registered as a {entity_type.lower()} in New York State")
                             if dos_entity.formation_date:
-                                parts.append(f"Formed: {dos_entity.formation_date[:10]}")
+                                sentence_parts.append(f"formed {dos_entity.formation_date[:10]}")
+                            if dos_entity.status:
+                                sentence_parts.append(f"currently {dos_entity.status.lower()}")
                             if dos_entity.process_name:
-                                parts.append(f"Agent: {dos_entity.process_name}")
-                            if parts:
-                                lead.business_summary = " | ".join(parts)
+                                sentence_parts.append(f"with {dos_entity.process_name} as registered agent")
+                            if sentence_parts:
+                                lead.business_summary = ". ".join(s.capitalize() if i == 0 else s for i, s in enumerate(sentence_parts)) + "."
                         
                         lead.dos_id = dos_entity.dos_id
                         lead.dos_status = dos_entity.status
@@ -2767,14 +2769,15 @@ async def generate_ai_summary(lead_id: str):
             'other': lead.building_types.other,
         }
     
-    # Generate description
+    # Generate description — DO NOT pass lead.business_summary as website_description
+    # (that creates a circular reference where old summaries feed into new ones)
     description = generate_company_description(
         company_name=company_name,
         portfolio_size=lead.portfolio_size,
         total_units=lead.total_units,
         boroughs=lead.boros,
         building_types=building_types_dict,
-        website_description=lead.business_summary,
+        owner_names=[lead.owner_principal] if lead.owner_principal else None,
     )
     
     if not description:

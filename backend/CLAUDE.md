@@ -133,7 +133,7 @@ enrichment_status      # none, partial, complete, failed
 - Score shows A/B/C tier labels alongside number
 - Data quality shown as visual dots (not text jargon)
 - Revenue breakdown expandable with actual per-lead numbers
-- Maps hidden gracefully when Google API key is missing
+- Interactive Leaflet/OpenStreetMap maps (lazy-loaded)
 - Pipeline uses dropdown selector (not tiny button bar)
 - Borough filter is multi-select toggle buttons
 
@@ -146,7 +146,8 @@ ANTHROPIC_API_KEY=sk-ant-...
 # Optional
 NYC_OPEN_DATA_APP_TOKEN=...    # Higher rate limits
 CORS_ORIGINS=https://...       # Restrict CORS (default: *)
-VITE_GOOGLE_MAPS_KEY=...       # For static maps in frontend
+ANTHROPIC_MODEL=...            # Default: claude-sonnet-4-20250514
+DATABASE_PATH=...              # Default: ./leads.db
 ```
 
 ## Database
@@ -173,9 +174,30 @@ Location: `./leads.db` (Railway persistent volume)
 3. Production URL: https://frontend-nine-psi-58.vercel.app
 4. Env vars: `VITE_API_URL`, `VITE_GOOGLE_MAPS_KEY`
 
+## Status (Feb 9, 2026)
+
+- 102,505 leads loaded from 200k+ buildings
+- Enrichment completed for top 500 leads
+- Revenue estimation (v2) and violations data computed
+- Robustness hardening (R1-R12) complete: startup resilience, SQLite WAL, cache TTL, CORS regex, cold-start UX, error boundary, fetchWithRetry
+- All Socrata dataset IDs and Anthropic model configurable via env vars
+- backup_db.py script available for scheduled backups
+
+**Final Polish (Feb 9, 2026):**
+- Server-side sort/search with debounced input
+- Leaflet/OpenStreetMap maps (replaced Google Static Maps)
+- Mobile responsive: card view, full-screen detail, responsive padding
+- Email templates with auto-logged outreach
+- DD report: key risks summary, print-to-PDF, improved comparables
+- Enrichment gaps endpoint + Dashboard indicator
+- Backup-on-startup automation
+- Bug fixes: null guards, formatCurrency safety, input validation
+
 ## Known Issues / Future Work
 
-- Google Static Maps API key needs billing/enabling in GCP console
 - Violations take several minutes to compute on first startup (59k buildings)
 - Some leads are co-op complexes (e.g., Deepdale Gardens with 128k units) which may not be true PE targets
 - LinkedIn search gets 429'd by Google; consider alternative data sources
+- Consider upgrading to PostgreSQL for production robustness
+- CRM integration potential (link with Personal CRM v2 when built)
+- User authentication (if sharing with others)

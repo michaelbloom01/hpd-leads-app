@@ -83,11 +83,12 @@ def generate_company_description(
     
     context = "\n".join(context_parts)
     
-    prompt = f"""Based on this NYC property management company data, write a 2-3 sentence professional description suitable for a CRM lead record. Focus on their scale, specialization, and any notable characteristics. Be factual and concise.
+    prompt = f"""You are writing a brief company profile for a property management acquisition target database.
 
+Data:
 {context}
 
-Write only the description, no preamble or labels."""
+Write exactly 2-3 sentences in plain text (no markdown, no bullet points, no headers). Cover: (1) what they manage and where, (2) their scale and specialization, (3) one insight relevant to an acquirer (e.g., concentration in one borough, mix of building types, portfolio density). Be factual — do not invent information not in the data above. Do not start with the company name."""
 
     try:
         client = anthropic.Anthropic(api_key=api_key)

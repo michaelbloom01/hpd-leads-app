@@ -54,6 +54,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
   const [dataStatus, setDataStatus] = useState<DataStatus | null>(null);
   const [enrichmentGaps, setEnrichmentGaps] = useState<EnrichmentGaps | null>(null);
   const [backendStarting, setBackendStarting] = useState(false);
+  const [showFeeTooltip, setShowFeeTooltip] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -292,11 +293,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
           <p className="text-2xl font-mono font-bold text-white">{highValueCount.toLocaleString()}</p>
           <p className="text-[10px] text-slate-600 mt-0.5">10+ buildings</p>
         </div>
-        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4 group relative">
+        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4 relative">
           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1">
             Mgmt Fee Opportunity
-            <span className="inline-block w-3 h-3 rounded-full border border-slate-600 text-[8px] text-slate-500 text-center leading-[11px] cursor-help" title="Estimated annual management fees if these portfolios were acquired. Calculated as: Total Units × Avg Rent (by borough &amp; building type) × 5% management fee rate.">?</span>
+            <button
+              onClick={() => setShowFeeTooltip(!showFeeTooltip)}
+              className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-slate-600 text-[8px] text-slate-500 hover:text-slate-300 hover:border-slate-400 transition-colors"
+              aria-label="How is this calculated?"
+            >?</button>
           </p>
+          {showFeeTooltip && (
+            <div className="absolute top-full left-0 mt-1 z-50 w-64 p-3 bg-slate-800 border border-white/10 rounded-lg shadow-xl text-xs text-slate-300 leading-relaxed">
+              <p>Estimated annual management fees if these portfolios were acquired.</p>
+              <p className="mt-1 text-slate-500">Total Units x Avg Rent (by borough & building type) x 5% management fee rate.</p>
+              <button onClick={() => setShowFeeTooltip(false)} className="mt-2 text-blue-400 hover:text-blue-300 text-[10px]">Got it</button>
+            </div>
+          )}
           <p className="text-2xl font-mono font-bold text-emerald-400">{totalTargetRevenue > 0 ? formatCurrency(totalTargetRevenue) : '—'}</p>
           <p className="text-[10px] text-slate-600 mt-0.5">Top 100 leads • 5% fee rate</p>
         </div>

@@ -39,7 +39,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterBoroughs, setFilterBoroughs] = useState<string[]>([]);
   const [filterMinScore, setFilterMinScore] = useState<string>('');
-  const [filterMinPortfolio, setFilterMinPortfolio] = useState<string>('10');
+  const [filterMinPortfolio, setFilterMinPortfolio] = useState<string>('');
   const [filterHasPhone, setFilterHasPhone] = useState<boolean | null>(null);
   const [filterHasEmail, setFilterHasEmail] = useState<boolean | null>(null);
   const [filterHasWebsite, setFilterHasWebsite] = useState<boolean | null>(null);

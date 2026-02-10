@@ -443,7 +443,15 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                   </button>
                 </div>
                 {aiDescription ? (
-                  <p className="text-sm text-slate-300 leading-relaxed">{aiDescription}</p>
+                  <p className="text-sm text-slate-300 leading-relaxed">{
+                    // Strip accidental markdown formatting from AI output
+                    aiDescription
+                      .replace(/^#+\s/gm, '')
+                      .replace(/\*\*(.*?)\*\*/g, '$1')
+                      .replace(/\*(.*?)\*/g, '$1')
+                      .replace(/^[-*]\s/gm, '')
+                      .trim()
+                  }</p>
                 ) : (
                   <p className="text-sm text-slate-600 italic">Click "Generate Summary" for a research-backed overview of this company's operations and background</p>
                 )}
