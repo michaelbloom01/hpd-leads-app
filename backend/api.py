@@ -101,6 +101,27 @@ async def startup_load():
         _last_refresh = db.get_last_refresh_time()
         logger.info(f"Startup: Loaded {len(loaded)} leads from database")
         
+        # Auto-compute revenue if not yet computed (pure math, no API calls, <1 second)
+        revenue_computed = db.get_setting('revenue_computed_at')
+        if not revenue_computed:
+            logger.info("Startup: Computing revenue estimates for all leads (first time)...")
+            from src.score.revenue import estimate_revenue
+            updated = 0
+            for lead in _leads_cache:
+                rev = estimate_revenue(lead)
+                lead.estimated_monthly_revenue = rev["estimated_monthly_revenue"]
+                lead.estimated_annual_revenue = rev["estimated_annual_revenue"]
+                if rev["estimated_monthly_revenue"] > 0:
+                    db.update_lead(lead.lead_id, {
+                        "estimated_monthly_revenue": rev["estimated_monthly_revenue"],
+                        "estimated_annual_revenue": rev["estimated_annual_revenue"],
+                    })
+                    updated += 1
+            db.set_setting('revenue_computed_at', datetime.now().isoformat())
+            logger.info(f"Startup: Revenue estimated for {updated} leads")
+        else:
+            logger.info(f"Startup: Revenue already computed at {revenue_computed}")
+        
         # Check if there's an incomplete enrichment job to resume
         active_job = db.get_active_enrichment_job()
         if active_job and active_job['status'] == 'running':
@@ -111,20 +132,21 @@ async def startup_load():
                 import asyncio
                 asyncio.create_task(_resume_enrichment_job(active_job))
         else:
-            # Check if we need to auto-start enrichment
-            enrichment_stats = db.get_enrichment_stats()
-            enriched_count = enrichment_stats.get('with_phone', 0) + enrichment_stats.get('with_email', 0)
-            
-            if enriched_count < 100:
-                logger.info(f"Startup: Only {enriched_count} leads enriched, auto-starting batch enrichment")
-                # Start auto-enrichment in background
-                import asyncio
-                asyncio.create_task(_auto_start_enrichment())
-        
-        # Start the continuous enrichment scheduler
-        import asyncio
-        asyncio.create_task(_continuous_enrichment_scheduler())
-        logger.info("Startup: Continuous enrichment scheduler started")
+            # Check if enrichment was already completed (persisted across restarts)
+            enrichment_completed = db.get_setting('enrichment_completed_at')
+            if enrichment_completed:
+                logger.info(f"Startup: Enrichment already completed at {enrichment_completed}, skipping auto-enrich")
+            else:
+                # Check if we need to auto-start enrichment
+                enrichment_stats = db.get_enrichment_stats()
+                enriched_count = enrichment_stats.get('with_phone', 0) + enrichment_stats.get('with_email', 0)
+                
+                if enriched_count < 100:
+                    logger.info(f"Startup: Only {enriched_count} leads enriched, auto-starting batch enrichment")
+                    import asyncio
+                    asyncio.create_task(_auto_start_enrichment())
+                else:
+                    logger.info(f"Startup: {enriched_count} leads already enriched, no auto-enrich needed")
         
         # Check for stale data and create alerts (Phase 5.4)
         from datetime import timedelta
@@ -164,60 +186,7 @@ async def _auto_start_enrichment():
     thread.start()
 
 
-async def _continuous_enrichment_scheduler():
-    """
-    Background scheduler that continuously enriches leads.
-    
-    Strategy:
-    - Enrich leads in batches of 500 (prioritized by score)
-    - Wait for current batch to complete before starting next
-    - Target: Enrich all leads with portfolio >= 10 buildings
-    - Runs every 30 minutes to check if more enrichment needed
-    """
-    import asyncio
-    
-    # Wait for initial startup to complete
-    await asyncio.sleep(60)
-    
-    while True:
-        try:
-            # Check if enrichment is already running
-            with _enrichment_lock:
-                if _enrichment_state["running"]:
-                    logger.debug("Scheduler: Enrichment already running, waiting...")
-                    await asyncio.sleep(300)  # Check again in 5 minutes
-                    continue
-            
-            # Get stats on what's been enriched
-            db = get_database()
-            stats = db.get_enrichment_stats()
-            
-            # Count leads that still need enrichment (portfolio >= 10, not yet enriched)
-            unenriched_count = 0
-            for lead in _leads_cache:
-                if lead.portfolio_size >= 10 and lead.enrichment_status in ['none', None, '']:
-                    unenriched_count += 1
-            
-            if unenriched_count > 0:
-                logger.info(f"Scheduler: {unenriched_count} high-value leads still need enrichment, starting batch")
-                
-                # Start next batch (up to 500)
-                batch_size = min(500, unenriched_count)
-                thread = threading.Thread(target=_run_background_enrichment, args=(batch_size, None))
-                thread.daemon = True
-                thread.start()
-                
-                # Wait for this batch to likely complete (estimate ~10 sec/lead)
-                estimated_time = batch_size * 12  # 12 seconds per lead with buffer
-                await asyncio.sleep(min(estimated_time, 7200))  # Max 2 hours wait
-            else:
-                logger.info("Scheduler: All high-value leads (portfolio >= 10) are enriched!")
-                # Check again in 6 hours (in case new leads were added)
-                await asyncio.sleep(21600)
-                
-        except Exception as e:
-            logger.error(f"Scheduler error: {e}")
-            await asyncio.sleep(300)  # Wait 5 minutes on error
+# _continuous_enrichment_scheduler removed - enrichment is now one-time with persistent completion tracking
 
 
 async def _resume_enrichment_job(job: dict):
@@ -1308,6 +1277,12 @@ def _run_background_enrichment_with_job(
         
         logger.info(f"Background enrichment complete: {_enrichment_state['completed']} successful, {_enrichment_state['failed']} failed")
         
+        # Persist completion so enrichment doesn't restart on next deploy
+        try:
+            db.set_setting('enrichment_completed_at', datetime.now().isoformat())
+        except Exception:
+            pass
+        
     except Exception as e:
         logger.error(f"Background enrichment failed: {e}")
         import traceback
@@ -1581,6 +1556,11 @@ async def get_enrichment_status():
     state = dict(_enrichment_state)
     total = state.get("total", 0)
     progress = state.get("progress", 0)
+    
+    # Get persistent completion timestamp
+    db = get_database()
+    last_completed = db.get_setting('enrichment_completed_at')
+    
     return {
         "running": state.get("running", False),
         "phase": state.get("phase", ""),
@@ -1597,6 +1577,7 @@ async def get_enrichment_status():
         "finished_at": state.get("finished_at"),
         "error": state.get("error"),
         "percent_complete": round(progress / total * 100, 1) if total > 0 else 0,
+        "last_completed_at": last_completed,
     }
 
 

@@ -489,6 +489,7 @@ export interface EnrichmentProgress {
   finished_at: string | null;
   error: string | null;
   percent_complete: number;
+  last_completed_at: string | null;
 }
 
 /**

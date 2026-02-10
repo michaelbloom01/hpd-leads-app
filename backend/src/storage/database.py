@@ -281,9 +281,35 @@ class LeadsDatabase:
                 );
                 CREATE INDEX IF NOT EXISTS idx_outreach_events_lead ON outreach_events(lead_id);
                 CREATE INDEX IF NOT EXISTS idx_outreach_events_stage ON outreach_events(stage);
+                
+                -- App settings (key/value store for persistent state)
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
             """)
             conn.commit()
             logger.info(f"Database initialized at {self.db_path}")
+    
+    # === App Settings ===
+    
+    def get_setting(self, key: str) -> Optional[str]:
+        """Get a persistent setting value."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT value FROM app_settings WHERE key = ?", (key,)
+            ).fetchone()
+            return row['value'] if row else None
+    
+    def set_setting(self, key: str, value: str):
+        """Set a persistent setting value."""
+        with self._get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
+                (key, value, datetime.now().isoformat())
+            )
+            conn.commit()
     
     # === Lead User Data ===
     

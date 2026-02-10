@@ -1,8 +1,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { toast } from 'react-hot-toast';
-import { COLORS } from '../constants';
 import { 
   fetchLeads, 
   fetchStats,
@@ -12,12 +10,30 @@ import {
   getEnrichmentProgress,
   startBatchEnrichment,
   getFollowUpsDue,
+  refreshViolations,
   EnrichmentProgress 
 } from '../services/api';
 
 interface DashboardProps {
   onSelectLead?: (lead: ApiLead) => void;
 }
+
+const PIPELINE_STAGES = [
+  { key: 'research', label: 'Research', color: 'bg-slate-600' },
+  { key: 'first_contact', label: 'Contact', color: 'bg-blue-600' },
+  { key: 'follow_up', label: 'Follow-Up', color: 'bg-indigo-600' },
+  { key: 'meeting_scheduled', label: 'Meeting Set', color: 'bg-purple-600' },
+  { key: 'meeting_done', label: 'Meeting Done', color: 'bg-violet-600' },
+  { key: 'loi', label: 'LOI', color: 'bg-amber-600' },
+  { key: 'due_diligence', label: 'DD', color: 'bg-orange-600' },
+  { key: 'closed', label: 'Closed', color: 'bg-emerald-600' },
+];
+
+const formatCurrency = (amount: number): string => {
+  if (amount >= 1_000_000) return `$${(amount / 1_000_000).toFixed(1)}m`;
+  if (amount >= 1_000) return `$${(amount / 1_000).toFixed(0)}k`;
+  return `$${amount.toFixed(0)}`;
+};
 
 const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
   const [topLeads, setTopLeads] = useState<ApiLead[]>([]);
@@ -28,11 +44,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
   const [followUpsDue, setFollowUpsDue] = useState<{ count: number; leads: Array<Record<string, unknown>> } | null>(null);
   const [loading, setLoading] = useState(true);
   const [startingEnrichment, setStartingEnrichment] = useState(false);
+  const [refreshingViolations, setRefreshingViolations] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
-      // Use Promise.allSettled so one hanging endpoint doesn't block the dashboard
-      // Add 10s timeout to each call to prevent infinite hangs
       const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> => {
         return Promise.race([
           promise,
@@ -41,18 +56,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
       };
 
       const [leadsResult, statsResult, enrichResult, followUpsResult] = await Promise.allSettled([
-        withTimeout(fetchLeads({ limit: 50, min_portfolio: 10 }), 15000),
+        withTimeout(fetchLeads({ limit: 100, min_portfolio: 10 }), 15000),
         withTimeout(fetchStats(), 15000),
         withTimeout(getEnrichmentProgress(), 10000),
         withTimeout(getFollowUpsDue(), 10000),
       ]);
       
-      // Process leads (most important)
       if (leadsResult.status === 'fulfilled') {
-        const sortedByPortfolio = [...leadsResult.value.leads].sort((a, b) => b.portfolio_size - a.portfolio_size);
-        setTopLeads(sortedByPortfolio);
+        const sortedByScore = [...leadsResult.value.leads].sort((a, b) => b.score - a.score);
+        setTopLeads(sortedByScore);
         
-        const contactable = sortedByPortfolio.filter(l => 
+        const contactable = sortedByScore.filter(l => 
           (l.phone || l.email) && 
           l.outreach_status === 'new' &&
           l.portfolio_size >= 10
@@ -62,7 +76,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
         console.error('Failed to load leads:', leadsResult.reason);
       }
       
-      // Process stats
       if (statsResult.status === 'fulfilled') {
         const statsData = statsResult.value;
         setStatus({
@@ -76,14 +89,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
         console.error('Failed to load stats:', statsResult.reason);
       }
       
-      // Process enrichment status (optional - may timeout if enrichment lock is held)
       if (enrichResult.status === 'fulfilled') {
         setEnrichmentStatus(enrichResult.value);
       } else {
         console.warn('Enrichment status unavailable:', enrichResult.reason);
       }
 
-      // Process follow-ups due
       if (followUpsResult.status === 'fulfilled') {
         setFollowUpsDue(followUpsResult.value);
       } else {
@@ -99,7 +110,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
   useEffect(() => {
     loadData();
     
-    // Poll enrichment status every 30 seconds (with timeout to avoid hangs)
     const interval = setInterval(async () => {
       try {
         const enrichData = await Promise.race([
@@ -108,12 +118,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
         ]);
         setEnrichmentStatus(enrichData);
         
-        // Refresh leads if enrichment just finished
         if (enrichData.finished_at && !enrichData.running) {
           loadData();
         }
       } catch (err) {
-        // Silently ignore poll failures - enrichment status is non-critical
+        // Silently ignore poll failures
       }
     }, 30000);
     
@@ -124,199 +133,140 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
     setStartingEnrichment(true);
     try {
       await startBatchEnrichment(500);
-      // Refresh status
       const enrichData = await getEnrichmentProgress();
       setEnrichmentStatus(enrichData);
+      toast.success('Enrichment started for top 500 leads');
     } catch (err) {
       console.error('Failed to start enrichment:', err);
-      toast.error('Failed to start enrichment. Check console for details.');
+      toast.error('Failed to start enrichment');
     } finally {
       setStartingEnrichment(false);
     }
   };
 
-  // Calculate units per building for top leads
-  const topLeadsWithMetrics = topLeads.slice(0, 10).map(lead => ({
-    ...lead,
-    unitsPerBuilding: lead.portfolio_size > 0 ? (lead.total_units / lead.portfolio_size).toFixed(1) : '0',
-  }));
+  const handleRefreshViolations = async () => {
+    setRefreshingViolations(true);
+    try {
+      const result = await refreshViolations();
+      toast.success(`Violations updated: ${result.leads_with_violations} leads with violations found`);
+      loadData();
+    } catch (err) {
+      console.error('Failed to refresh violations:', err);
+      toast.error('Failed to refresh violations data');
+    } finally {
+      setRefreshingViolations(false);
+    }
+  };
 
-  // Chart data - sorted by portfolio size
-  const chartData = topLeadsWithMetrics.map(lead => ({
-    name: (lead.agent_name || lead.owner_name || 'Unknown').split(' ')[0].slice(0, 10),
-    buildings: lead.portfolio_size,
-    units: lead.total_units,
-    unitsPerBuilding: parseFloat(lead.unitsPerBuilding),
-  }));
+  // Compute pipeline stage counts from top leads
+  const pipelineCounts: Record<string, number> = {};
+  PIPELINE_STAGES.forEach(s => { pipelineCounts[s.key] = 0; });
+  topLeads.forEach(lead => {
+    const stage = lead.pipeline_stage || 'research';
+    if (pipelineCounts[stage] !== undefined) pipelineCounts[stage]++;
+  });
+  const leadsInPipeline = topLeads.filter(l => l.pipeline_stage && l.pipeline_stage !== 'research').length;
+
+  // Compute estimated pipeline revenue (leads past research stage)
+  const pipelineRevenue = topLeads
+    .filter(l => l.pipeline_stage && l.pipeline_stage !== 'research')
+    .reduce((sum, l) => sum + (l.estimated_annual_revenue || 0), 0);
+
+  // Total estimated revenue across all target leads
+  const totalTargetRevenue = topLeads.reduce((sum, l) => sum + (l.estimated_annual_revenue || 0), 0);
+
+  // High-value lead count (portfolio >= 10)
+  const highValueCount = stats?.portfolio_distribution ? 
+    Object.entries(stats.portfolio_distribution)
+      .filter(([k]) => ['11-25', '26-50', '51-100', '100+'].includes(k))
+      .reduce((sum, [, v]) => sum + (v as number), 0)
+    : 0;
 
   const enrichedCount = stats?.with_phone || 0;
   const withEmail = stats?.with_email || 0;
 
-  // Calculate total units and avg units per building across all top leads
-  const totalUnits = topLeads.reduce((sum, l) => sum + l.total_units, 0);
-  const totalBuildings = topLeads.reduce((sum, l) => sum + l.portfolio_size, 0);
-  const avgUnitsPerBuilding = totalBuildings > 0 ? (totalUnits / totalBuildings).toFixed(1) : '0';
+  // Leads with violations
+  const leadsWithViolations = topLeads.filter(l => l.violation_count > 0).length;
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <div className="text-slate-500 text-sm">Loading dashboard data...</div>
+      <div className="space-y-6 animate-pulse">
+        <div className="h-16 bg-slate-800/50 rounded-2xl" />
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+          {[...Array(6)].map((_, i) => <div key={i} className="h-24 bg-slate-800/50 rounded-2xl" />)}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="h-64 bg-slate-800/50 rounded-2xl" />
+          <div className="h-64 bg-slate-800/50 rounded-2xl" />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      {/* Enrichment Status Banner */}
-      {enrichmentStatus?.running && (
-        <div className="bg-blue-900/30 border border-blue-500/30 rounded-2xl p-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-blue-600 rounded-xl">
-                <svg className="w-5 h-5 text-white animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                </svg>
+    <div className="space-y-6 animate-in fade-in duration-500">
+      {/* Pipeline Funnel */}
+      <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-5">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Deal Pipeline</h3>
+          <span className="text-xs text-slate-600">
+            {leadsInPipeline} active {leadsInPipeline === 1 ? 'deal' : 'deals'}
+            {pipelineRevenue > 0 && ` • ${formatCurrency(pipelineRevenue)}/yr est. revenue`}
+          </span>
+        </div>
+        <div className="flex gap-1">
+          {PIPELINE_STAGES.map((stage) => {
+            const count = pipelineCounts[stage.key] || 0;
+            return (
+              <div key={stage.key} className="flex-1 group">
+                <div className={`${count > 0 ? stage.color : 'bg-slate-800'} rounded-lg px-2 py-3 text-center transition-all hover:opacity-80`}>
+                  <div className="text-lg font-bold font-mono text-white">{count}</div>
+                  <div className="text-[9px] uppercase tracking-wider text-white/70 font-medium">{stage.label}</div>
+                </div>
               </div>
-              <div>
-                <h3 className="text-white font-bold">Enriching Leads...</h3>
-                <p className="text-blue-300 text-sm">
-                  {enrichmentStatus.completed} of {enrichmentStatus.total} leads • 
-                  Phase: {enrichmentStatus.phase || 'Starting'}
-                  {enrichmentStatus.current_lead && ` • Current: ${enrichmentStatus.current_lead}`}
-                </p>
-              </div>
-            </div>
-            <div className="text-right">
-              <div className="text-3xl font-mono font-bold text-blue-400">
-                {enrichmentStatus.percent_complete}%
-              </div>
-              <div className="text-xs text-blue-400/70">
-                {enrichmentStatus.dos_found} DOS • {enrichmentStatus.web_found} Web
-              </div>
-            </div>
-          </div>
-          <div className="mt-4 h-2 bg-blue-950 rounded-full overflow-hidden">
-            <div 
-              className="h-full bg-blue-500 transition-all duration-500"
-              style={{ width: `${enrichmentStatus.percent_complete}%` }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Key Metrics - 6 columns now */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-5">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Total Leads</p>
-          <p className="text-2xl font-mono font-bold text-white">{(status?.total_leads || 0).toLocaleString()}</p>
-          <p className="text-[10px] text-slate-600 mt-1">Property managers</p>
-        </div>
-        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-5">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">High Value</p>
-          <p className="text-2xl font-mono font-bold text-blue-400">
-            {stats?.portfolio_distribution ? 
-              Object.entries(stats.portfolio_distribution)
-                .filter(([k]) => ['11-25', '26-50', '51-100', '100+'].includes(k))
-                .reduce((sum, [, v]) => sum + (v as number), 0).toLocaleString() 
-              : 0}
-          </p>
-          <p className="text-[10px] text-slate-600 mt-1">10+ buildings</p>
-        </div>
-        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-5">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Avg Units/Bldg</p>
-          <p className="text-2xl font-mono font-bold text-purple-400">{avgUnitsPerBuilding}</p>
-          <p className="text-[10px] text-slate-600 mt-1">Top 100 leads</p>
-        </div>
-        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-5">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">With Phone</p>
-          <p className="text-2xl font-mono font-bold text-emerald-400">{enrichedCount}</p>
-          <p className="text-[10px] text-slate-600 mt-1">{withEmail} emails</p>
-        </div>
-        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-5">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Ready to Call</p>
-          <p className="text-2xl font-mono font-bold text-amber-400">{readyToContact.length}</p>
-          <p className="text-[10px] text-slate-600 mt-1">Have contact info</p>
-        </div>
-        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-5">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Top Score</p>
-          <p className="text-2xl font-mono font-bold text-emerald-400">{status?.top_score?.toFixed(1) || 0}</p>
-          <p className="text-[10px] text-slate-600 mt-1">Out of 100</p>
+            );
+          })}
         </div>
       </div>
 
-      {/* Action Cards */}
+      {/* Key Metrics */}
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4">
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Target Leads</p>
+          <p className="text-2xl font-mono font-bold text-white">{highValueCount.toLocaleString()}</p>
+          <p className="text-[10px] text-slate-600 mt-0.5">10+ buildings</p>
+        </div>
+        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4">
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Est. Revenue Pool</p>
+          <p className="text-2xl font-mono font-bold text-emerald-400">{totalTargetRevenue > 0 ? formatCurrency(totalTargetRevenue) : '—'}</p>
+          <p className="text-[10px] text-slate-600 mt-0.5">Top 100 leads</p>
+        </div>
+        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4">
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Follow-Ups Due</p>
+          <p className="text-2xl font-mono font-bold text-rose-400">{followUpsDue?.count || 0}</p>
+          <p className="text-[10px] text-slate-600 mt-0.5">Need action</p>
+        </div>
+        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4">
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">With Contact</p>
+          <p className="text-2xl font-mono font-bold text-blue-400">{enrichedCount}</p>
+          <p className="text-[10px] text-slate-600 mt-0.5">{withEmail} emails</p>
+        </div>
+        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4">
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Ready to Call</p>
+          <p className="text-2xl font-mono font-bold text-amber-400">{readyToContact.length}</p>
+          <p className="text-[10px] text-slate-600 mt-0.5">Uncontacted</p>
+        </div>
+        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4">
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Violations Found</p>
+          <p className="text-2xl font-mono font-bold text-orange-400">{leadsWithViolations}</p>
+          <p className="text-[10px] text-slate-600 mt-0.5">Distress signals</p>
+        </div>
+      </div>
+
+      {/* Action Cards Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Start Enrichment Card - Show if few leads enriched */}
-        {enrichedCount < 100 && !enrichmentStatus?.running && (
-          <div className="bg-gradient-to-br from-amber-900/30 to-amber-950/30 border border-amber-500/30 rounded-2xl p-6">
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="text-lg font-bold text-white mb-2">Get Contact Info</h3>
-                <p className="text-amber-200/70 text-sm mb-4">
-                  Only {enrichedCount} leads have contact info. Start batch enrichment to find phone numbers 
-                  and emails for your top leads.
-                </p>
-                <button
-                  onClick={handleStartEnrichment}
-                  disabled={startingEnrichment}
-                  className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-bold text-sm transition-colors disabled:opacity-50"
-                >
-                  {startingEnrichment ? 'Starting...' : 'Enrich Top 500 Leads'}
-                </button>
-              </div>
-              <div className="p-4 bg-amber-600/20 rounded-xl">
-                <svg className="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-                </svg>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Ready to Contact Card */}
-        {readyToContact.length > 0 && (
-          <div className="bg-gradient-to-br from-emerald-900/30 to-emerald-950/30 border border-emerald-500/30 rounded-2xl p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-white">Ready to Contact</h3>
-              <span className="px-2 py-1 bg-emerald-600 text-white text-xs font-bold rounded-lg">
-                {readyToContact.length} leads
-              </span>
-            </div>
-            <div className="space-y-2 max-h-48 overflow-y-auto">
-              {readyToContact.slice(0, 5).map(lead => (
-                <div 
-                  key={lead.lead_id}
-                  onClick={() => onSelectLead?.(lead)}
-                  className="flex items-center justify-between p-3 bg-slate-900/50 rounded-xl hover:bg-slate-800/50 cursor-pointer transition-colors"
-                >
-                  <div>
-                    <p className="text-white font-medium text-sm">{lead.agent_name || lead.owner_name}</p>
-                    <p className="text-slate-500 text-xs">{lead.portfolio_size} bldgs • {lead.total_units.toLocaleString()} units • {(lead.total_units / lead.portfolio_size).toFixed(1)} u/b</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {lead.phone && (
-                      <span className="p-1.5 bg-emerald-900/50 rounded-lg">
-                        <svg className="w-3 h-3 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
-                        </svg>
-                      </span>
-                    )}
-                    {lead.email && (
-                      <span className="p-1.5 bg-blue-900/50 rounded-lg">
-                        <svg className="w-3 h-3 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
-                        </svg>
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Follow-Ups Due Widget */}
-        {followUpsDue && followUpsDue.count > 0 && (
+        {/* Follow-Ups Due */}
+        {followUpsDue && followUpsDue.count > 0 ? (
           <div className="bg-gradient-to-br from-rose-900/30 to-rose-950/30 border border-rose-500/30 rounded-2xl p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-white">Follow-Ups Due</h3>
@@ -324,19 +274,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                 {followUpsDue.count} due
               </span>
             </div>
-            <div className="space-y-2 max-h-48 overflow-y-auto">
+            <div className="space-y-2 max-h-52 overflow-y-auto">
               {followUpsDue.leads.slice(0, 5).map((lead: any, i: number) => {
                 const dueDate = lead.next_follow_up ? new Date(lead.next_follow_up as string) : null;
                 const today = new Date(new Date().toDateString());
                 const isOverdue = dueDate && dueDate < today;
                 const isDueToday = dueDate && dueDate.toDateString() === today.toDateString();
                 const daysOverdue = dueDate ? Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)) : 0;
-
                 return (
                   <div 
                     key={lead.lead_id as string || i}
                     onClick={() => {
-                      // Try to find the lead in topLeads for full data
                       const fullLead = topLeads.find(l => l.lead_id === lead.lead_id);
                       if (fullLead) onSelectLead?.(fullLead);
                     }}
@@ -350,38 +298,82 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                             {(lead.pipeline_stage as string).replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}
                           </span>
                         )}
-                        {lead.phone && (
-                          <svg className="w-3 h-3 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
-                          </svg>
-                        )}
-                        {lead.email && (
-                          <svg className="w-3 h-3 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
-                          </svg>
-                        )}
                       </div>
                     </div>
-                    <div className="text-right">
-                      <span className={`text-xs font-bold ${
-                        isOverdue ? 'text-rose-400' : isDueToday ? 'text-amber-400' : 'text-slate-500'
-                      }`}>
-                        {isOverdue ? `${daysOverdue}d overdue` : isDueToday ? 'Due today' : lead.next_follow_up}
-                      </span>
-                    </div>
+                    <span className={`text-xs font-bold ${isOverdue ? 'text-rose-400' : isDueToday ? 'text-amber-400' : 'text-slate-500'}`}>
+                      {isOverdue ? `${daysOverdue}d overdue` : isDueToday ? 'Due today' : lead.next_follow_up}
+                    </span>
                   </div>
                 );
               })}
             </div>
           </div>
+        ) : (
+          // Ready to Contact (show when no follow-ups)
+          <div className="bg-gradient-to-br from-emerald-900/30 to-emerald-950/30 border border-emerald-500/30 rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-white">Ready to Contact</h3>
+              <span className="px-2 py-1 bg-emerald-600 text-white text-xs font-bold rounded-lg">
+                {readyToContact.length} leads
+              </span>
+            </div>
+            <div className="space-y-2 max-h-52 overflow-y-auto">
+              {readyToContact.slice(0, 5).map(lead => (
+                <div 
+                  key={lead.lead_id}
+                  onClick={() => onSelectLead?.(lead)}
+                  className="flex items-center justify-between p-3 bg-slate-900/50 rounded-xl hover:bg-slate-800/50 cursor-pointer transition-colors"
+                >
+                  <div>
+                    <p className="text-white font-medium text-sm">{lead.company_name || lead.agent_name || lead.owner_name}</p>
+                    <p className="text-slate-500 text-xs">{lead.portfolio_size} bldgs • {lead.total_units.toLocaleString()} units</p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {lead.phone && <span className="p-1 bg-emerald-900/50 rounded text-emerald-400 text-[10px]">Phone</span>}
+                    {lead.email && <span className="p-1 bg-blue-900/50 rounded text-blue-400 text-[10px]">Email</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Ready to Contact (when follow-ups exist) OR Ready to Contact always shows */}
+        {followUpsDue && followUpsDue.count > 0 && readyToContact.length > 0 && (
+          <div className="bg-gradient-to-br from-emerald-900/30 to-emerald-950/30 border border-emerald-500/30 rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-white">Ready to Contact</h3>
+              <span className="px-2 py-1 bg-emerald-600 text-white text-xs font-bold rounded-lg">
+                {readyToContact.length} leads
+              </span>
+            </div>
+            <div className="space-y-2 max-h-52 overflow-y-auto">
+              {readyToContact.slice(0, 5).map(lead => (
+                <div 
+                  key={lead.lead_id}
+                  onClick={() => onSelectLead?.(lead)}
+                  className="flex items-center justify-between p-3 bg-slate-900/50 rounded-xl hover:bg-slate-800/50 cursor-pointer transition-colors"
+                >
+                  <div>
+                    <p className="text-white font-medium text-sm">{lead.company_name || lead.agent_name || lead.owner_name}</p>
+                    <p className="text-slate-500 text-xs">{lead.portfolio_size} bldgs • {lead.total_units.toLocaleString()} units</p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {lead.phone && <span className="p-1 bg-emerald-900/50 rounded text-emerald-400 text-[10px]">Phone</span>}
+                    {lead.email && <span className="p-1 bg-blue-900/50 rounded text-blue-400 text-[10px]">Email</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
       </div>
 
-      {/* Top 10 Largest Property Managers */}
+      {/* Top Leads Table */}
       <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-6">
         <div className="flex items-center justify-between mb-4">
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Top 10 Largest Property Managers</h4>
-          <span className="text-[10px] text-slate-600">Click any row to view details</span>
+          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Top Leads by Score</h4>
+          <span className="text-[10px] text-slate-600">Click to view details</span>
         </div>
         <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
           <table className="w-full">
@@ -391,14 +383,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                 <th className="text-left py-2 px-3">Company</th>
                 <th className="text-right py-2 px-3">Buildings</th>
                 <th className="text-right py-2 px-3">Units</th>
-                <th className="text-right py-2 px-3">Units/Bldg</th>
+                <th className="text-right py-2 px-3">Est. Revenue</th>
                 <th className="text-left py-2 px-3">Boroughs</th>
-                <th className="text-center py-2 px-3">Contact</th>
                 <th className="text-right py-2 px-3">Score</th>
               </tr>
             </thead>
             <tbody>
-              {topLeadsWithMetrics.map((lead, i) => (
+              {topLeads.slice(0, 10).map((lead, i) => (
                 <tr 
                   key={lead.lead_id}
                   onClick={() => onSelectLead?.(lead)}
@@ -406,32 +397,30 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                 >
                   <td className="py-3 px-3 text-slate-600 font-mono text-sm">{i + 1}</td>
                   <td className="py-3 px-3">
-                    <p className="text-white font-medium text-sm" title={lead.agent_name || lead.owner_name}>
-                      {lead.agent_name || lead.owner_name}
-                    </p>
+                    <p className="text-white font-medium text-sm">{lead.company_name || lead.agent_name || lead.owner_name}</p>
+                    {lead.pipeline_stage && lead.pipeline_stage !== 'research' && (
+                      <span className="text-[9px] px-1.5 py-0.5 bg-blue-900/30 text-blue-400 rounded mt-0.5 inline-block">
+                        {lead.pipeline_stage.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                      </span>
+                    )}
                   </td>
                   <td className="py-3 px-3 text-right font-mono text-sm text-blue-400 font-bold">{lead.portfolio_size}</td>
                   <td className="py-3 px-3 text-right font-mono text-sm text-slate-300">{lead.total_units.toLocaleString()}</td>
-                  <td className="py-3 px-3 text-right font-mono text-sm text-purple-400">{lead.unitsPerBuilding}</td>
+                  <td className="py-3 px-3 text-right font-mono text-sm text-emerald-400">
+                    {lead.estimated_annual_revenue > 0 ? formatCurrency(lead.estimated_annual_revenue) : '—'}
+                  </td>
                   <td className="py-3 px-3">
                     <div className="flex gap-1 flex-wrap">
-                      {(lead.boros || [lead.boro]).slice(0, 3).map((b, j) => (
+                      {(lead.boros || [lead.boro]).slice(0, 2).map((b, j) => (
                         <span key={j} className="px-1.5 py-0.5 bg-slate-800 text-slate-400 text-[9px] rounded">
                           {b ? b.charAt(0) + b.slice(1).toLowerCase() : ''}
                         </span>
                       ))}
-                      {(lead.boros?.length || 0) > 3 && (
+                      {(lead.boros?.length || 0) > 2 && (
                         <span className="px-1.5 py-0.5 bg-slate-800 text-slate-500 text-[9px] rounded">
-                          +{(lead.boros?.length || 0) - 3}
+                          +{(lead.boros?.length || 0) - 2}
                         </span>
                       )}
-                    </div>
-                  </td>
-                  <td className="py-3 px-3 text-center">
-                    <div className="flex gap-1 justify-center">
-                      {lead.phone && <span className="text-emerald-500">📞</span>}
-                      {lead.email && <span className="text-blue-500">✉️</span>}
-                      {!lead.phone && !lead.email && <span className="text-slate-700">—</span>}
                     </div>
                   </td>
                   <td className="py-3 px-3 text-right">
@@ -446,73 +435,51 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
         </div>
       </div>
 
-      {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Portfolio Size Chart */}
-        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-6">
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-6">Portfolio Size (Top 10)</h4>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#ffffff08" />
-                <XAxis type="number" fontSize={10} tickLine={false} axisLine={false} tick={{fill: '#64748b'}} />
-                <YAxis type="category" dataKey="name" fontSize={10} tickLine={false} axisLine={false} tick={{fill: '#64748b'}} width={80} />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: '#0f172a', 
-                    borderRadius: '12px', 
-                    border: '1px solid rgba(255,255,255,0.1)', 
-                    fontSize: '11px',
-                    color: '#f8fafc'
-                  }}
-                  formatter={(value: number, name: string) => [value.toLocaleString(), name === 'buildings' ? 'Buildings' : 'Units']}
-                />
-                <Bar dataKey="buildings" fill={COLORS.primary} radius={[0, 6, 6, 0]} barSize={20} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+      {/* Data Status Footer */}
+      <div className="flex items-center justify-between px-2 py-3 border-t border-white/5">
+        <div className="flex items-center gap-4 text-xs text-slate-600">
+          {/* Enrichment Status */}
+          {enrichmentStatus?.running ? (
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+              <span>Enriching contacts... {enrichmentStatus.percent_complete}% ({enrichmentStatus.completed}/{enrichmentStatus.total})</span>
+            </div>
+          ) : enrichmentStatus?.last_completed_at ? (
+            <span>Contacts last updated: {new Date(enrichmentStatus.last_completed_at).toLocaleDateString()}</span>
+          ) : (
+            <button
+              onClick={handleStartEnrichment}
+              disabled={startingEnrichment}
+              className="text-amber-500 hover:text-amber-400 underline disabled:opacity-50"
+            >
+              {startingEnrichment ? 'Starting...' : `Enrich contacts (${enrichedCount} found so far)`}
+            </button>
+          )}
 
-        {/* Units per Building Chart */}
-        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-6">
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-6">Units per Building (Top 10)</h4>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#ffffff08" />
-                <XAxis type="number" fontSize={10} tickLine={false} axisLine={false} tick={{fill: '#64748b'}} />
-                <YAxis type="category" dataKey="name" fontSize={10} tickLine={false} axisLine={false} tick={{fill: '#64748b'}} width={80} />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: '#0f172a', 
-                    borderRadius: '12px', 
-                    border: '1px solid rgba(255,255,255,0.1)', 
-                    fontSize: '11px',
-                    color: '#f8fafc'
-                  }}
-                  formatter={(value: number) => [value.toFixed(1), 'Units/Building']}
-                />
-                <Bar dataKey="unitsPerBuilding" fill="#a855f7" radius={[0, 6, 6, 0]} barSize={20} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <span className="text-slate-700">|</span>
+
+          {/* Violations Status */}
+          {refreshingViolations ? (
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse" />
+              <span>Refreshing violations data...</span>
+            </div>
+          ) : leadsWithViolations > 0 ? (
+            <span>{leadsWithViolations} leads with violations</span>
+          ) : (
+            <button
+              onClick={handleRefreshViolations}
+              className="text-orange-500 hover:text-orange-400 underline"
+            >
+              Load violations data
+            </button>
+          )}
+
+          <span className="text-slate-700">|</span>
+          
+          <span>Data refreshed: {status?.last_refresh ? new Date(status.last_refresh).toLocaleDateString() : 'Never'}</span>
         </div>
       </div>
-
-      {/* Entity Type Distribution */}
-      {stats?.by_entity_type && (
-        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-6">
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Entity Type Distribution</h4>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {Object.entries(stats.by_entity_type).map(([type, count]) => (
-              <div key={type} className="bg-slate-950/50 rounded-xl p-3 text-center">
-                <p className="text-lg font-mono font-bold text-slate-300">{(count as number).toLocaleString()}</p>
-                <p className="text-[10px] text-slate-600 uppercase">{type.replace('_', ' ')}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 };

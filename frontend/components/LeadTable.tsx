@@ -27,7 +27,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   const [filterHasWebsite, setFilterHasWebsite] = useState<boolean | null>(null);
   const [filterEntityType, setFilterEntityType] = useState<string>('');
   const [filterOutreachStatus, setFilterOutreachStatus] = useState<string>('');
+  const [filterPipelineStage, setFilterPipelineStage] = useState<string>('');
   const [filterMinUnits, setFilterMinUnits] = useState<string>('');
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
   
   // Sorting
   const [sortField, setSortField] = useState<SortField>('score');
@@ -66,6 +68,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       if (filterHasWebsite !== null) params.has_website = filterHasWebsite;
       if (filterEntityType) params.entity_type = filterEntityType;
       if (filterOutreachStatus) params.outreach_status = filterOutreachStatus;
+      if (filterPipelineStage) (params as any).pipeline_stage = filterPipelineStage;
       
       const minUnits = parseInt(filterMinUnits);
       if (!isNaN(minUnits) && minUnits > 0) params.min_units = minUnits;
@@ -79,7 +82,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     } finally {
       setLoading(false);
     }
-  }, [filterMinScore, filterMinPortfolio, filterBorough, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterMinUnits, pageSize]);
+  }, [filterMinScore, filterMinPortfolio, filterBorough, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterPipelineStage, filterMinUnits, pageSize]);
 
   // Initial load + reload on filter change
   useEffect(() => {
@@ -94,17 +97,20 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
 
   const totalPages = Math.ceil(totalLeads / pageSize);
 
-  // Client-side search filter (search within current page results since it's a text search)
-  const filteredLeads = searchTerm 
-    ? leads.filter(lead => {
-        const term = searchTerm.toLowerCase();
-        return (lead.agent_name || '').toLowerCase().includes(term) ||
-          (lead.owner_name || '').toLowerCase().includes(term) ||
-          (lead.company_name || '').toLowerCase().includes(term) ||
-          (lead.primary_contact || '').toLowerCase().includes(term) ||
-          (lead.address || '').toLowerCase().includes(term);
-      })
-    : leads;
+  // Client-side search + pipeline filter
+  const filteredLeads = leads.filter(lead => {
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      const matchesSearch = (lead.agent_name || '').toLowerCase().includes(term) ||
+        (lead.owner_name || '').toLowerCase().includes(term) ||
+        (lead.company_name || '').toLowerCase().includes(term) ||
+        (lead.primary_contact || '').toLowerCase().includes(term) ||
+        (lead.address || '').toLowerCase().includes(term);
+      if (!matchesSearch) return false;
+    }
+    if (filterPipelineStage && (lead.pipeline_stage || 'research') !== filterPipelineStage) return false;
+    return true;
+  });
 
   // Client-side sorting
   const displayLeads = [...filteredLeads].sort((a, b) => {
@@ -200,6 +206,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     setFilterHasWebsite(null);
     setFilterEntityType('');
     setFilterOutreachStatus('');
+    setFilterPipelineStage('');
     setFilterMinUnits('');
   };
 
@@ -268,8 +275,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <div className="text-slate-500">Loading leads...</div>
+      <div className="space-y-4 animate-pulse">
+        <div className="h-12 bg-slate-800/50 rounded-xl" />
+        <div className="h-10 bg-slate-800/30 rounded-xl" />
+        {[...Array(8)].map((_, i) => <div key={i} className="h-14 bg-slate-800/20 rounded-lg" />)}
       </div>
     );
   }
@@ -287,135 +296,74 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     <div className="space-y-4">
       {/* Filter Bar */}
       <div className="bg-slate-900/60 border border-white/5 rounded-xl p-4">
+        {/* Primary Filters Row */}
         <div className="flex flex-wrap gap-3 items-center">
-          {/* Search */}
           <div className="flex-1 min-w-[200px]">
-            <input
-              type="text"
-              placeholder="Search name, company, address..."
+            <input type="text" placeholder="Search name, company, address..."
               className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+              value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
           </div>
-          
-          {/* Borough */}
-          <select
-            className="px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            value={filterBorough}
-            onChange={(e) => setFilterBorough(e.target.value)}
-          >
+          <select className="px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-300" value={filterBorough} onChange={(e) => setFilterBorough(e.target.value)}>
             <option value="">All Boroughs</option>
             {BOROUGHS.map(b => <option key={b} value={b}>{b}</option>)}
           </select>
-          
-          {/* Entity Type */}
-          <select
-            className="px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            value={filterEntityType}
-            onChange={(e) => setFilterEntityType(e.target.value)}
-          >
-            <option value="">All Entity Types</option>
-            <option value="company">Company</option>
-            <option value="individual_agent">Individual Agent</option>
-            <option value="owner_operator">Owner-Operator</option>
-          </select>
-          
-          {/* Outreach Status */}
-          <select
-            className="px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            value={filterOutreachStatus}
-            onChange={(e) => setFilterOutreachStatus(e.target.value)}
-          >
-            <option value="">All Statuses</option>
-            <option value="new">New</option>
-            <option value="contacted">Contacted</option>
-            <option value="interested">Interested</option>
-            <option value="not_interested">Not Interested</option>
+          <select className="px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-300" value={filterPipelineStage} onChange={(e) => setFilterPipelineStage(e.target.value)}>
+            <option value="">All Pipeline Stages</option>
+            <option value="research">Research</option>
+            <option value="first_contact">First Contact</option>
+            <option value="follow_up">Follow-Up</option>
+            <option value="meeting_scheduled">Meeting Scheduled</option>
+            <option value="meeting_done">Meeting Done</option>
+            <option value="loi">LOI</option>
+            <option value="due_diligence">Due Diligence</option>
             <option value="closed">Closed</option>
           </select>
-          
-          {/* Min Score */}
-          <input
-            type="number"
-            placeholder="Min Score"
-            className="w-24 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            value={filterMinScore}
-            onChange={(e) => setFilterMinScore(e.target.value)}
-          />
-          
-          {/* Portfolio Size */}
-          <input
-            type="number"
-            placeholder="Min Buildings"
-            className="w-28 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            value={filterMinPortfolio}
-            onChange={(e) => setFilterMinPortfolio(e.target.value)}
-          />
-          
-          {/* Min Units */}
-          <input
-            type="number"
-            placeholder="Min Units"
-            className="w-24 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            value={filterMinUnits}
-            onChange={(e) => setFilterMinUnits(e.target.value)}
-          />
-          
-          {/* Contact Filters */}
           <div className="flex gap-2">
-            <button
-              onClick={() => setFilterHasPhone(filterHasPhone === true ? null : true)}
-              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
-                filterHasPhone === true 
-                  ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' 
-                  : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
-              }`}
-            >
+            <button onClick={() => setFilterHasPhone(filterHasPhone === true ? null : true)}
+              className={`px-2 py-1.5 rounded text-xs font-medium transition-colors ${filterHasPhone === true ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'}`}>
               Phone
             </button>
-            <button
-              onClick={() => setFilterHasEmail(filterHasEmail === true ? null : true)}
-              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
-                filterHasEmail === true 
-                  ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' 
-                  : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
-              }`}
-            >
+            <button onClick={() => setFilterHasEmail(filterHasEmail === true ? null : true)}
+              className={`px-2 py-1.5 rounded text-xs font-medium transition-colors ${filterHasEmail === true ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'}`}>
               Email
             </button>
-            <button
-              onClick={() => setFilterHasWebsite(filterHasWebsite === true ? null : true)}
-              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
-                filterHasWebsite === true 
-                  ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' 
-                  : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'
-              }`}
-            >
+          </div>
+          <button onClick={() => setShowMoreFilters(!showMoreFilters)} className="px-3 py-2 text-xs text-slate-500 hover:text-slate-300 transition-colors">
+            {showMoreFilters ? 'Less Filters' : 'More Filters'}
+          </button>
+          <button onClick={clearFilters} className="px-3 py-2 text-xs text-slate-500 hover:text-slate-300 transition-colors">Clear</button>
+          <button onClick={exportToCsv} disabled={displayLeads.length === 0}
+            className="px-3 py-2 bg-slate-800 border border-white/10 rounded-lg text-xs text-slate-300 hover:bg-slate-700 hover:text-white disabled:opacity-40 transition-colors flex items-center gap-1.5">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+            Export
+          </button>
+        </div>
+        {/* More Filters (collapsed) */}
+        {showMoreFilters && (
+          <div className="flex flex-wrap gap-3 items-center mt-3 pt-3 border-t border-white/5">
+            <select className="px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-300" value={filterEntityType} onChange={(e) => setFilterEntityType(e.target.value)}>
+              <option value="">All Entity Types</option>
+              <option value="company">Company</option>
+              <option value="individual_agent">Individual Agent</option>
+              <option value="owner_operator">Owner-Operator</option>
+            </select>
+            <select className="px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-300" value={filterOutreachStatus} onChange={(e) => setFilterOutreachStatus(e.target.value)}>
+              <option value="">All Outreach</option>
+              <option value="new">New</option>
+              <option value="contacted">Contacted</option>
+              <option value="interested">Interested</option>
+              <option value="not_interested">Not Interested</option>
+              <option value="closed">Closed</option>
+            </select>
+            <input type="number" placeholder="Min Score" className="w-24 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100" value={filterMinScore} onChange={(e) => setFilterMinScore(e.target.value)} />
+            <input type="number" placeholder="Min Buildings" className="w-28 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100" value={filterMinPortfolio} onChange={(e) => setFilterMinPortfolio(e.target.value)} />
+            <input type="number" placeholder="Min Units" className="w-24 px-2 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100" value={filterMinUnits} onChange={(e) => setFilterMinUnits(e.target.value)} />
+            <button onClick={() => setFilterHasWebsite(filterHasWebsite === true ? null : true)}
+              className={`px-2 py-1.5 rounded text-xs font-medium transition-colors ${filterHasWebsite === true ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-300'}`}>
               Website
             </button>
           </div>
-          
-          {/* Clear Filters */}
-          <button
-            onClick={clearFilters}
-            className="px-3 py-2 text-xs text-slate-500 hover:text-slate-300 transition-colors"
-          >
-            Clear
-          </button>
-          
-          {/* Export CSV */}
-          <button
-            onClick={exportToCsv}
-            disabled={displayLeads.length === 0}
-            className="px-3 py-2 bg-slate-800 border border-white/10 rounded-lg text-xs text-slate-300 hover:bg-slate-700 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            Export CSV
-          </button>
-        </div>
+        )}
         
         {/* Results count and bulk actions */}
         <div className="flex justify-between items-center mt-3 pt-3 border-t border-white/5">
@@ -475,9 +423,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                 >
                   Units <SortIcon field="total_units" />
                 </th>
-                <th className="px-4 py-3">
-                  Type Mix
-                </th>
                 <th 
                   className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right"
                   onClick={() => handleSort('score')}
@@ -533,8 +478,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                          lead.entity_type === 'individual_agent' ? 'Individual' : 
                          lead.entity_type === 'owner_operator' ? 'Owner-Op' : 'Unknown'}
                       </span>
-                      {lead.primary_contact && (
-                        <span className="text-slate-500 truncate">{lead.primary_contact}</span>
+                      {lead.primary_contact && 
+                       lead.primary_contact.toLowerCase() !== (lead.company_name || lead.agent_name || lead.owner_name || '').toLowerCase() && (
+                        <span className="text-slate-500 truncate"><span className="text-slate-700">HPD: </span>{lead.primary_contact}</span>
                       )}
                     </div>
                   </td>
@@ -552,39 +498,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <span className="text-blue-400 font-mono text-sm">{lead.total_units.toLocaleString()}</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    {lead.building_types && lead.building_types.total > 0 ? (
-                      <div className="flex gap-1 items-center flex-wrap">
-                        {lead.building_types.condo > 0 && (
-                          <span className="px-1.5 py-0.5 bg-blue-900/30 text-blue-400 text-[10px] rounded" title="Condos">
-                            {lead.building_types.condo} Condo
-                          </span>
-                        )}
-                        {lead.building_types.coop > 0 && (
-                          <span className="px-1.5 py-0.5 bg-purple-900/30 text-purple-400 text-[10px] rounded" title="Coops">
-                            {lead.building_types.coop} Coop
-                          </span>
-                        )}
-                        {lead.building_types.rental_elevator > 0 && (
-                          <span className="px-1.5 py-0.5 bg-emerald-900/30 text-emerald-400 text-[10px] rounded" title="Elevator Rentals">
-                            {lead.building_types.rental_elevator} Elevator
-                          </span>
-                        )}
-                        {lead.building_types.rental_walkup > 0 && (
-                          <span className="px-1.5 py-0.5 bg-amber-900/30 text-amber-400 text-[10px] rounded" title="Walk-up Rentals">
-                            {lead.building_types.rental_walkup} Walk-up
-                          </span>
-                        )}
-                        {(lead.building_types.small_residential + lead.building_types.other + lead.building_types.unknown) > 0 && (
-                          <span className="px-1.5 py-0.5 bg-slate-800 text-slate-500 text-[10px] rounded" title="Other/Small">
-                            {lead.building_types.small_residential + lead.building_types.other + lead.building_types.unknown} Other
-                          </span>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-slate-700 text-xs">—</span>
-                    )}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <span className={`font-mono text-sm font-medium ${
@@ -623,21 +536,11 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                     <div className="flex gap-1.5">
                       {lead.phone && (
-                        <button 
-                          onClick={() => {
-                            navigator.clipboard.writeText(lead.phone!);
-                            // Brief visual feedback
-                            const btn = document.activeElement as HTMLButtonElement;
-                            btn.classList.add('ring-2', 'ring-emerald-500');
-                            setTimeout(() => btn.classList.remove('ring-2', 'ring-emerald-500'), 300);
-                          }}
-                          title={`Copy: ${lead.phone}`}
-                          className="p-1 hover:bg-emerald-900/50 rounded transition-colors"
-                        >
+                        <a href={`tel:${lead.phone}`} title={`Call: ${lead.phone}`} className="p-1 hover:bg-emerald-900/50 rounded transition-colors">
                           <svg className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
                           </svg>
-                        </button>
+                        </a>
                       )}
                       {lead.email && (
                         <a
