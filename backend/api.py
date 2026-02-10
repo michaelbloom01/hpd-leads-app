@@ -1696,7 +1696,7 @@ def _run_full_enrichment_batch(lead_ids: list):
         _enrichment_state["error"] = None
     
     try:
-        from src.enrich.multi_source import MultiSourceEnricher
+        from src.enrich.contact_sources import MultiSourceEnricher
         from src.enrich.web_crawl import WebCrawler
         from src.enrich.ai_summary import generate_company_description
         
@@ -1725,18 +1725,18 @@ def _run_full_enrichment_batch(lead_ids: list):
                 # Step 1: Multi-source contacts
                 try:
                     result = enricher.enrich(
+                        lead_id=lead_id,
                         company_name=company_name,
-                        borough=lead.boro,
-                        address=None,
+                        website=lead.website,
                     )
-                    if result.get('phone') and not lead.phone:
-                        lead.phone = result['phone']
-                    if result.get('email') and not lead.email:
-                        lead.email = result['email']
-                    if result.get('website') and not lead.website:
-                        lead.website = result['website']
-                    if result.get('owner_principal') and not lead.owner_principal:
-                        lead.owner_principal = result['owner_principal']
+                    if result.phones and not lead.phone:
+                        lead.phone = result.phones[0].value
+                    if result.emails and not lead.email:
+                        lead.email = result.emails[0].value
+                    if result.website and not lead.website:
+                        lead.website = result.website
+                    if result.dos_registered_agent and not lead.owner_principal:
+                        lead.owner_principal = result.dos_registered_agent
                 except Exception as e:
                     logger.warning(f"Contact enrichment failed for {lead_id}: {e}")
                 
@@ -3054,34 +3054,27 @@ async def enrich_lead_all(lead_id: str):
     
     # Step 1: Multi-source contact enrichment (Google Places, NY DOS, Web Crawl, Hunter)
     try:
-        from src.enrich.multi_source import MultiSourceEnricher
+        from src.enrich.contact_sources import MultiSourceEnricher
         enricher = MultiSourceEnricher()
         enrich_result = enricher.enrich(
+            lead_id=lead_id,
             company_name=company_name,
-            borough=lead.boro,
-            address=None,
+            website=lead.website,
         )
         
-        if enrich_result.get('phone') and not lead.phone:
-            lead.phone = enrich_result['phone']
-        if enrich_result.get('email') and not lead.email:
-            lead.email = enrich_result['email']
-        if enrich_result.get('website') and not lead.website:
-            lead.website = enrich_result['website']
-        if enrich_result.get('owner_principal') and not lead.owner_principal:
-            lead.owner_principal = enrich_result['owner_principal']
+        # EnrichmentResult is a dataclass with .phones, .emails, .website attributes
+        if enrich_result.phones and not lead.phone:
+            lead.phone = enrich_result.phones[0].value
+        if enrich_result.emails and not lead.email:
+            lead.email = enrich_result.emails[0].value
+        if enrich_result.website and not lead.website:
+            lead.website = enrich_result.website
+        if enrich_result.dos_registered_agent and not lead.owner_principal:
+            lead.owner_principal = enrich_result.dos_registered_agent
         
-        # Collect all phones/emails from multi-source
-        phones = enrich_result.get('phones', [])
-        emails = enrich_result.get('emails', [])
-        if enrich_result.get('phone') and enrich_result['phone'] not in phones:
-            phones.append(enrich_result['phone'])
-        if enrich_result.get('email') and enrich_result['email'] not in emails:
-            emails.append(enrich_result['email'])
-        
-        results["contacts"]["phones_found"] = len(phones)
-        results["contacts"]["emails_found"] = len(emails)
-        results["contacts"]["website_found"] = bool(enrich_result.get('website'))
+        results["contacts"]["phones_found"] = len(enrich_result.phones)
+        results["contacts"]["emails_found"] = len(enrich_result.emails)
+        results["contacts"]["website_found"] = bool(enrich_result.website)
         
         # Update enrichment status
         has_contact = bool(lead.phone or lead.email)
