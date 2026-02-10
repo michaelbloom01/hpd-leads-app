@@ -1573,25 +1573,31 @@ async def get_enrichment_status():
     
     Returns progress, current lead being processed, and completion stats.
     Enhanced for batch enrichment with DOS/web phase tracking.
+    
+    NOTE: Reads state WITHOUT the lock to avoid blocking the event loop.
+    A slightly stale read is acceptable for a status display endpoint.
     """
-    with _enrichment_lock:
-        return {
-            "running": _enrichment_state["running"],
-            "phase": _enrichment_state.get("phase", ""),
-            "progress": _enrichment_state["progress"],
-            "total": _enrichment_state["total"],
-            "completed": _enrichment_state["completed"],
-            "failed": _enrichment_state["failed"],
-            "dos_completed": _enrichment_state.get("dos_completed", 0),
-            "dos_found": _enrichment_state.get("dos_found", 0),
-            "web_completed": _enrichment_state.get("web_completed", 0),
-            "web_found": _enrichment_state.get("web_found", 0),
-            "current_lead": _enrichment_state["current_lead"],
-            "started_at": _enrichment_state["started_at"],
-            "finished_at": _enrichment_state["finished_at"],
-            "error": _enrichment_state.get("error"),
-            "percent_complete": round(_enrichment_state["progress"] / _enrichment_state["total"] * 100, 1) if _enrichment_state["total"] > 0 else 0,
-        }
+    # Snapshot the state dict to avoid partial reads (dict copy is atomic in CPython)
+    state = dict(_enrichment_state)
+    total = state.get("total", 0)
+    progress = state.get("progress", 0)
+    return {
+        "running": state.get("running", False),
+        "phase": state.get("phase", ""),
+        "progress": progress,
+        "total": total,
+        "completed": state.get("completed", 0),
+        "failed": state.get("failed", 0),
+        "dos_completed": state.get("dos_completed", 0),
+        "dos_found": state.get("dos_found", 0),
+        "web_completed": state.get("web_completed", 0),
+        "web_found": state.get("web_found", 0),
+        "current_lead": state.get("current_lead"),
+        "started_at": state.get("started_at"),
+        "finished_at": state.get("finished_at"),
+        "error": state.get("error"),
+        "percent_complete": round(progress / total * 100, 1) if total > 0 else 0,
+    }
 
 
 # Global stop flag for enrichment

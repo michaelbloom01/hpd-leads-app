@@ -29,33 +29,56 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
 
   const loadData = useCallback(async () => {
     try {
-      const [topLeadsResp, statsData, enrichData] = await Promise.all([
-        fetchLeads({ limit: 50, min_portfolio: 10 }),
-        fetchStats(),
-        getEnrichmentProgress(),
+      // Use Promise.allSettled so one hanging endpoint doesn't block the dashboard
+      // Add 10s timeout to each call to prevent infinite hangs
+      const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> => {
+        return Promise.race([
+          promise,
+          new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Request timeout')), ms)),
+        ]);
+      };
+
+      const [leadsResult, statsResult, enrichResult] = await Promise.allSettled([
+        withTimeout(fetchLeads({ limit: 50, min_portfolio: 10 }), 15000),
+        withTimeout(fetchStats(), 15000),
+        withTimeout(getEnrichmentProgress(), 10000),
       ]);
       
-      // Sort by portfolio size descending to get actual top leads
-      const sortedByPortfolio = [...topLeadsResp.leads].sort((a, b) => b.portfolio_size - a.portfolio_size);
-      setTopLeads(sortedByPortfolio);
+      // Process leads (most important)
+      if (leadsResult.status === 'fulfilled') {
+        const sortedByPortfolio = [...leadsResult.value.leads].sort((a, b) => b.portfolio_size - a.portfolio_size);
+        setTopLeads(sortedByPortfolio);
+        
+        const contactable = sortedByPortfolio.filter(l => 
+          (l.phone || l.email) && 
+          l.outreach_status === 'new' &&
+          l.portfolio_size >= 10
+        );
+        setReadyToContact(contactable);
+      } else {
+        console.error('Failed to load leads:', leadsResult.reason);
+      }
       
-      // Build a pseudo status from stats (since /api/stats now returns everything)
-      setStatus({
-        total_leads: statsData.total_leads,
-        last_refresh: statsData.last_refresh,
-        enriched_count: statsData.with_phone + statsData.with_email,
-        top_score: statsData.top_score || 0,
-      });
-      setStats(statsData);
-      setEnrichmentStatus(enrichData);
+      // Process stats
+      if (statsResult.status === 'fulfilled') {
+        const statsData = statsResult.value;
+        setStatus({
+          total_leads: statsData.total_leads,
+          last_refresh: statsData.last_refresh,
+          enriched_count: statsData.with_phone + statsData.with_email,
+          top_score: statsData.top_score || 0,
+        });
+        setStats(statsData);
+      } else {
+        console.error('Failed to load stats:', statsResult.reason);
+      }
       
-      // Find leads that are ready to contact (have contact info, not yet contacted)
-      const contactable = sortedByPortfolio.filter(l => 
-        (l.phone || l.email) && 
-        l.outreach_status === 'new' &&
-        l.portfolio_size >= 10
-      );
-      setReadyToContact(contactable);
+      // Process enrichment status (optional - may timeout if enrichment lock is held)
+      if (enrichResult.status === 'fulfilled') {
+        setEnrichmentStatus(enrichResult.value);
+      } else {
+        console.warn('Enrichment status unavailable:', enrichResult.reason);
+      }
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
     } finally {
@@ -66,10 +89,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
   useEffect(() => {
     loadData();
     
-    // Poll enrichment status every 5 seconds if running
+    // Poll enrichment status every 30 seconds (with timeout to avoid hangs)
     const interval = setInterval(async () => {
       try {
-        const enrichData = await getEnrichmentProgress();
+        const enrichData = await Promise.race([
+          getEnrichmentProgress(),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Poll timeout')), 8000)),
+        ]);
         setEnrichmentStatus(enrichData);
         
         // Refresh leads if enrichment just finished
@@ -77,9 +103,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
           loadData();
         }
       } catch (err) {
-        console.error('Failed to poll enrichment status:', err);
+        // Silently ignore poll failures - enrichment status is non-critical
       }
-    }, 5000);
+    }, 30000);
     
     return () => clearInterval(interval);
   }, [loadData]);
