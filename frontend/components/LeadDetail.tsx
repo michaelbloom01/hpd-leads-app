@@ -55,7 +55,6 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
   const [pipelineStage, setPipelineStage] = useState(lead.pipeline_stage || 'research');
   const [priorityRank, setPriorityRank] = useState(lead.priority_rank || 0);
   const [nextFollowUp, setNextFollowUp] = useState(lead.next_follow_up || '');
-  const [showDDModal, setShowDDModal] = useState(false);
   const [ddReport, setDdReport] = useState<{ report_markdown: string; comparables: any[] } | null>(null);
   const [isLoadingDD, setIsLoadingDD] = useState(false);
   const [buildingSearch, setBuildingSearch] = useState('');
@@ -114,9 +113,9 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
   };
 
   const handleGenerateDD = async () => {
-    setIsLoadingDD(true); setShowDDModal(true);
+    setIsLoadingDD(true);
     try { const result = await getDueDiligence(lead.lead_id); setDdReport(result); } 
-    catch (err) { console.error('DD report failed:', err); toast.error('Failed to generate DD report'); setShowDDModal(false); } 
+    catch (err) { console.error('DD report failed:', err); toast.error('Failed to generate DD report'); } 
     finally { setIsLoadingDD(false); }
   };
 
@@ -175,7 +174,9 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
   };
 
   const openWebsite = () => {
-    const url = enrichedLead.website || `https://www.google.com/search?q=${encodeURIComponent((enrichedLead.agent_name || enrichedLead.owner_name) + ' property management NYC')}`;
+    let url = enrichedLead.website;
+    if (url && !url.startsWith('http')) url = `https://${url}`;
+    if (!url) url = `https://www.google.com/search?q=${encodeURIComponent((enrichedLead.agent_name || enrichedLead.owner_name) + ' property management NYC')}`;
     window.open(url, '_blank');
   };
 
@@ -471,7 +472,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                 {enrichedLead.website && (
                   <div>
                     <label className="text-[10px] text-slate-500 uppercase">Website</label>
-                    <a href={enrichedLead.website} target="_blank" rel="noopener" className="text-purple-400 text-sm hover:underline block truncate">{enrichedLead.website}</a>
+                    <a href={enrichedLead.website.startsWith('http') ? enrichedLead.website : `https://${enrichedLead.website}`} target="_blank" rel="noopener" className="text-purple-400 text-sm hover:underline block truncate">{enrichedLead.website}</a>
                   </div>
                 )}
 
@@ -665,7 +666,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                         className="text-[10px] text-blue-400 hover:underline">Map</a>
                     </div>
                   ))}
-                {enrichedLead.buildings?.length === 0 && <p className="text-slate-600 text-sm italic">No buildings data available</p>}
+                {(!enrichedLead.buildings || enrichedLead.buildings.length === 0) && <p className="text-slate-600 text-sm italic">No buildings data available</p>}
               </div>
             </>
           )}

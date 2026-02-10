@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { fetchLeads, ApiLead, enrichLeads } from '../services/api';
 
 interface Props {
@@ -42,9 +42,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   // Selection for bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [enriching, setEnriching] = useState(false);
-  
-  // Debounce timer for search
-  const searchTimer = useRef<ReturnType<typeof setTimeout>>();
 
   // Fetch leads from server with current filters
   const loadLeads = useCallback(async (currentPage: number = 0) => {
@@ -84,15 +81,19 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     }
   }, [filterMinScore, filterMinPortfolio, filterBorough, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterPipelineStage, filterMinUnits, pageSize]);
 
-  // Initial load + reload on filter change
+  // Reload on filter change - reset to page 0
   useEffect(() => {
     setPage(0);
     loadLeads(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadLeads]);
 
-  // Page change
+  // Page change (user clicking next/prev) - only fire when page > 0 to avoid double-fetch with the filter effect above
   useEffect(() => {
-    loadLeads(page);
+    if (page > 0) {
+      loadLeads(page);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
 
   const totalPages = Math.ceil(totalLeads / pageSize);
