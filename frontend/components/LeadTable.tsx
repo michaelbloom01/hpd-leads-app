@@ -89,34 +89,11 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     filterBuildingTypes.length > 0 ? 'yes' : '',
   ].filter(Boolean).length;
 
-  // Debounced values for server requests (prevents reload on every keystroke)
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [debouncedMinPortfolio, setDebouncedMinPortfolio] = useState('');
-  const [debouncedMaxPortfolio, setDebouncedMaxPortfolio] = useState('');
-  const [debouncedMinScore, setDebouncedMinScore] = useState('');
-  const [debouncedMaxScore, setDebouncedMaxScore] = useState('');
-  const [debouncedMinUnits, setDebouncedMinUnits] = useState('');
-  const [debouncedMaxUnits, setDebouncedMaxUnits] = useState('');
-  const [debouncedMinUnitsPerBldg, setDebouncedMinUnitsPerBldg] = useState('');
-  const [debouncedMaxUnitsPerBldg, setDebouncedMaxUnitsPerBldg] = useState('');
-  
-  // Debounce search input (300ms)
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearch(searchTerm), 300);
-    return () => clearTimeout(timer);
-  }, [searchTerm]);
-
-  // Generic debounce hook for numeric filter inputs (500ms)
-  useEffect(() => { const t = setTimeout(() => setDebouncedMinPortfolio(filterMinPortfolio), 500); return () => clearTimeout(t); }, [filterMinPortfolio]);
-  useEffect(() => { const t = setTimeout(() => setDebouncedMaxPortfolio(filterMaxPortfolio), 500); return () => clearTimeout(t); }, [filterMaxPortfolio]);
-  useEffect(() => { const t = setTimeout(() => setDebouncedMinScore(filterMinScore), 500); return () => clearTimeout(t); }, [filterMinScore]);
-  useEffect(() => { const t = setTimeout(() => setDebouncedMaxScore(filterMaxScore), 500); return () => clearTimeout(t); }, [filterMaxScore]);
-  useEffect(() => { const t = setTimeout(() => setDebouncedMinUnits(filterMinUnits), 500); return () => clearTimeout(t); }, [filterMinUnits]);
-  useEffect(() => { const t = setTimeout(() => setDebouncedMaxUnits(filterMaxUnits), 500); return () => clearTimeout(t); }, [filterMaxUnits]);
-  useEffect(() => { const t = setTimeout(() => setDebouncedMinUnitsPerBldg(filterMinUnitsPerBldg), 500); return () => clearTimeout(t); }, [filterMinUnitsPerBldg]);
-  useEffect(() => { const t = setTimeout(() => setDebouncedMaxUnitsPerBldg(filterMaxUnitsPerBldg), 500); return () => clearTimeout(t); }, [filterMaxUnitsPerBldg]);
-
   // Fetch leads from server with current filters, sort, and search
+  // This is called explicitly by the "Go" button, sort clicks, page changes, etc.
+  // It reads directly from current filter state — no debouncing needed.
+  const loadLeadsRef = React.useRef<(currentPage?: number) => Promise<void>>();
+  
   const loadLeads = useCallback(async (currentPage: number = 0) => {
     setLoading(true);
     setError(null);
@@ -128,14 +105,14 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
         sort_dir: sortDir,
       };
       
-      const minScore = parseFloat(debouncedMinScore);
+      const minScore = parseFloat(filterMinScore);
       if (!isNaN(minScore) && minScore > 0) params.min_score = minScore;
-      const maxScore = parseFloat(debouncedMaxScore);
+      const maxScore = parseFloat(filterMaxScore);
       if (!isNaN(maxScore) && maxScore > 0) params.max_score = maxScore;
       
-      const minPortfolio = parseInt(debouncedMinPortfolio);
+      const minPortfolio = parseInt(filterMinPortfolio);
       if (!isNaN(minPortfolio) && minPortfolio > 0) params.min_portfolio = minPortfolio;
-      const maxPortfolio = parseInt(debouncedMaxPortfolio);
+      const maxPortfolio = parseInt(filterMaxPortfolio);
       if (!isNaN(maxPortfolio) && maxPortfolio > 0) params.max_portfolio = maxPortfolio;
       
       if (filterBoroughs.length > 0) params.boro = filterBoroughs.join(',');
@@ -145,16 +122,16 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       if (filterEntityType) params.entity_type = filterEntityType;
       if (filterOutreachStatus) params.outreach_status = filterOutreachStatus;
       if (filterPipelineStage) params.pipeline_stage = filterPipelineStage;
-      if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
+      if (searchTerm.trim()) params.search = searchTerm.trim();
       
-      const minUnits = parseInt(debouncedMinUnits);
+      const minUnits = parseInt(filterMinUnits);
       if (!isNaN(minUnits) && minUnits > 0) params.min_units = minUnits;
-      const maxUnits = parseInt(debouncedMaxUnits);
+      const maxUnits = parseInt(filterMaxUnits);
       if (!isNaN(maxUnits) && maxUnits > 0) params.max_units = maxUnits;
 
-      const minUpb = parseFloat(debouncedMinUnitsPerBldg);
+      const minUpb = parseFloat(filterMinUnitsPerBldg);
       if (!isNaN(minUpb) && minUpb > 0) params.min_units_per_bldg = minUpb;
-      const maxUpb = parseFloat(debouncedMaxUnitsPerBldg);
+      const maxUpb = parseFloat(filterMaxUnitsPerBldg);
       if (!isNaN(maxUpb) && maxUpb > 0) params.max_units_per_bldg = maxUpb;
 
       if (filterBuildingTypes.length > 0) params.building_type_has = filterBuildingTypes.join(',');
@@ -168,7 +145,11 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     } finally {
       setLoading(false);
     }
-  }, [debouncedMinScore, debouncedMaxScore, debouncedMinPortfolio, debouncedMaxPortfolio, filterBoroughs, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterPipelineStage, debouncedMinUnits, debouncedMaxUnits, debouncedMinUnitsPerBldg, debouncedMaxUnitsPerBldg, filterBuildingTypes, pageSize, sortField, sortDir, debouncedSearch]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterMinScore, filterMaxScore, filterMinPortfolio, filterMaxPortfolio, filterBoroughs, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterPipelineStage, filterMinUnits, filterMaxUnits, filterMinUnitsPerBldg, filterMaxUnitsPerBldg, filterBuildingTypes, pageSize, sortField, sortDir, searchTerm]);
+
+  // Keep ref in sync so callbacks can call latest version
+  loadLeadsRef.current = loadLeads;
 
   // R4: Health check on initial mount — show cold-start banner if backend is booting
   useEffect(() => {
@@ -184,7 +165,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       } else {
         setBackendStarting(false);
         // Backend is ready — trigger first data load
-        loadLeads(0);
+        loadLeadsRef.current?.(0);
       }
     };
     
@@ -194,26 +175,32 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Reload on filter change - reset to page 0 (skip if backend still starting)
-  const isFirstLoad = React.useRef(true);
+  // Auto-reload on sort change (clicking a column header is an explicit action)
+  const hasMounted = React.useRef(false);
   useEffect(() => {
-    if (isFirstLoad.current) {
-      isFirstLoad.current = false;
-      return; // Skip first run — handled by health check above
+    if (!hasMounted.current) {
+      hasMounted.current = true;
+      return; // Skip first run — handled by health check
     }
     if (backendStarting) return;
     setPage(0);
-    loadLeads(0);
+    loadLeadsRef.current?.(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadLeads]);
+  }, [sortField, sortDir]);
 
   // Page change (user clicking next/prev) - only fire when page > 0 to avoid double-fetch
   useEffect(() => {
     if (page > 0) {
-      loadLeads(page);
+      loadLeadsRef.current?.(page);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
+
+  // Apply filters — called by the "Go" button
+  const applyFilters = () => {
+    setPage(0);
+    loadLeads(0);
+  };
 
   const totalPages = Math.ceil(totalLeads / pageSize);
 
@@ -262,7 +249,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     }
   };
 
-  const clearFilters = () => {
+  const clearFilters = async () => {
     setSearchTerm('');
     setFilterBoroughs([]);
     setFilterMinScore('');
@@ -280,6 +267,18 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     setFilterMinUnitsPerBldg('');
     setFilterMaxUnitsPerBldg('');
     setFilterBuildingTypes([]);
+    // Reload with no filters (direct API call since state is async)
+    setPage(0);
+    setLoading(true);
+    try {
+      const response = await fetchLeads({ limit: pageSize, offset: 0, sort_by: sortField === 'agent_name' ? 'company_name' : sortField, sort_dir: sortDir });
+      setLeads(response.leads);
+      setTotalLeads(response.total);
+    } catch (err) {
+      console.error('Failed to fetch leads:', err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const exportToCsv = async () => {
@@ -406,7 +405,8 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
           <div className="flex-1 min-w-[160px] md:min-w-[200px]">
             <input type="text" placeholder="Search name, company, address..."
               className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+              value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
           </div>
           {/* Borough multi-select toggles */}
           <div className="flex gap-1">
@@ -435,9 +435,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
           {/* Buildings range */}
           <div className="flex items-center gap-1" title="Filter by number of buildings in portfolio">
             <span className="text-[10px] text-slate-600 uppercase font-bold">Bldgs</span>
-            <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMinPortfolio} onChange={(e) => setFilterMinPortfolio(e.target.value)} />
+            <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMinPortfolio} onChange={(e) => setFilterMinPortfolio(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
             <span className="text-slate-600 text-xs">—</span>
-            <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMaxPortfolio} onChange={(e) => setFilterMaxPortfolio(e.target.value)} />
+            <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMaxPortfolio} onChange={(e) => setFilterMaxPortfolio(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
           </div>
           <div className="flex gap-1.5">
             <button onClick={() => setFilterHasPhone(filterHasPhone === true ? null : true)}
@@ -455,6 +455,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
               <span className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 text-white text-[9px] rounded-full flex items-center justify-center font-bold">{activeSecondaryFilterCount}</span>
             )}
           </button>
+          <button onClick={applyFilters} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors">
+            Go
+          </button>
           <button onClick={clearFilters} className="px-3 py-2 text-xs text-slate-500 hover:text-slate-300 transition-colors">Clear</button>
           <button onClick={exportToCsv} disabled={displayLeads.length === 0}
             className="px-3 py-2 bg-slate-800 border border-white/10 rounded-lg text-xs text-slate-300 hover:bg-slate-700 hover:text-white disabled:opacity-40 transition-colors flex items-center gap-1.5">
@@ -470,23 +473,23 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
               {/* Score range */}
               <div className="flex items-center gap-1" title="Filter by lead quality score (0-100)">
                 <span className="text-[10px] text-slate-600 uppercase font-bold w-12">Score</span>
-                <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMinScore} onChange={(e) => setFilterMinScore(e.target.value)} />
+                <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMinScore} onChange={(e) => setFilterMinScore(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
                 <span className="text-slate-600 text-xs">—</span>
-                <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMaxScore} onChange={(e) => setFilterMaxScore(e.target.value)} />
+                <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMaxScore} onChange={(e) => setFilterMaxScore(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
               </div>
               {/* Units range */}
               <div className="flex items-center gap-1" title="Filter by total residential units">
                 <span className="text-[10px] text-slate-600 uppercase font-bold w-12">Units</span>
-                <input type="number" placeholder="Min" className="w-16 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMinUnits} onChange={(e) => setFilterMinUnits(e.target.value)} />
+                <input type="number" placeholder="Min" className="w-16 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMinUnits} onChange={(e) => setFilterMinUnits(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
                 <span className="text-slate-600 text-xs">—</span>
-                <input type="number" placeholder="Max" className="w-16 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMaxUnits} onChange={(e) => setFilterMaxUnits(e.target.value)} />
+                <input type="number" placeholder="Max" className="w-16 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMaxUnits} onChange={(e) => setFilterMaxUnits(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
               </div>
               {/* Units per Building range */}
               <div className="flex items-center gap-1" title="Filter by average units per building">
                 <span className="text-[10px] text-slate-600 uppercase font-bold w-12">U/Bldg</span>
-                <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMinUnitsPerBldg} onChange={(e) => setFilterMinUnitsPerBldg(e.target.value)} />
+                <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMinUnitsPerBldg} onChange={(e) => setFilterMinUnitsPerBldg(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
                 <span className="text-slate-600 text-xs">—</span>
-                <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMaxUnitsPerBldg} onChange={(e) => setFilterMaxUnitsPerBldg(e.target.value)} />
+                <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-xs text-slate-100 text-center" value={filterMaxUnitsPerBldg} onChange={(e) => setFilterMaxUnitsPerBldg(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
               </div>
             </div>
             {/* Row 2: Building types, entity type, outreach, website */}
