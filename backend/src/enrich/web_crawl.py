@@ -193,10 +193,11 @@ class WebCrawler:
     
     def __init__(self, use_cache: bool = True):
         self.session = requests.Session()
+        # R8: Updated to current Chrome version string (2025)
         self.session.headers["User-Agent"] = (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
+            "Chrome/131.0.0.0 Safari/537.36"
         )
         self.delay = settings.web_crawl_delay_seconds
         self.cache = WebCrawlCache() if use_cache else None
@@ -416,9 +417,17 @@ class WebCrawler:
                 # Parse results
                 soup = BeautifulSoup(response.text, "lxml")
                 
-                # DuckDuckGo organic results are in result__a links
-                # Skip ad results which have different URL patterns
-                for link in soup.select("a.result__a"):
+                # R8: DuckDuckGo results — primary selector with fallback
+                ddg_links = soup.select("a.result__a")
+                if not ddg_links:
+                    # Fallback: try generic link selectors in result divs
+                    ddg_links = soup.select(".results .result a[href]")
+                if not ddg_links:
+                    # Second fallback: any link with an external href
+                    ddg_links = [a for a in soup.select("a[href]") 
+                                 if a.get("href", "").startswith("http") and "duckduckgo.com" not in a.get("href", "")]
+                
+                for link in ddg_links:
                     href = link.get("href", "")
                     
                     # Skip DuckDuckGo internal/ad redirect URLs
@@ -449,7 +458,10 @@ class WebCrawler:
                         return self._normalize_url(href)
                 
                 # Also check result__url elements (display URLs)
-                for span in soup.select("span.result__url"):
+                url_spans = soup.select("span.result__url")
+                if not url_spans:
+                    url_spans = soup.select(".result .url")  # R8: fallback selector
+                for span in url_spans:
                     url_text = span.get_text(strip=True)
                     if url_text:
                         # Add https if missing
@@ -492,9 +504,16 @@ class WebCrawler:
                 
                 soup = BeautifulSoup(response.text, "lxml")
                 
-                # Bing results are in <li class="b_algo"> with <a> tags
-                for result in soup.select("li.b_algo a"):
-                    href = result.get("href", "")
+                # R8: Bing results — primary selector with fallback
+                bing_results = soup.select("li.b_algo a")
+                if not bing_results:
+                    # Fallback: try generic result selectors
+                    bing_results = soup.select(".b_results li a[href]")
+                if not bing_results:
+                    bing_results = soup.select("#b_results a[href]")
+                
+                for result_el in bing_results:
+                    href = result_el.get("href", "")
                     
                     # Skip Bing internal links
                     if not href or "bing.com" in href or "microsoft.com" in href:

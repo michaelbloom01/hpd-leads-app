@@ -6,6 +6,7 @@ import Header from './components/Header';
 import Dashboard from './components/Dashboard';
 import LeadTable from './components/LeadTable';
 import LeadDetail from './components/LeadDetail';
+import ErrorBoundary from './components/ErrorBoundary';
 import { ApiLead, refreshPipeline } from './services/api';
 
 const App: React.FC = () => {
@@ -35,6 +36,7 @@ const App: React.FC = () => {
   }, []);
 
   return (
+    <ErrorBoundary>
     <div className="flex h-screen bg-slate-950 text-slate-200 overflow-hidden font-sans">
       {/* Toast Notifications */}
       <Toaster 
@@ -105,8 +107,8 @@ const App: React.FC = () => {
                 </h1>
                 <p className="text-slate-500 text-sm max-w-xl leading-relaxed">
                   {activeTab === 'dashboard' 
-                    ? 'Property management companies in NYC ranked by portfolio size and acquisition potential.' 
-                    : 'Browse and filter leads by score, borough, portfolio size, and outreach status.'}
+                    ? 'NYC property management companies ranked by portfolio size and acquisition potential. Scores reflect building count, unit mix, and data completeness.' 
+                    : 'Browse, filter, and take action on property management leads. Click any row to see full details.'}
                 </p>
               </div>
               <button 
@@ -138,6 +140,7 @@ const App: React.FC = () => {
         />
       )}
     </div>
+    </ErrorBoundary>
   );
 };
 

@@ -436,19 +436,43 @@ def _classify_entity(agent_name: str, owner_name: str, owner_type: str, contacts
         'VENTURES', 'TRUST', 'FUND', 'AGENCY',
     ]
     
+    # Words that indicate a place/property name, NOT a person
+    PLACE_INDICATORS = [
+        'VILLAGE', 'GARDENS', 'GARDEN', 'TOWERS', 'TOWER', 'PLAZA', 'COURT',
+        'HOUSE', 'HOUSES', 'HOMES', 'HOME', 'TERRACE', 'ESTATES', 'ESTATE',
+        'PARK', 'PLACE', 'CENTER', 'CENTRE', 'HEIGHTS', 'HILL', 'HILLS',
+        'MANOR', 'RESIDENCES', 'APARTMENTS', 'BUILDING', 'BUILDINGS',
+        'COOPERATIVE', 'COOP', 'CO-OP', 'CONDOMINIUM', 'CONDOS',
+        'SOUTH', 'NORTH', 'EAST', 'WEST', 'OWNERS', 'TENANTS',
+        'ASSOCIATION', 'ASSOC', 'BOARD', 'COMPLEX', 'COMMONS',
+        'SQUARE', 'AVENUE', 'STREET', 'LANE', 'DRIVE', 'ROAD',
+    ]
+    
     name_upper = (agent_name or '').upper().strip()
     owner_upper = (owner_name or '').upper().strip()
     
     is_company_name = any(ind in name_upper for ind in COMPANY_INDICATORS)
     is_owner_company = any(ind in owner_upper for ind in COMPANY_INDICATORS)
     
-    # Check if name looks like a person (First Last pattern, no company indicators)
+    # Check if name looks like a property/place (e.g., "GLEN OAKS VILLAGE", "PARKCHESTER SOUTH")
+    def looks_like_place(name: str) -> bool:
+        if not name or len(name) < 3:
+            return False
+        upper = name.upper()
+        return any(ind in upper.split() for ind in PLACE_INDICATORS)
+    
+    is_place_name = looks_like_place(agent_name) or looks_like_place(owner_name)
+    
+    # Check if name looks like a person (First Last pattern, no company or place indicators)
     def looks_like_person(name: str) -> bool:
         if not name or len(name) < 3:
             return False
-        # If it has company indicators, it's not a person
         upper = name.upper()
+        # If it has company indicators, it's not a person
         if any(ind in upper for ind in COMPANY_INDICATORS):
+            return False
+        # If it has place/property indicators, it's not a person
+        if any(ind in upper.split() for ind in PLACE_INDICATORS):
             return False
         # Simple heuristic: 2-3 words, all alpha
         parts = name.split()
@@ -475,11 +499,23 @@ def _classify_entity(agent_name: str, owner_name: str, owner_type: str, contacts
         'primary_contact_title': None,
     }
     
-    if is_company_name:
-        # Lead name itself is a company
+    if is_company_name or is_place_name:
+        # Lead name is a company or a property/housing complex name
         result['entity_type'] = 'company'
         result['company_name'] = agent_name or owner_name
         # Find a person to contact from contacts
+        for c in contacts:
+            ct = (c.get('type') or '').lower()
+            cn = c.get('name') or ''
+            if ct in ('agent', 'officer', 'sitemanager') and looks_like_person(cn):
+                result['primary_contact'] = cn
+                result['primary_contact_title'] = c.get('title') or ct.title()
+                break
+    elif owner_type and owner_type.lower() == 'corporateowner' and not looks_like_person(agent_name):
+        # HPD says the owner is a corporation but the name doesn't match company patterns
+        # (e.g., unusual entity names) — trust the HPD classification
+        result['entity_type'] = 'company'
+        result['company_name'] = agent_name or owner_name
         for c in contacts:
             ct = (c.get('type') or '').lower()
             cn = c.get('name') or ''

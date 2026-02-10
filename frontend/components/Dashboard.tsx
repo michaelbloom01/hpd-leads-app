@@ -13,7 +13,8 @@ import {
   startBatchEnrichment,
   getFollowUpsDue,
   refreshViolations,
-  EnrichmentProgress 
+  EnrichmentProgress,
+  checkHealth,
 } from '../services/api';
 
 interface DashboardProps {
@@ -27,7 +28,7 @@ const PIPELINE_STAGES = [
   { key: 'meeting_scheduled', label: 'Meeting Set', color: 'bg-purple-600' },
   { key: 'meeting_done', label: 'Meeting Done', color: 'bg-violet-600' },
   { key: 'loi', label: 'LOI', color: 'bg-amber-600' },
-  { key: 'due_diligence', label: 'DD', color: 'bg-orange-600' },
+  { key: 'due_diligence', label: 'Due Diligence', color: 'bg-orange-600' },
   { key: 'closed', label: 'Closed', color: 'bg-emerald-600' },
 ];
 
@@ -48,6 +49,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
   const [startingEnrichment, setStartingEnrichment] = useState(false);
   const [refreshingViolations, setRefreshingViolations] = useState(false);
   const [dataStatus, setDataStatus] = useState<DataStatus | null>(null);
+  const [backendStarting, setBackendStarting] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -115,8 +117,31 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
     }
   }, []);
 
+  // R4: Health check before first data load
   useEffect(() => {
-    loadData();
+    let cancelled = false;
+    let timerId: ReturnType<typeof setTimeout>;
+    
+    const pollHealth = async () => {
+      const health = await checkHealth();
+      if (cancelled) return;
+      if (health.status === 'starting') {
+        setBackendStarting(true);
+        timerId = setTimeout(pollHealth, 5000);
+      } else {
+        setBackendStarting(false);
+        loadData();
+      }
+    };
+    
+    pollHealth();
+    return () => { cancelled = true; clearTimeout(timerId); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    // Only start polling if backend is ready (loadData called from health check above)
+    if (backendStarting) return;
     
     const interval = setInterval(async () => {
       try {
@@ -196,6 +221,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
   // Leads with violations
   const leadsWithViolations = topLeads.filter(l => l.violation_count > 0).length;
 
+  // R4: Cold-start banner
+  if (backendStarting) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+        <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        <h2 className="text-lg font-semibold text-blue-400">Backend is starting up</h2>
+        <p className="text-slate-400 text-sm max-w-md">
+          This usually takes 1–2 minutes after inactivity. The dashboard will load automatically once the server is ready.
+        </p>
+        <p className="text-slate-600 text-xs">Polling every 5s...</p>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="space-y-6 animate-pulse">
@@ -219,7 +258,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
           <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Deal Pipeline</h3>
           <span className="text-xs text-slate-600">
             {leadsInPipeline} active {leadsInPipeline === 1 ? 'deal' : 'deals'}
-            {pipelineRevenue > 0 && ` • ${formatCurrency(pipelineRevenue)}/yr est. mgmt fee`}
+            {pipelineRevenue > 0 && ` • ${formatCurrency(pipelineRevenue)}/yr est. management fee`}
           </span>
         </div>
         <div className="flex gap-1">
@@ -246,11 +285,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
         </div>
         <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4 group relative">
           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1">
-            Est. Revenue Pool
-            <span className="inline-block w-3 h-3 rounded-full border border-slate-600 text-[8px] text-slate-500 text-center leading-[11px] cursor-help" title="Units × Avg Rent (by borough &amp; building type) × 5% mgmt fee">?</span>
+            Mgmt Fee Opportunity
+            <span className="inline-block w-3 h-3 rounded-full border border-slate-600 text-[8px] text-slate-500 text-center leading-[11px] cursor-help" title="Estimated annual management fees if these portfolios were acquired. Calculated as: Total Units × Avg Rent (by borough &amp; building type) × 5% management fee rate.">?</span>
           </p>
           <p className="text-2xl font-mono font-bold text-emerald-400">{totalTargetRevenue > 0 ? formatCurrency(totalTargetRevenue) : '—'}</p>
-          <p className="text-[10px] text-slate-600 mt-0.5">Top 100 leads • 5% mgmt fee</p>
+          <p className="text-[10px] text-slate-600 mt-0.5">Top 100 leads • 5% fee rate</p>
         </div>
         <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4">
           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Follow-Ups Due</p>
@@ -267,10 +306,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
           <p className="text-2xl font-mono font-bold text-amber-400">{readyToContact.length}</p>
           <p className="text-[10px] text-slate-600 mt-0.5">Uncontacted</p>
         </div>
-        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Violations Found</p>
+        <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4" title="Leads with open HPD violations — potential distressed assets or management turnover opportunities">
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">With Violations</p>
           <p className="text-2xl font-mono font-bold text-orange-400">{leadsWithViolations}</p>
-          <p className="text-[10px] text-slate-600 mt-0.5">Distress signals</p>
+          <p className="text-[10px] text-slate-600 mt-0.5">Open HPD violations</p>
         </div>
       </div>
 
@@ -394,9 +433,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                 <th className="text-left py-2 px-3">Company</th>
                 <th className="text-right py-2 px-3">Buildings</th>
                 <th className="text-right py-2 px-3">Units</th>
-                <th className="text-right py-2 px-3" title="Units × Avg Rent × 5% mgmt fee">Est. Mgmt Fee</th>
+                <th className="text-right py-2 px-3" title="Estimated annual management fee revenue = Units × Avg Rent × 5% fee">Mgmt Fee</th>
                 <th className="text-left py-2 px-3">Boroughs</th>
-                <th className="text-right py-2 px-3">Score</th>
+                <th className="text-right py-2 px-3" title="Lead quality score (0–100) based on portfolio size, building types, and data completeness">Score</th>
               </tr>
             </thead>
             <tbody>
@@ -449,21 +488,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
       {/* Data Status Footer */}
       <div className="flex items-center justify-between px-2 py-3 border-t border-white/5">
         <div className="flex items-center gap-4 text-xs text-slate-600">
-          {/* Enrichment Status */}
+          {/* Contact Lookup Status */}
           {enrichmentStatus?.running ? (
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-              <span>Enriching contacts... {enrichmentStatus.percent_complete}% ({enrichmentStatus.completed}/{enrichmentStatus.total})</span>
+              <span>Finding contact info... {enrichmentStatus.percent_complete}% ({enrichmentStatus.completed}/{enrichmentStatus.total})</span>
             </div>
           ) : enrichmentStatus?.last_completed_at ? (
-            <span>Contacts last updated: {new Date(enrichmentStatus.last_completed_at).toLocaleDateString()}</span>
+            <span>Contact info last updated: {new Date(enrichmentStatus.last_completed_at).toLocaleDateString()}</span>
           ) : (
             <button
               onClick={handleStartEnrichment}
               disabled={startingEnrichment}
               className="text-amber-500 hover:text-amber-400 underline disabled:opacity-50"
             >
-              {startingEnrichment ? 'Starting...' : `Enrich contacts (${enrichedCount} found so far)`}
+              {startingEnrichment ? 'Starting...' : `Find contact info (${enrichedCount} leads have data so far)`}
             </button>
           )}
 

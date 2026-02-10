@@ -40,9 +40,10 @@ class LeadsDatabase:
     
     @contextmanager
     def _get_connection(self):
-        """Get a database connection."""
+        """Get a database connection with WAL mode for crash-safety and concurrent reads."""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")  # R6: crash-safe, allows concurrent reads during writes
         try:
             yield conn
         finally:
@@ -287,6 +288,14 @@ class LeadsDatabase:
                     key TEXT PRIMARY KEY,
                     value TEXT,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                -- R11: AI summary cache (same TTL pattern as dos_cache/places_cache)
+                CREATE TABLE IF NOT EXISTS ai_summary_cache (
+                    lead_id TEXT PRIMARY KEY,
+                    summary TEXT,
+                    model TEXT,
+                    cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
             conn.commit()
@@ -1136,25 +1145,44 @@ class LeadsDatabase:
     
     # === DOS Cache (Phase 2.7c) ===
     
+    # R11: Cache TTL — entries older than this are treated as misses
+    CACHE_TTL_DAYS = 90
+    
+    def _is_cache_fresh(self, cached_at_str: Optional[str]) -> bool:
+        """Check if a cached_at timestamp is within TTL."""
+        if not cached_at_str:
+            return False
+        try:
+            cached_at = datetime.fromisoformat(cached_at_str)
+            age_days = (datetime.now() - cached_at).days
+            return age_days <= self.CACHE_TTL_DAYS
+        except (ValueError, TypeError):
+            return False
+    
     def get_dos_cache(self, cache_key: str) -> Optional[Dict]:
-        """Get cached NY DOS lookup result."""
+        """Get cached NY DOS lookup result (respects 90-day TTL)."""
         with self._get_connection() as conn:
             row = conn.execute(
                 "SELECT result, cached_at FROM dos_cache WHERE cache_key = ?",
                 (cache_key,)
             ).fetchone()
             if row:
+                if not self._is_cache_fresh(row['cached_at']):
+                    logger.debug(f"DOS cache expired for {cache_key}")
+                    return None  # Treat as cache miss
                 return json.loads(row['result']) if row['result'] else None
             return None  # Cache miss (returns None - differentiate from cached "not found")
     
     def has_dos_cache(self, cache_key: str) -> bool:
-        """Check if a DOS cache entry exists (even if result is null = not found)."""
+        """Check if a fresh DOS cache entry exists (even if result is null = not found)."""
         with self._get_connection() as conn:
             row = conn.execute(
-                "SELECT 1 FROM dos_cache WHERE cache_key = ?",
+                "SELECT cached_at FROM dos_cache WHERE cache_key = ?",
                 (cache_key,)
             ).fetchone()
-            return row is not None
+            if row:
+                return self._is_cache_fresh(row['cached_at'])
+            return False
     
     def set_dos_cache(self, cache_key: str, result: Optional[Dict]):
         """Cache a NY DOS lookup result (can be None for 'not found')."""
@@ -1168,24 +1196,29 @@ class LeadsDatabase:
     # === Google Places Cache (Phase 2.7d) ===
     
     def get_places_cache(self, cache_key: str) -> Optional[Dict]:
-        """Get cached Google Places result."""
+        """Get cached Google Places result (respects 90-day TTL)."""
         with self._get_connection() as conn:
             row = conn.execute(
                 "SELECT result, cached_at FROM places_cache WHERE cache_key = ?",
                 (cache_key,)
             ).fetchone()
             if row:
+                if not self._is_cache_fresh(row['cached_at']):
+                    logger.debug(f"Places cache expired for {cache_key}")
+                    return None
                 return json.loads(row['result']) if row['result'] else None
             return None
     
     def has_places_cache(self, cache_key: str) -> bool:
-        """Check if a Places cache entry exists."""
+        """Check if a fresh Places cache entry exists."""
         with self._get_connection() as conn:
             row = conn.execute(
-                "SELECT 1 FROM places_cache WHERE cache_key = ?",
+                "SELECT cached_at FROM places_cache WHERE cache_key = ?",
                 (cache_key,)
             ).fetchone()
-            return row is not None
+            if row:
+                return self._is_cache_fresh(row['cached_at'])
+            return False
     
     def set_places_cache(self, cache_key: str, result: Optional[Dict]):
         """Cache a Google Places result."""
@@ -1292,6 +1325,28 @@ class LeadsDatabase:
                 "SELECT enrichment_retries FROM leads WHERE lead_id = ?", (lead_id,)
             ).fetchone()
             return row[0] if row else 0
+    
+    # === AI Summary Cache (R11) ===
+    
+    def get_ai_summary_cache(self, lead_id: str) -> Optional[str]:
+        """Get cached AI summary for a lead (respects 90-day TTL)."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT summary, cached_at FROM ai_summary_cache WHERE lead_id = ?",
+                (lead_id,)
+            ).fetchone()
+            if row and self._is_cache_fresh(row['cached_at']):
+                return row['summary']
+            return None
+    
+    def set_ai_summary_cache(self, lead_id: str, summary: str, model: str = ""):
+        """Cache an AI summary for a lead."""
+        with self._get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO ai_summary_cache (lead_id, summary, model, cached_at) VALUES (?, ?, ?, ?)",
+                (lead_id, summary, model, datetime.now().isoformat())
+            )
+            conn.commit()
 
 
 # Singleton instance

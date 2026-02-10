@@ -8,6 +8,7 @@ Two datasets are used:
 2. Registration Contacts (feu5-w2e2) - Owner/agent contact info
 """
 import logging
+import os
 import time
 from datetime import date
 from typing import List, Optional, Dict
@@ -18,9 +19,11 @@ from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-# NYC Open Data Socrata endpoints
-BUILDINGS_ENDPOINT = "https://data.cityofnewyork.us/resource/tesw-yqqr.json"
-CONTACTS_ENDPOINT = "https://data.cityofnewyork.us/resource/feu5-w2e2.json"
+# NYC Open Data Socrata endpoints — R7: configurable via env vars
+_HPD_BUILDINGS_DATASET = os.environ.get("HPD_BUILDINGS_DATASET_ID", "tesw-yqqr")
+_HPD_CONTACTS_DATASET = os.environ.get("HPD_CONTACTS_DATASET_ID", "feu5-w2e2")
+BUILDINGS_ENDPOINT = f"https://data.cityofnewyork.us/resource/{_HPD_BUILDINGS_DATASET}.json"
+CONTACTS_ENDPOINT = f"https://data.cityofnewyork.us/resource/{_HPD_CONTACTS_DATASET}.json"
 
 # Default page size for Socrata API
 PAGE_SIZE = 1000

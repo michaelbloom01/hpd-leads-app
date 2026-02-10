@@ -1,10 +1,88 @@
 /**
  * API service for communicating with the HPD Leads backend.
  * Updated: Phase 5 (revenue, violations, pipeline, scoring V2)
+ * R4/R5: Added health check, fetchWithRetry, AbortController timeouts
  */
 
 // API base URL - uses environment variable in production, localhost in dev
-const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000').trim().replace(/\\r\\n$/, '').replace(/[\r\n]+$/, '');
+export const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000').trim().replace(/\\r\\n$/, '').replace(/[\r\n]+$/, '');
+
+// ============================================================================
+// R4: Health Check
+// ============================================================================
+
+export interface HealthStatus {
+  status: 'starting' | 'ok' | 'error';
+  message?: string;
+  leads_in_cache?: number;
+  leads_in_db?: number;
+}
+
+/**
+ * Check backend health status. Returns 'starting' while backend is booting.
+ */
+export async function checkHealth(): Promise<HealthStatus> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const response = await fetch(`${API_BASE_URL}/api/health`, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!response.ok) {
+      return { status: 'error', message: `HTTP ${response.status}` };
+    }
+    return response.json();
+  } catch (err) {
+    // Network error or timeout likely means backend is not up yet
+    return { status: 'starting', message: 'Backend unreachable — may be starting up.' };
+  }
+}
+
+// ============================================================================
+// R5: Fetch with Retry + AbortController Timeout
+// ============================================================================
+
+/**
+ * Enhanced fetch wrapper with automatic retries and timeout via AbortController.
+ */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit = {},
+  retries: number = 1,
+  timeoutMs: number = 30000,
+): Promise<Response> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      
+      // Retry on 502/503/504 (transient server errors)
+      if (response.status >= 502 && response.status <= 504 && attempt < retries) {
+        lastError = new Error(`HTTP ${response.status}`);
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+        continue;
+      }
+      
+      return response;
+    } catch (err: unknown) {
+      clearTimeout(timeoutId);
+      lastError = err instanceof Error ? err : new Error(String(err));
+      
+      if (attempt < retries) {
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+      }
+    }
+  }
+  
+  throw lastError || new Error('Request failed after retries');
+}
 
 /**
  * Score breakdown showing component scores (V2)
@@ -245,7 +323,7 @@ export async function fetchLeads(params?: {
   }
   
   const url = `${API_BASE_URL}/api/leads${searchParams.toString() ? '?' + searchParams.toString() : ''}`;
-  const response = await fetch(url);
+  const response = await fetchWithRetry(url);
   
   if (!response.ok) {
     throw new Error(`Failed to fetch leads: ${response.statusText}`);
@@ -258,7 +336,7 @@ export async function fetchLeads(params?: {
  * Fetch a single lead by ID
  */
 export async function fetchLead(leadId: string): Promise<ApiLead> {
-  const response = await fetch(`${API_BASE_URL}/api/leads/${leadId}`);
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}`);
   if (!response.ok) throw new Error(`Failed to fetch lead: ${response.statusText}`);
   return response.json();
 }
@@ -267,7 +345,7 @@ export async function fetchLead(leadId: string): Promise<ApiLead> {
  * Get detailed statistics
  */
 export async function fetchStats(): Promise<PipelineStats> {
-  const response = await fetch(`${API_BASE_URL}/api/stats`);
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/stats`);
   if (!response.ok) throw new Error(`Failed to fetch stats: ${response.statusText}`);
   return response.json();
 }
@@ -284,7 +362,7 @@ export interface DataStatus {
 }
 
 export async function fetchDataStatus(): Promise<DataStatus> {
-  const response = await fetch(`${API_BASE_URL}/api/data-status`);
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/data-status`);
   if (!response.ok) throw new Error(`Failed to fetch data status: ${response.statusText}`);
   return response.json();
 }
@@ -299,7 +377,7 @@ export async function refreshPipeline(full: boolean = false): Promise<{
   timestamp: string;
 }> {
   const params = full ? '?full=true' : '';
-  const response = await fetch(`${API_BASE_URL}/api/refresh${params}`, { method: 'POST' });
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/refresh${params}`, { method: 'POST' }, 0, 120000);
   if (!response.ok) throw new Error(`Failed to refresh pipeline: ${response.statusText}`);
   return response.json();
 }
@@ -325,7 +403,7 @@ export async function updateLead(
   priority_rank: number;
   notes: string | null;
 }> {
-  const response = await fetch(`${API_BASE_URL}/api/leads/${leadId}`, {
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(updates),
@@ -342,11 +420,11 @@ export async function enrichLeads(leadIds: string[]): Promise<{
   enriched_count: number;
   results: EnrichmentResult[];
 }> {
-  const response = await fetch(`${API_BASE_URL}/api/enrich`, {
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/enrich`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ lead_ids: leadIds }),
-  });
+  }, 1, 60000);
   if (!response.ok) throw new Error(`Failed to enrich leads: ${response.statusText}`);
   return response.json();
 }
@@ -355,7 +433,7 @@ export async function enrichLeads(leadIds: string[]): Promise<{
  * Deep research a lead
  */
 export async function researchLead(leadId: string): Promise<CompanyResearch> {
-  const response = await fetch(`${API_BASE_URL}/api/leads/${leadId}/research`, { method: 'POST' });
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/research`, { method: 'POST' }, 1, 60000);
   if (!response.ok) throw new Error(`Failed to research lead: ${response.statusText}`);
   return response.json();
 }
@@ -369,7 +447,7 @@ export async function generateAiSummary(leadId: string): Promise<{
   ai_description: string | null;
   message?: string;
 }> {
-  const response = await fetch(`${API_BASE_URL}/api/leads/${leadId}/ai-summary`, { method: 'POST' });
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/ai-summary`, { method: 'POST' }, 1, 30000);
   if (!response.ok) throw new Error(`Failed to generate AI summary: ${response.statusText}`);
   return response.json();
 }
@@ -410,7 +488,7 @@ export interface ContactEnrichmentResult {
  * Enrich a lead's contact info using multiple sources
  */
 export async function enrichLeadContacts(leadId: string): Promise<ContactEnrichmentResult> {
-  const response = await fetch(`${API_BASE_URL}/api/leads/${leadId}/enrich-contacts`, { method: 'POST' });
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/enrich-contacts`, { method: 'POST' }, 1, 60000);
   if (!response.ok) throw new Error(`Failed to enrich contacts: ${response.statusText}`);
   return response.json();
 }
@@ -422,7 +500,7 @@ export async function addOutreachAttempt(
   leadId: string,
   attempt: { method: string; outcome: string; notes?: string }
 ): Promise<{ status: string; attempt: OutreachAttempt }> {
-  const response = await fetch(`${API_BASE_URL}/api/leads/${leadId}/outreach`, {
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/outreach`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(attempt),
@@ -438,7 +516,7 @@ export async function logOutreachEvent(
   leadId: string,
   event: { stage: string; method?: string; outcome?: string; notes?: string; next_follow_up?: string }
 ): Promise<{ status: string; event_id: number }> {
-  const response = await fetch(`${API_BASE_URL}/api/leads/${leadId}/outreach-event`, {
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/outreach-event`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(event),
@@ -451,7 +529,7 @@ export async function logOutreachEvent(
  * Get outreach events for a lead (Phase 5.3)
  */
 export async function getOutreachEvents(leadId: string): Promise<{ lead_id: string; events: OutreachEvent[] }> {
-  const response = await fetch(`${API_BASE_URL}/api/leads/${leadId}/outreach-events`);
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/outreach-events`);
   if (!response.ok) throw new Error(`Failed to get outreach events: ${response.statusText}`);
   return response.json();
 }
@@ -461,7 +539,7 @@ export async function getOutreachEvents(leadId: string): Promise<{ lead_id: stri
  */
 export async function getFollowUpsDue(before?: string): Promise<{ count: number; leads: Array<Record<string, unknown>> }> {
   const params = before ? `?before=${before}` : '';
-  const response = await fetch(`${API_BASE_URL}/api/follow-ups${params}`);
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/follow-ups${params}`);
   if (!response.ok) throw new Error(`Failed to get follow-ups: ${response.statusText}`);
   return response.json();
 }
@@ -470,7 +548,7 @@ export async function getFollowUpsDue(before?: string): Promise<{ count: number;
  * Get change alerts (Phase 5.4)
  */
 export async function getAlerts(limit: number = 50): Promise<{ count: number; alerts: ChangeAlert[] }> {
-  const response = await fetch(`${API_BASE_URL}/api/alerts?limit=${limit}`);
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/alerts?limit=${limit}`);
   if (!response.ok) throw new Error(`Failed to get alerts: ${response.statusText}`);
   return response.json();
 }
@@ -479,7 +557,7 @@ export async function getAlerts(limit: number = 50): Promise<{ count: number; al
  * Dismiss a change alert (Phase 5.4)
  */
 export async function dismissAlert(alertId: number): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE_URL}/api/alerts/${alertId}/dismiss`, { method: 'POST' });
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/alerts/${alertId}/dismiss`, { method: 'POST' });
   if (!response.ok) throw new Error(`Failed to dismiss alert: ${response.statusText}`);
   return response.json();
 }
@@ -494,7 +572,7 @@ export async function getDueDiligence(leadId: string): Promise<{
   data: Record<string, unknown>;
   comparables: Array<Record<string, unknown>>;
 }> {
-  const response = await fetch(`${API_BASE_URL}/api/leads/${leadId}/due-diligence`);
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/due-diligence`, {}, 1, 60000);
   if (!response.ok) throw new Error(`Failed to generate due diligence: ${response.statusText}`);
   return response.json();
 }
@@ -525,7 +603,7 @@ export interface EnrichmentProgress {
  * Get enrichment progress status
  */
 export async function getEnrichmentProgress(): Promise<EnrichmentProgress> {
-  const response = await fetch(`${API_BASE_URL}/api/enrich/status`);
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/enrich/status`);
   if (!response.ok) throw new Error(`Failed to get enrichment status: ${response.statusText}`);
   return response.json();
 }
@@ -538,7 +616,7 @@ export async function startBatchEnrichment(limit: number = 100): Promise<{
   message: string;
   target_count: number;
 }> {
-  const response = await fetch(`${API_BASE_URL}/api/enrich/batch?limit=${limit}`, { method: 'POST' });
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/enrich/batch?limit=${limit}`, { method: 'POST' });
   if (!response.ok) throw new Error(`Failed to start batch enrichment: ${response.statusText}`);
   return response.json();
 }
@@ -547,7 +625,7 @@ export async function startBatchEnrichment(limit: number = 100): Promise<{
  * Run revenue estimation on all leads (Phase 5.1)
  */
 export async function estimateRevenue(): Promise<{ status: string; leads_updated: number }> {
-  const response = await fetch(`${API_BASE_URL}/api/estimate-revenue`, { method: 'POST' });
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/estimate-revenue`, { method: 'POST' });
   if (!response.ok) throw new Error(`Failed to estimate revenue: ${response.statusText}`);
   return response.json();
 }
@@ -556,7 +634,7 @@ export async function estimateRevenue(): Promise<{ status: string; leads_updated
  * Refresh violations data (Phase 5.2)
  */
 export async function refreshViolations(): Promise<{ status: string; leads_with_violations: number }> {
-  const response = await fetch(`${API_BASE_URL}/api/violations/refresh`, { method: 'POST' });
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/violations/refresh`, { method: 'POST' }, 0, 120000);
   if (!response.ok) throw new Error(`Failed to refresh violations: ${response.statusText}`);
   return response.json();
 }
@@ -565,7 +643,7 @@ export async function refreshViolations(): Promise<{ status: string; leads_with_
  * Re-score all leads with V2 scoring (Phase 5.6)
  */
 export async function rescoreLeads(): Promise<{ status: string; leads_rescored: number; leads_changed: number }> {
-  const response = await fetch(`${API_BASE_URL}/api/rescore`, { method: 'POST' });
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/rescore`, { method: 'POST' });
   if (!response.ok) throw new Error(`Failed to rescore leads: ${response.statusText}`);
   return response.json();
 }
@@ -574,7 +652,7 @@ export async function rescoreLeads(): Promise<{ status: string; leads_rescored: 
  * Check for data updates (Phase 5.4)
  */
 export async function checkForUpdates(): Promise<{ status: string; alerts_created: number }> {
-  const response = await fetch(`${API_BASE_URL}/api/refresh/check-updates`, { method: 'POST' });
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/refresh/check-updates`, { method: 'POST' });
   if (!response.ok) throw new Error(`Failed to check for updates: ${response.statusText}`);
   return response.json();
 }

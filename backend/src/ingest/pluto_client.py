@@ -13,6 +13,7 @@ Building class codes:
 - B1-B9: Two-family dwellings
 """
 import logging
+import os
 import time
 from typing import Dict, List, Optional, Set
 from dataclasses import dataclass
@@ -22,8 +23,9 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# NYC Open Data PLUTO endpoint
-PLUTO_ENDPOINT = "https://data.cityofnewyork.us/resource/64uk-42ks.json"
+# NYC Open Data PLUTO endpoint — R7: configurable via env var
+_PLUTO_DATASET = os.environ.get("PLUTO_DATASET_ID", "64uk-42ks")
+PLUTO_ENDPOINT = f"https://data.cityofnewyork.us/resource/{_PLUTO_DATASET}.json"
 
 
 @dataclass

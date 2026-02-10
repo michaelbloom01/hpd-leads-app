@@ -17,7 +17,9 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-HPD_VIOLATIONS_ENDPOINT = "https://data.cityofnewyork.us/resource/wvxf-dwi5.json"
+# R7: configurable via env var
+_HPD_VIOLATIONS_DATASET = os.environ.get("HPD_VIOLATIONS_DATASET_ID", "wvxf-dwi5")
+HPD_VIOLATIONS_ENDPOINT = f"https://data.cityofnewyork.us/resource/{_HPD_VIOLATIONS_DATASET}.json"
 
 # Socrata app token (optional, increases rate limit from 1000/hr to 10000/hr)
 SOCRATA_APP_TOKEN = os.environ.get('NYC_OPEN_DATA_APP_TOKEN')

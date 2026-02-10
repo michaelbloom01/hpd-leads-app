@@ -22,8 +22,8 @@ beautifulsoup4>=4.12.0
 trafilatura>=1.6.0
 lxml>=5.1.0
 
-# Optional: better Google search
-googlesearch-python>=1.2.3
+# Optional: better Google search (R8: pinned to avoid breaking changes)
+googlesearch-python==1.2.5
 
 # Optional: paid APIs
 # serpapi>=0.1.5  # Uncomment if using SerpAPI

@@ -33,7 +33,7 @@ const Sidebar: React.FC<Props> = ({ activeTab, onTabChange, isMobileOpen = false
         </div>
         <div className="flex flex-col">
           <span className="text-lg font-black text-white tracking-tighter uppercase leading-none">HPD Leads</span>
-          <span className="text-[9px] font-bold text-slate-500 tracking-[0.2em] mt-1">PM Acquisition</span>
+          <span className="text-[9px] font-bold text-slate-500 tracking-[0.2em] mt-1">Deal Sourcing</span>
         </div>
       </div>
 

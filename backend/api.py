@@ -35,15 +35,18 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Enable CORS for frontend (Phase 4.3: locked down to actual frontend URL)
+# Enable CORS for frontend
+# R9: Use regex-based origin matching so all Vercel preview deploys work automatically
 import os
-_cors_default = "https://hpd-leads-app.vercel.app,https://frontend-nine-psi-58.vercel.app,http://localhost:5173,http://localhost:3000"
-_cors_origins = os.environ.get("CORS_ORIGINS", _cors_default)
-_allowed_origins = [o.strip() for o in _cors_origins.split(",")]
+_cors_origins_env = os.environ.get("CORS_ORIGINS", "")
+_allowed_origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()] if _cors_origins_env else []
+# Always allow localhost for dev
+_allowed_origins.extend(["http://localhost:5173", "http://localhost:3000"])
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",  # R9: matches all Vercel preview/production deploys
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -53,6 +56,7 @@ app.add_middleware(
 _leads_cache: List[Lead] = []
 _last_refresh: Optional[datetime] = None
 _leads_lock = threading.Lock()  # Protects _leads_cache modifications
+_startup_complete = False  # R1: Set True after startup_load finishes (even on error)
 
 # Background enrichment state (enhanced for batch processing)
 _enrichment_state: Dict = {
@@ -91,7 +95,49 @@ _refresh_lock = threading.Lock()  # Protects _refresh_state
 @app.on_event("startup")
 async def startup_load():
     """Load leads from SQLite database on startup and resume/start enrichment if needed."""
+    global _leads_cache, _last_refresh, _startup_complete
+    
+    try:
+        await _startup_load_inner()
+    except Exception as e:
+        logger.error(f"Startup failed (server will start with empty cache): {e}", exc_info=True)
+    finally:
+        _startup_complete = True
+        logger.info("Startup: _startup_complete = True")
+
+
+def _ping_socrata_endpoints():
+    """R7: Verify Socrata dataset endpoints are reachable at startup."""
+    import requests as _req
+    from src.ingest.hpd_client import BUILDINGS_ENDPOINT, CONTACTS_ENDPOINT
+    from src.ingest.pluto_client import PLUTO_ENDPOINT
+    from src.ingest.hpd_violations import HPD_VIOLATIONS_ENDPOINT
+    
+    endpoints = {
+        "HPD Buildings": BUILDINGS_ENDPOINT,
+        "HPD Contacts": CONTACTS_ENDPOINT,
+        "PLUTO": PLUTO_ENDPOINT,
+        "HPD Violations": HPD_VIOLATIONS_ENDPOINT,
+    }
+    for name, url in endpoints.items():
+        try:
+            resp = _req.get(url, params={"$limit": 1}, timeout=10)
+            if resp.status_code == 404:
+                logger.warning(f"R7: {name} dataset returned 404 — dataset ID may have changed! URL: {url}")
+            elif resp.status_code >= 400:
+                logger.warning(f"R7: {name} dataset returned HTTP {resp.status_code}: {url}")
+            else:
+                logger.info(f"R7: {name} dataset OK ({resp.status_code})")
+        except Exception as e:
+            logger.warning(f"R7: {name} dataset unreachable ({e})")
+
+
+async def _startup_load_inner():
+    """Inner startup logic — separated so startup_load can catch all errors."""
     global _leads_cache, _last_refresh
+    
+    # R7: Verify Socrata endpoints are still valid
+    _ping_socrata_endpoints()
     
     db = get_database()
     loaded = db.load_all_leads()
@@ -135,12 +181,28 @@ async def startup_load():
         # Check if there's an incomplete enrichment job to resume
         active_job = db.get_active_enrichment_job()
         if active_job and active_job['status'] == 'running':
-            remaining = active_job.get('lead_ids_remaining', [])
-            if remaining:
-                logger.info(f"Startup: Found incomplete enrichment job {active_job['id']} with {len(remaining)} leads remaining")
-                # Resume in background
-                import asyncio
-                asyncio.create_task(_resume_enrichment_job(active_job))
+            # R2: Check if the job is stale (older than 24 hours) — likely killed mid-flight
+            from datetime import timedelta
+            job_started = active_job.get('started_at')
+            is_stale = False
+            if job_started:
+                try:
+                    started_dt = datetime.fromisoformat(job_started)
+                    if (datetime.now() - started_dt) > timedelta(hours=24):
+                        is_stale = True
+                except (ValueError, TypeError):
+                    is_stale = True  # Can't parse date — treat as stale
+            
+            if is_stale:
+                logger.warning(f"Startup: Enrichment job {active_job['id']} is stale (started {job_started}), marking interrupted")
+                db.update_enrichment_job(active_job['id'], status='interrupted', error='Stale job detected on startup (>24h)')
+            else:
+                remaining = active_job.get('lead_ids_remaining', [])
+                if remaining:
+                    logger.info(f"Startup: Found incomplete enrichment job {active_job['id']} with {len(remaining)} leads remaining")
+                    # Resume in background
+                    import asyncio
+                    asyncio.create_task(_resume_enrichment_job(active_job))
         else:
             # Check if enrichment was already completed (persisted across restarts)
             enrichment_completed = db.get_setting('enrichment_completed_at')
@@ -305,7 +367,10 @@ async def _resume_enrichment_job(job: dict):
 # Health check endpoint
 @app.get("/api/health")
 async def health_check():
-    """Health check endpoint for monitoring."""
+    """Health check endpoint for monitoring. Returns 'starting' until startup completes."""
+    if not _startup_complete:
+        return {"status": "starting", "message": "Backend is loading data. This usually takes 1-2 minutes."}
+    
     db = get_database()
     lead_count = db.get_leads_count()
     
@@ -316,7 +381,7 @@ async def health_check():
                               if lead.portfolio_size >= 10 and lead.enrichment_status in ['none', None, ''])
     
     return {
-        "status": "healthy",
+        "status": "ok",
         "leads_in_cache": cache_size,
         "leads_in_db": lead_count,
         "enrichment_running": _enrichment_state.get("running", False),
@@ -549,8 +614,11 @@ class OutreachEventRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    """Health check endpoint."""
-    return {"status": "ok", "service": "hpd-leads-api"}
+    """Root health check endpoint."""
+    return {
+        "status": "ok" if _startup_complete else "starting",
+        "service": "hpd-leads-api",
+    }
 
 
 class LeadsListResponse(BaseModel):
@@ -2623,7 +2691,18 @@ async def generate_ai_summary(lead_id: str):
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     
-    from src.enrich.ai_summary import generate_company_description
+    # R11: Check AI summary cache first
+    db = get_database()
+    cached_summary = db.get_ai_summary_cache(lead_id)
+    if cached_summary:
+        logger.info(f"AI summary cache hit for lead {lead_id}")
+        return {
+            "status": "cached",
+            "lead_id": lead_id,
+            "ai_description": cached_summary,
+        }
+    
+    from src.enrich.ai_summary import generate_company_description, ANTHROPIC_MODEL
     
     company_name = lead.agent_name or lead.owner_name
     
@@ -2666,9 +2745,9 @@ async def generate_ai_summary(lead_id: str):
             _leads_cache[i] = lead
             break
     
-    # Persist to database
-    db = get_database()
+    # Persist to database and AI summary cache (R11)
     db.update_lead(lead_id, {"business_summary": description})
+    db.set_ai_summary_cache(lead_id, description, model=ANTHROPIC_MODEL)
     
     return {
         "status": "generated",

@@ -78,7 +78,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
     setOutreachStatus(newStatus);
     setIsSaving(true);
     try { await updateLead(lead.lead_id, { outreach_status: newStatus }); } 
-    catch (err) { console.error('Failed to update status:', err); } 
+    catch (err) { console.error('Failed to update status:', err); toast.error('Failed to update status'); } 
     finally { setIsSaving(false); }
   };
 
@@ -101,7 +101,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
     const newRank = rank === priorityRank ? 0 : rank;
     setPriorityRank(newRank);
     try { await updateLead(lead.lead_id, { priority_rank: newRank }); } 
-    catch (err) { console.error('Failed to update priority:', err); }
+    catch (err) { console.error('Failed to update priority:', err); toast.error('Failed to update priority'); }
   };
 
   const handleFollowUpChange = async (date: string) => {
@@ -138,7 +138,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
     try {
       const result = await generateAiSummary(lead.lead_id);
       if (result.ai_description) { setAiDescription(result.ai_description); setEnrichedLead({ ...enrichedLead, business_summary: result.ai_description }); }
-    } catch (err) { console.error('AI summary failed:', err); } 
+    } catch (err) { console.error('AI summary failed:', err); toast.error('AI summary generation failed'); } 
     finally { setIsGeneratingAI(false); }
   };
 
@@ -169,7 +169,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
       setOutreachAttempts([result.attempt, ...outreachAttempts]);
       setShowAddOutreach(false);
       setNewOutreach({ method: 'phone', outcome: 'no_answer', notes: '' });
-    } catch (err) { console.error('Failed to add outreach:', err); } 
+    } catch (err) { console.error('Failed to add outreach:', err); toast.error('Failed to log outreach'); } 
     finally { setIsSaving(false); }
   };
 
@@ -209,10 +209,10 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                   enrichedLead.entity_type === 'individual_agent' ? 'bg-amber-900/50 text-amber-400' :
                   enrichedLead.entity_type === 'owner_operator' ? 'bg-purple-900/50 text-purple-400' :
                   'bg-slate-800 text-slate-500'
-                }`}>
+                }`} title={enrichedLead.entity_type === 'company' ? 'Registered management company or housing entity' : enrichedLead.entity_type === 'individual_agent' ? 'Individual person acting as managing agent' : enrichedLead.entity_type === 'owner_operator' ? 'Property owner who self-manages' : 'Entity type unknown'}>
                   {enrichedLead.entity_type === 'company' ? 'Company' : 
-                   enrichedLead.entity_type === 'individual_agent' ? 'Individual' : 
-                   enrichedLead.entity_type === 'owner_operator' ? 'Owner-Op' : 'Unknown'}
+                   enrichedLead.entity_type === 'individual_agent' ? 'Individual Agent' : 
+                   enrichedLead.entity_type === 'owner_operator' ? 'Owner-Operator' : 'Unknown'}
                 </span>
                 {(enrichedLead.boros || [enrichedLead.boro]).map((b, i) => (
                   <span key={i} className="px-1.5 py-0.5 bg-slate-800 text-slate-400 text-[10px] rounded">
@@ -223,17 +223,22 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               <h2 className="text-xl font-bold text-white truncate">{enrichedLead.company_name || enrichedLead.agent_name || enrichedLead.owner_name}</h2>
             </div>
             <div className="flex items-center gap-3 ml-4">
-              {/* Score */}
-              <div className={`text-2xl font-bold font-mono px-3 py-1 rounded-lg ${
-                enrichedLead.score >= 60 ? 'bg-emerald-900/30 text-emerald-400' :
-                enrichedLead.score >= 40 ? 'bg-amber-900/30 text-amber-400' : 'bg-slate-800 text-slate-400'
-              }`}>
-                {enrichedLead.score.toFixed(0)}
+              {/* Score with context */}
+              <div className={`px-3 py-1 rounded-lg text-center ${
+                enrichedLead.score >= 60 ? 'bg-emerald-900/30' :
+                enrichedLead.score >= 40 ? 'bg-amber-900/30' : 'bg-slate-800'
+              }`} title={`Lead quality score (0–100): ${enrichedLead.score >= 60 ? 'Strong acquisition target' : enrichedLead.score >= 40 ? 'Moderate potential' : 'Lower priority'}\nBased on portfolio size, building types, registration status, and data completeness`}>
+                <div className={`text-2xl font-bold font-mono ${
+                  enrichedLead.score >= 60 ? 'text-emerald-400' :
+                  enrichedLead.score >= 40 ? 'text-amber-400' : 'text-slate-400'
+                }`}>{enrichedLead.score.toFixed(0)}</div>
+                <div className="text-[9px] text-slate-500 uppercase font-bold">Score</div>
               </div>
               {/* Revenue */}
               {enrichedLead.estimated_annual_revenue > 0 && (
-                <div className="text-lg font-bold font-mono text-emerald-400" title="Est. mgmt fee revenue = Units × Avg Rent × 5% fee">
-                  {formatCurrency(enrichedLead.estimated_annual_revenue)}<span className="text-xs text-emerald-600">/yr est.</span>
+                <div className="text-right" title="Estimated annual management fee if acquired: Total Units × Avg Rent (by borough & building type) × 5% management fee">
+                  <div className="text-lg font-bold font-mono text-emerald-400">{formatCurrency(enrichedLead.estimated_annual_revenue)}<span className="text-xs text-emerald-600">/yr</span></div>
+                  <div className="text-[9px] text-slate-500 uppercase font-bold">Mgmt Fee</div>
                 </div>
               )}
               <button onClick={onClose} className="p-2 text-slate-500 hover:text-white transition-colors">
@@ -261,8 +266,8 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
             <button onClick={openWebsite} className="px-3 py-1.5 bg-purple-600 text-white text-xs font-bold rounded-lg hover:bg-purple-500 transition-colors">
               {enrichedLead.website ? 'Website' : 'Search'}
             </button>
-            <button onClick={handleResearch} disabled={isResearching} className="px-3 py-1.5 bg-slate-700 text-slate-300 text-xs font-bold rounded-lg hover:bg-slate-600 disabled:opacity-50 transition-colors" title="Scrapes web for owner names, contacts, and company history">
-              {isResearching ? 'Researching...' : 'Enrich Company Info'}
+            <button onClick={handleResearch} disabled={isResearching} className="px-3 py-1.5 bg-slate-700 text-slate-300 text-xs font-bold rounded-lg hover:bg-slate-600 disabled:opacity-50 transition-colors" title="Searches the web for owner names, contact info, and company background">
+              {isResearching ? 'Researching...' : 'Research Company'}
             </button>
             <div className="flex-1" />
             {/* Pipeline selector - dropdown for readability */}
@@ -302,7 +307,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               {/* Revenue & Violations */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="bg-gradient-to-br from-emerald-900/20 to-emerald-950/20 border border-emerald-500/20 rounded-xl p-4">
-                  <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-2">Est. Mgmt Fee Revenue</h3>
+                  <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-2">Estimated Management Fee</h3>
                   {enrichedLead.estimated_annual_revenue > 0 ? (
                     <div>
                       <div className="text-2xl font-bold font-mono text-emerald-400">{formatCurrency(enrichedLead.estimated_annual_revenue)}<span className="text-sm text-emerald-600">/yr</span></div>
@@ -354,10 +359,13 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                         <span className="text-xs text-slate-500">per unit</span>
                       </div>
                       <div className="text-sm text-slate-500 mt-1 font-mono">{enrichedLead.violation_count.toLocaleString()} total violations</div>
-                      <div className="flex gap-3 mt-2 text-xs">
-                        <span className="text-slate-400">A: {enrichedLead.violation_class_a}</span>
-                        <span className="text-amber-400">B: {enrichedLead.violation_class_b}</span>
-                        <span className="text-rose-400">C: {enrichedLead.violation_class_c}</span>
+                      <div className="flex flex-col gap-1 mt-2 text-xs">
+                        <div className="flex gap-3">
+                          <span className="text-slate-400" title="Non-hazardous conditions">A: {enrichedLead.violation_class_a}</span>
+                          <span className="text-amber-400" title="Hazardous conditions">B: {enrichedLead.violation_class_b}</span>
+                          <span className="text-rose-400" title="Immediately hazardous conditions">C: {enrichedLead.violation_class_c}</span>
+                        </div>
+                        <div className="text-[9px] text-slate-600">A = non-hazardous • B = hazardous • C = immediately hazardous</div>
                       </div>
                     </div>
                   ) : (
@@ -368,17 +376,17 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
 
               {/* Portfolio Summary */}
               <div className="grid grid-cols-3 gap-3">
-                <div className="bg-slate-800/50 rounded-xl p-3 text-center">
+                <div className="bg-slate-800/50 rounded-xl p-3 text-center" title="Lead quality score (0–100) based on portfolio size, building mix, registration status, and data completeness">
                   <div className={`text-2xl font-bold font-mono ${enrichedLead.score >= 60 ? 'text-emerald-400' : enrichedLead.score >= 40 ? 'text-amber-400' : 'text-slate-400'}`}>{enrichedLead.score.toFixed(1)}</div>
-                  <div className="text-[10px] text-slate-500 mt-0.5 uppercase">Score</div>
+                  <div className="text-[10px] text-slate-500 mt-0.5 uppercase">Lead Score</div>
                 </div>
-                <div className="bg-slate-800/50 rounded-xl p-3 text-center">
+                <div className="bg-slate-800/50 rounded-xl p-3 text-center" title="Total number of buildings managed by this entity per HPD registration records">
                   <div className="text-2xl font-bold font-mono text-blue-400">{enrichedLead.portfolio_size}</div>
                   <div className="text-[10px] text-slate-500 mt-0.5 uppercase">Buildings</div>
                 </div>
-                <div className="bg-slate-800/50 rounded-xl p-3 text-center">
+                <div className="bg-slate-800/50 rounded-xl p-3 text-center" title="Total residential units across all buildings in this portfolio">
                   <div className="text-2xl font-bold font-mono text-purple-400">{enrichedLead.total_units.toLocaleString()}</div>
-                  <div className="text-[10px] text-slate-500 mt-0.5 uppercase">Units</div>
+                  <div className="text-[10px] text-slate-500 mt-0.5 uppercase">Res. Units</div>
                 </div>
               </div>
 
@@ -399,29 +407,47 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               {/* AI Summary */}
               <div className="bg-slate-800/30 rounded-xl p-4">
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">AI Summary</h3>
+                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Company Overview</h3>
                   <button onClick={handleGenerateAI} disabled={isGeneratingAI} className="text-[10px] text-blue-400 hover:text-blue-300 disabled:opacity-50">
-                    {isGeneratingAI ? 'Generating...' : aiDescription ? 'Regenerate' : 'Generate'}
+                    {isGeneratingAI ? 'Generating...' : aiDescription ? 'Regenerate Summary' : 'Generate Summary'}
                   </button>
                 </div>
                 {aiDescription ? (
                   <p className="text-sm text-slate-300 leading-relaxed">{aiDescription}</p>
                 ) : (
-                  <p className="text-sm text-slate-600 italic">Click "Generate" for an AI-powered business summary</p>
+                  <p className="text-sm text-slate-600 italic">Click "Generate Summary" for a research-backed overview of this company's operations and background</p>
                 )}
               </div>
 
               {/* Score Breakdown (collapsed) */}
               {enrichedLead.score_breakdown && (
                 <details className="bg-slate-800/30 rounded-xl">
-                  <summary className="p-4 cursor-pointer text-xs font-bold text-slate-500 uppercase tracking-wider hover:text-slate-300">Score Breakdown</summary>
-                  <div className="px-4 pb-4 grid grid-cols-2 gap-3">
-                    {Object.entries(enrichedLead.score_breakdown).map(([key, value]) => (
-                      <div key={key} className="flex items-center justify-between">
-                        <span className="text-xs text-slate-500 capitalize">{key.replace(/_/g, ' ')}</span>
-                        <span className="text-xs font-mono text-slate-300">{typeof value === 'number' ? value.toFixed(1) : String(value)}</span>
-                      </div>
-                    ))}
+                  <summary className="p-4 cursor-pointer text-xs font-bold text-slate-500 uppercase tracking-wider hover:text-slate-300">How is the score calculated?</summary>
+                  <div className="px-4 pb-4">
+                    <p className="text-[10px] text-slate-600 mb-3">Score is weighted across several factors. Each component contributes points to the total (max 100).</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      {Object.entries(enrichedLead.score_breakdown).map(([key, value]) => {
+                        const SCORE_LABELS: Record<string, string> = {
+                          portfolio_size: 'Portfolio Size',
+                          total_units: 'Total Units',
+                          building_diversity: 'Building Mix',
+                          building_types: 'Building Types',
+                          registration_recency: 'Registration Recency',
+                          contact_completeness: 'Contact Info Available',
+                          data_quality: 'Data Completeness',
+                          violation_density: 'Violation Density',
+                          revenue_potential: 'Revenue Potential',
+                          borough_diversity: 'Borough Coverage',
+                          entity_type_bonus: 'Entity Type',
+                        };
+                        return (
+                          <div key={key} className="flex items-center justify-between">
+                            <span className="text-xs text-slate-500">{SCORE_LABELS[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</span>
+                            <span className="text-xs font-mono text-slate-300">{typeof value === 'number' ? value.toFixed(1) : String(value)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </details>
               )}
@@ -448,15 +474,15 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               {/* Contact Actions - prominent when no contacts exist */}
               {!enrichedLead.phone && !enrichedLead.email ? (
                 <div className="bg-gradient-to-r from-emerald-900/30 to-emerald-950/30 border border-emerald-500/30 rounded-xl p-4 text-center">
-                  <p className="text-slate-400 text-sm mb-3">No contact info yet for this lead</p>
+                  <p className="text-slate-400 text-sm mb-3">No phone, email, or website found yet</p>
                   <div className="flex gap-2 justify-center">
                     <button onClick={handleEnrichContacts} disabled={isEnriching}
                       className="px-6 py-2.5 bg-emerald-600 text-white text-sm font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors">
-                      {isEnriching ? 'Finding Contacts...' : 'Find Contacts (Google, DOS, Web)'}
+                      {isEnriching ? 'Searching...' : 'Find Contact Info'}
                     </button>
                     <button onClick={handleResearch} disabled={isResearching}
-                      className="px-4 py-2.5 bg-slate-700 text-slate-300 text-sm font-bold rounded-lg hover:bg-slate-600 disabled:opacity-50 transition-colors" title="Scrapes web for owner names, contacts, and company history">
-                      {isResearching ? 'Researching...' : 'Enrich Company Info'}
+                      className="px-4 py-2.5 bg-slate-700 text-slate-300 text-sm font-bold rounded-lg hover:bg-slate-600 disabled:opacity-50 transition-colors" title="Searches the web for owner names, contact info, and company background">
+                      {isResearching ? 'Researching...' : 'Research Company'}
                     </button>
                   </div>
                 </div>
@@ -467,8 +493,8 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                     {isEnriching ? 'Finding Contacts...' : 'Find More Contacts'}
                   </button>
                   <button onClick={handleResearch} disabled={isResearching}
-                    className="px-4 py-2 bg-slate-700 text-slate-300 text-sm font-bold rounded-lg hover:bg-slate-600 disabled:opacity-50 transition-colors" title="Scrapes web for owner names, contacts, and company history">
-                    {isResearching ? 'Researching...' : 'Enrich Company Info'}
+                    className="px-4 py-2 bg-slate-700 text-slate-300 text-sm font-bold rounded-lg hover:bg-slate-600 disabled:opacity-50 transition-colors" title="Searches the web for owner names, contact info, and company background">
+                    {isResearching ? 'Researching...' : 'Research Company'}
                   </button>
                 </div>
               )}
@@ -763,7 +789,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
 
               {!ddReport && !isLoadingDD && (
                 <div className="text-center py-10">
-                  <p className="text-slate-600 text-sm">Generate a comprehensive due diligence report including portfolio analysis, financials, violations, contacts, and comparables.</p>
+                  <p className="text-slate-600 text-sm">Generate a full due diligence report for this lead — includes portfolio analysis, financials, violation history, contacts, and comparison with similar companies.</p>
                 </div>
               )}
 

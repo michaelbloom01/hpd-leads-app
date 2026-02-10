@@ -7,6 +7,9 @@ from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
+# R7: configurable model via env var
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-haiku-latest")
+
 
 def generate_company_description(
     company_name: str,
@@ -89,7 +92,7 @@ Write only the description, no preamble or labels."""
     try:
         client = anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
-            model="claude-3-haiku-20240307",  # Fast and cheap for short summaries
+            model=ANTHROPIC_MODEL,  # R7: configurable via ANTHROPIC_MODEL env var
             max_tokens=500,  # Allow longer descriptions
             messages=[{"role": "user", "content": prompt}]
         )

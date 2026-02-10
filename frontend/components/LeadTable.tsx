@@ -1,10 +1,13 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { fetchLeads, ApiLead, enrichLeads } from '../services/api';
+import { fetchLeads, ApiLead, enrichLeads, API_BASE_URL, checkHealth } from '../services/api';
 
 interface Props {
   onSelectLead: (lead: ApiLead) => void;
 }
+
+// R4: Cold-start polling interval (ms)
+const HEALTH_POLL_INTERVAL = 5000;
 
 type SortField = 'agent_name' | 'portfolio_size' | 'total_units' | 'score' | 'boro' | 'enrichment_status' | 'estimated_annual_revenue' | 'violations_per_unit';
 type SortDir = 'asc' | 'desc';
@@ -18,10 +21,10 @@ const formatCurrency = (amount: number): string => {
   return `$${amount.toFixed(0)}`;
 };
 
-const scoreTier = (score: number): { label: string; color: string } => {
-  if (score >= 60) return { label: 'A', color: 'text-emerald-400' };
-  if (score >= 40) return { label: 'B', color: 'text-amber-400' };
-  return { label: 'C', color: 'text-slate-500' };
+const scoreColor = (score: number): string => {
+  if (score >= 60) return 'text-emerald-400';
+  if (score >= 40) return 'text-amber-400';
+  return 'text-slate-500';
 };
 
 const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
@@ -29,6 +32,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   const [totalLeads, setTotalLeads] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [backendStarting, setBackendStarting] = useState(false);
   
   // Server-side filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -106,8 +110,38 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     }
   }, [filterMinScore, filterMinPortfolio, filterBoroughs, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterPipelineStage, filterMinUnits, pageSize]);
 
-  // Reload on filter change - reset to page 0
+  // R4: Health check on initial mount — show cold-start banner if backend is booting
   useEffect(() => {
+    let cancelled = false;
+    let timerId: ReturnType<typeof setTimeout>;
+    
+    const pollHealth = async () => {
+      const health = await checkHealth();
+      if (cancelled) return;
+      if (health.status === 'starting') {
+        setBackendStarting(true);
+        timerId = setTimeout(pollHealth, HEALTH_POLL_INTERVAL);
+      } else {
+        setBackendStarting(false);
+        // Backend is ready — trigger first data load
+        loadLeads(0);
+      }
+    };
+    
+    pollHealth();
+    return () => { cancelled = true; clearTimeout(timerId); };
+    // Only run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Reload on filter change - reset to page 0 (skip if backend still starting)
+  const isFirstLoad = React.useRef(true);
+  useEffect(() => {
+    if (isFirstLoad.current) {
+      isFirstLoad.current = false;
+      return; // Skip first run — handled by health check above
+    }
+    if (backendStarting) return;
     setPage(0);
     loadLeads(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -237,7 +271,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   };
 
   const exportToCsv = async () => {
-    const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000').trim().replace(/\\r\\n$/, '').replace(/[\r\n]+$/, '');
+    // R5: Removed duplicate API_BASE_URL — imported from api.ts
     const params = new URLSearchParams();
     params.set('limit', totalLeads.toString());
     
@@ -297,6 +331,20 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     </span>
   );
 
+  // R4: Cold-start banner
+  if (backendStarting) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+        <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        <h2 className="text-lg font-semibold text-blue-400">Backend is starting up</h2>
+        <p className="text-slate-400 text-sm max-w-md">
+          This usually takes 1–2 minutes after inactivity. The page will load automatically once the server is ready.
+        </p>
+        <p className="text-slate-600 text-xs">Polling every {HEALTH_POLL_INTERVAL / 1000}s...</p>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="space-y-4 animate-pulse">
@@ -309,9 +357,16 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 text-center">
+      <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
         <div className="text-rose-400 mb-4">{error}</div>
         <p className="text-slate-500 text-sm">Try refreshing the page or check the Dashboard for data status.</p>
+        {/* R5: Retry button */}
+        <button 
+          onClick={() => { setError(null); loadLeads(page); }}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
+        >
+          Retry
+        </button>
       </div>
     );
   }
@@ -352,8 +407,8 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
             <option value="closed">Closed</option>
           </select>
           {/* Min Buildings - promoted to primary row */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] text-slate-600 uppercase">Min Bldgs</span>
+          <div className="flex items-center gap-1.5" title="Only show leads managing at least this many buildings">
+            <span className="text-[10px] text-slate-600 uppercase">Min Buildings</span>
             <input type="number" className="w-16 px-2 py-1.5 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100" value={filterMinPortfolio} onChange={(e) => setFilterMinPortfolio(e.target.value)} />
           </div>
           <div className="flex gap-1.5">
@@ -367,7 +422,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
             </button>
           </div>
           <button onClick={() => setShowMoreFilters(!showMoreFilters)} className="px-3 py-2 text-xs text-slate-500 hover:text-slate-300 transition-colors relative">
-            {showMoreFilters ? 'Less' : 'More'}
+            {showMoreFilters ? 'Less Filters' : 'More Filters'}
             {activeSecondaryFilterCount > 0 && !showMoreFilters && (
               <span className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 text-white text-[9px] rounded-full flex items-center justify-center font-bold">{activeSecondaryFilterCount}</span>
             )}
@@ -452,27 +507,26 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   Units <SortIcon field="total_units" />
                 </th>
                 <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('score')}
-                  title="Composite score: A (60+), B (40-59), C (<40)">
+                  title="Lead quality score (0–100) based on portfolio size, building types, registration status, and data completeness. Higher = stronger acquisition target.">
                   Score <SortIcon field="score" />
                 </th>
                 <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('estimated_annual_revenue')}
-                  title="Est. annual mgmt fee = Total Units × Avg Rent (by borough & type) × 5%">
-                  Est. Revenue <SortIcon field="estimated_annual_revenue" />
+                  title="Estimated annual management fee revenue = Total Units × Average Rent (by borough & building type) × 5% management fee rate">
+                  Mgmt Fee <SortIcon field="estimated_annual_revenue" />
                 </th>
                 <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('violations_per_unit')}
-                  title="HPD violations per residential unit (sorted by density, not raw count)">
+                  title="Open HPD violations per residential unit — higher = more maintenance issues, potential distressed asset opportunity">
                   Violations <SortIcon field="violations_per_unit" />
                 </th>
                 <th className="px-4 py-3">Contact</th>
                 <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors" onClick={() => handleSort('enrichment_status')}
-                  title="Data completeness: how much info we have for this lead">
-                  Data <SortIcon field="enrichment_status" />
+                  title="How much contact data we have: green dots = phone/email found, website found, full research complete">
+                  Info <SortIcon field="enrichment_status" />
                 </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
               {displayLeads.map((lead) => {
-                const tier = scoreTier(lead.score);
                 return (
                 <tr 
                   key={lead.lead_id}
@@ -495,7 +549,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                         lead.entity_type === 'individual_agent' ? 'bg-amber-900/40 text-amber-400' :
                         lead.entity_type === 'owner_operator' ? 'bg-purple-900/40 text-purple-400' :
                         'bg-slate-800 text-slate-600'
-                      }`} title={`Entity type: ${lead.entity_type === 'company' ? 'Registered company (LLC, Corp, etc.)' : lead.entity_type === 'individual_agent' ? 'Individual managing agent' : lead.entity_type === 'owner_operator' ? 'Owner who self-manages' : 'Unknown entity type'}`}>
+                      }`} title={lead.entity_type === 'company' ? 'Registered management company or housing entity' : lead.entity_type === 'individual_agent' ? 'Individual person acting as managing agent for these buildings' : lead.entity_type === 'owner_operator' ? 'Property owner who self-manages without a separate management company' : 'Entity type could not be determined from HPD records'}>
                         {lead.entity_type === 'company' ? 'Company' : 
                          lead.entity_type === 'individual_agent' ? 'Individual' : 
                          lead.entity_type === 'owner_operator' ? 'Owner-Op' : 'Unknown'}
@@ -522,12 +576,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                     <span className="text-blue-400 font-mono text-sm">{lead.total_units.toLocaleString()}</span>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <span className={`text-[9px] font-bold ${tier.color}`}>{tier.label}</span>
-                      <span className={`font-mono text-sm font-medium ${tier.color}`}>
-                        {lead.score.toFixed(0)}
-                      </span>
-                    </div>
+                    <span className={`font-mono text-sm font-bold ${scoreColor(lead.score)}`}
+                      title={`Score ${lead.score.toFixed(1)}/100 — ${lead.score >= 60 ? 'Strong target' : lead.score >= 40 ? 'Moderate potential' : 'Lower priority'}`}>
+                      {lead.score.toFixed(0)}
+                    </span>
                   </td>
                   <td className="px-4 py-3 text-right">
                     {lead.estimated_annual_revenue > 0 ? (
@@ -540,7 +592,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   </td>
                   <td className="px-4 py-3 text-right">
                     {lead.violations_per_unit > 0 ? (
-                      <div className="flex items-center justify-end gap-1.5" title={`${lead.violation_count.toLocaleString()} total: A:${lead.violation_class_a} B:${lead.violation_class_b} C:${lead.violation_class_c}`}>
+                      <div className="flex items-center justify-end gap-1.5" title={`${lead.violation_count.toLocaleString()} total open violations\nPer unit: ${lead.violations_per_unit.toFixed(2)}\nClass A (non-hazardous): ${lead.violation_class_a}\nClass B (hazardous): ${lead.violation_class_b}\nClass C (immediately hazardous): ${lead.violation_class_c}`}>
                         <span className={`w-2 h-2 rounded-full ${
                           lead.violations_per_unit > 1.0 ? 'bg-rose-500' :
                           lead.violations_per_unit > 0.3 ? 'bg-amber-500' : 'bg-emerald-500'
@@ -549,12 +601,12 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                           lead.violations_per_unit > 1.0 ? 'text-rose-400' :
                           lead.violations_per_unit > 0.3 ? 'text-amber-400' : 'text-slate-300'
                         }`}>{lead.violations_per_unit.toFixed(2)}</span>
-                        <span className="text-[9px] text-slate-600">/unit</span>
+                        <span className="text-[9px] text-slate-600">per unit</span>
                       </div>
                     ) : lead.violation_count > 0 ? (
-                      <span className="font-mono text-sm text-slate-400">{lead.violation_count}</span>
+                      <span className="font-mono text-sm text-slate-400" title={`${lead.violation_count} total violations (per-unit data not yet available)`}>{lead.violation_count}</span>
                     ) : (
-                      <span className="text-slate-700">—</span>
+                      <span className="text-slate-700" title="No open HPD violations on record, or data not yet loaded">—</span>
                     )}
                   </td>
                   <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
@@ -585,11 +637,17 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-col gap-1">
-                      {/* Data quality indicator - dots instead of text */}
-                      <div className="flex items-center gap-0.5" title={`Data: ${lead.enrichment_status}`}>
-                        <span className={`w-2 h-2 rounded-full ${lead.phone || lead.email ? 'bg-emerald-500' : 'bg-slate-700'}`} />
-                        <span className={`w-2 h-2 rounded-full ${lead.website ? 'bg-emerald-500' : 'bg-slate-700'}`} />
-                        <span className={`w-2 h-2 rounded-full ${lead.enrichment_status === 'complete' ? 'bg-emerald-500' : lead.enrichment_status === 'partial' ? 'bg-amber-500' : 'bg-slate-700'}`} />
+                      {/* Data quality: labeled micro-indicators */}
+                      <div className="flex items-center gap-1.5" title={`Contact: ${lead.phone || lead.email ? 'Found' : 'Missing'} • Website: ${lead.website ? 'Found' : 'Missing'} • Research: ${lead.enrichment_status}`}>
+                        <span className={`text-[9px] font-medium ${lead.phone || lead.email ? 'text-emerald-400' : 'text-slate-700'}`}>
+                          {lead.phone || lead.email ? '● Contact' : '○ Contact'}
+                        </span>
+                        <span className={`text-[9px] font-medium ${lead.website ? 'text-emerald-400' : 'text-slate-700'}`}>
+                          {lead.website ? '●' : '○'}
+                        </span>
+                        <span className={`text-[9px] font-medium ${lead.enrichment_status === 'complete' ? 'text-emerald-400' : lead.enrichment_status === 'partial' ? 'text-amber-400' : 'text-slate-700'}`}>
+                          {lead.enrichment_status === 'complete' ? '●' : '○'}
+                        </span>
                       </div>
                       {lead.pipeline_stage && lead.pipeline_stage !== 'research' && (
                         <span className="px-2 py-0.5 text-[10px] rounded bg-blue-900/30 text-blue-400 inline-block w-fit">
