@@ -101,24 +101,22 @@ async def startup_load():
         _last_refresh = db.get_last_refresh_time()
         logger.info(f"Startup: Loaded {len(loaded)} leads from database")
         
-        # Auto-compute revenue if not yet computed (pure math, no API calls, <1 second)
+        # Auto-compute revenue if not yet computed (pure math, no API calls)
         revenue_computed = db.get_setting('revenue_computed_at')
         if not revenue_computed:
             logger.info("Startup: Computing revenue estimates for all leads (first time)...")
             from src.score.revenue import estimate_revenue
-            updated = 0
+            batch_updates = []
             for lead in _leads_cache:
                 rev = estimate_revenue(lead)
                 lead.estimated_monthly_revenue = rev["estimated_monthly_revenue"]
                 lead.estimated_annual_revenue = rev["estimated_annual_revenue"]
                 if rev["estimated_monthly_revenue"] > 0:
-                    db.update_lead(lead.lead_id, {
-                        "estimated_monthly_revenue": rev["estimated_monthly_revenue"],
-                        "estimated_annual_revenue": rev["estimated_annual_revenue"],
-                    })
-                    updated += 1
+                    batch_updates.append((lead.lead_id, rev["estimated_monthly_revenue"], rev["estimated_annual_revenue"]))
+            # Persist in a single transaction (fast even for 100k leads)
+            db.batch_update_revenue(batch_updates)
             db.set_setting('revenue_computed_at', datetime.now().isoformat())
-            logger.info(f"Startup: Revenue estimated for {updated} leads")
+            logger.info(f"Startup: Revenue estimated for {len(batch_updates)} leads")
         else:
             logger.info(f"Startup: Revenue already computed at {revenue_computed}")
         

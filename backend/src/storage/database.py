@@ -513,6 +513,28 @@ class LeadsDatabase:
                 logger.warning(f"Lead {lead_id} not found in database")
                 return False
     
+    def batch_update_revenue(self, updates: List[tuple]) -> int:
+        """
+        Batch update revenue for many leads in a single transaction.
+        
+        Args:
+            updates: List of (lead_id, monthly_revenue, annual_revenue) tuples
+            
+        Returns:
+            Number of leads updated.
+        """
+        if not updates:
+            return 0
+        
+        with self._get_connection() as conn:
+            conn.executemany(
+                "UPDATE leads SET estimated_monthly_revenue = ?, estimated_annual_revenue = ? WHERE lead_id = ?",
+                [(monthly, annual, lead_id) for lead_id, monthly, annual in updates]
+            )
+            conn.commit()
+            logger.info(f"Batch updated revenue for {len(updates)} leads")
+            return len(updates)
+    
     def save_leads(self, leads: List["Lead"]) -> int:
         """
         Save all leads to the database (bulk upsert).
