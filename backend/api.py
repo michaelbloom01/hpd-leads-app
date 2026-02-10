@@ -41,7 +41,7 @@ import os
 _cors_origins_env = os.environ.get("CORS_ORIGINS", "")
 _allowed_origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()] if _cors_origins_env else []
 # Always allow localhost for dev
-_allowed_origins.extend(["http://localhost:5173", "http://localhost:3000"])
+_allowed_origins.extend(["http://localhost:5173", "http://localhost:3000", "http://localhost:3001", "http://localhost:3002"])
 
 app.add_middleware(
     CORSMiddleware,
