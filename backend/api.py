@@ -173,64 +173,71 @@ async def startup_load():
 
 
 async def _auto_compute_violations():
-    """Auto-compute violations data in background on first startup."""
+    """Auto-compute violations data in background on first startup.
+    Runs the heavy HPD API calls in a thread to avoid blocking the event loop."""
     import asyncio
     await asyncio.sleep(10)  # Wait for server to fully start
     try:
-        logger.info("Background: Starting violations computation...")
-        from src.ingest.hpd_violations import HPDViolationsClient, aggregate_violations_for_lead
-        import json as _json
-        
-        db = get_database()
-        rows, total = db.get_leads_filtered(min_portfolio=10, limit=5000, offset=0)
-        
-        if not rows:
-            logger.info("Background: No high-value leads for violations")
-            db.set_setting('violations_computed_at', datetime.now().isoformat())
-            return
-        
-        client = HPDViolationsClient()
-        
-        all_building_ids = []
-        lead_buildings = {}
-        lead_units = {}
-        
-        for row in rows:
-            lead_id = row['lead_id']
-            bids = _json.loads(row.get('building_ids') or '[]')
-            lead_buildings[lead_id] = bids
-            lead_units[lead_id] = row.get('total_units', 0) or 0
-            all_building_ids.extend(bids)
-        
-        logger.info(f"Background: Fetching violations for {len(all_building_ids)} buildings across {len(rows)} leads")
-        violations_data = client.fetch_violations_for_buildings(all_building_ids, batch_size=100)
-        
-        updated = 0
-        for lead_id, bids in lead_buildings.items():
-            agg = aggregate_violations_for_lead(bids, violations_data, lead_units.get(lead_id, 0))
-            if agg["violation_count"] > 0:
-                db.update_lead(lead_id, agg)
-                updated += 1
-        
-        # Update cache
-        global _leads_cache
-        for lead in _leads_cache:
-            if lead.lead_id in lead_buildings:
-                agg = aggregate_violations_for_lead(
-                    lead_buildings[lead.lead_id],
-                    violations_data,
-                    lead_units.get(lead.lead_id, 0)
-                )
-                lead.violation_count = agg["violation_count"]
-                lead.violation_class_a = agg["violation_class_a"]
-                lead.violation_class_b = agg["violation_class_b"]
-                lead.violation_class_c = agg["violation_class_c"]
-                lead.violations_per_unit = agg["violations_per_unit"]
-        
-        db.set_setting('violations_computed_at', datetime.now().isoformat())
-        logger.info(f"Background: Violations computed for {updated}/{len(rows)} leads")
+        # Run the synchronous violations computation in a thread pool
+        await asyncio.to_thread(_compute_violations_sync)
     except Exception as e:
         logger.error(f"Background violations computation failed: {e}")
+
+
+def _compute_violations_sync():
+    """Synchronous violations computation (runs in thread pool)."""
+    logger.info("Background: Starting violations computation...")
+    from src.ingest.hpd_violations import HPDViolationsClient, aggregate_violations_for_lead
+    import json as _json
+    
+    db = get_database()
+    rows, total = db.get_leads_filtered(min_portfolio=10, limit=5000, offset=0)
+    
+    if not rows:
+        logger.info("Background: No high-value leads for violations")
+        db.set_setting('violations_computed_at', datetime.now().isoformat())
+        return
+    
+    client = HPDViolationsClient()
+    
+    all_building_ids = []
+    lead_buildings = {}
+    lead_units = {}
+    
+    for row in rows:
+        lead_id = row['lead_id']
+        bids = _json.loads(row.get('building_ids') or '[]')
+        lead_buildings[lead_id] = bids
+        lead_units[lead_id] = row.get('total_units', 0) or 0
+        all_building_ids.extend(bids)
+    
+    logger.info(f"Background: Fetching violations for {len(all_building_ids)} buildings across {len(rows)} leads")
+    violations_data = client.fetch_violations_for_buildings(all_building_ids, batch_size=100)
+    
+    updated = 0
+    for lead_id, bids in lead_buildings.items():
+        agg = aggregate_violations_for_lead(bids, violations_data, lead_units.get(lead_id, 0))
+        if agg["violation_count"] > 0:
+            db.update_lead(lead_id, agg)
+            updated += 1
+    
+    # Update cache
+    global _leads_cache
+    for lead in _leads_cache:
+        if lead.lead_id in lead_buildings:
+            agg = aggregate_violations_for_lead(
+                lead_buildings[lead.lead_id],
+                violations_data,
+                lead_units.get(lead.lead_id, 0)
+            )
+            lead.violation_count = agg["violation_count"]
+            lead.violation_class_a = agg["violation_class_a"]
+            lead.violation_class_b = agg["violation_class_b"]
+            lead.violation_class_c = agg["violation_class_c"]
+            lead.violations_per_unit = agg["violations_per_unit"]
+    
+    db.set_setting('violations_computed_at', datetime.now().isoformat())
+    logger.info(f"Background: Violations computed for {updated}/{len(rows)} leads")
 
 
 async def _auto_start_enrichment():
