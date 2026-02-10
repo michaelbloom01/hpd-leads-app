@@ -868,10 +868,16 @@ class LeadsDatabase:
             'score', 'portfolio_size', 'total_units', 'estimated_annual_revenue',
             'violations_per_unit', 'agent_name', 'boro', 'enrichment_status',
             'outreach_status', 'pipeline_stage', 'priority_rank', 'company_name',
+            'units_per_bldg',
         }
         sort_col = sort_by if sort_by in ALLOWED_SORT_COLS else 'score'
+        # Handle derived sort columns
+        if sort_col == 'units_per_bldg':
+            sort_col_sql = "CASE WHEN portfolio_size > 0 THEN total_units * 1.0 / portfolio_size ELSE 0 END"
+        else:
+            sort_col_sql = sort_col
         sort_direction = 'ASC' if sort_dir.lower() == 'asc' else 'DESC'
-        order_sql = f"{sort_col} {sort_direction}"
+        order_sql = f"{sort_col_sql} {sort_direction}"
         # Secondary sort for stability
         if sort_col != 'score':
             order_sql += ", score DESC"

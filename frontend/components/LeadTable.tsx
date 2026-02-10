@@ -9,7 +9,7 @@ interface Props {
 // R4: Cold-start polling interval (ms)
 const HEALTH_POLL_INTERVAL = 5000;
 
-type SortField = 'agent_name' | 'portfolio_size' | 'total_units' | 'score' | 'boro' | 'enrichment_status' | 'estimated_annual_revenue' | 'violations_per_unit';
+type SortField = 'agent_name' | 'portfolio_size' | 'total_units' | 'units_per_bldg' | 'score' | 'boro' | 'enrichment_status' | 'estimated_annual_revenue' | 'violations_per_unit';
 type SortDir = 'asc' | 'desc';
 
 const BOROUGHS = ['MANHATTAN', 'BROOKLYN', 'QUEENS', 'BRONX', 'STATEN ISLAND'];
@@ -583,8 +583,8 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                 <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('total_units')}>
                   Units <SortIcon field="total_units" />
                 </th>
-                <th className="px-4 py-3 text-right" title="Average residential units per building">
-                  Units/Bldg
+                <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('units_per_bldg')} title="Average residential units per building">
+                  U/Bldg <SortIcon field="units_per_bldg" />
                 </th>
                 <th className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors text-right" onClick={() => handleSort('score')}
                   title="Lead quality score (0–100) based on portfolio size, building types, registration status, and data completeness. Higher = stronger acquisition target.">
