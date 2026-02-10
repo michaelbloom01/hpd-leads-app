@@ -14,6 +14,8 @@ import {
   getFollowUpsDue,
   refreshViolations,
   EnrichmentProgress,
+  EnrichmentGaps,
+  getEnrichmentGaps,
   checkHealth,
 } from '../services/api';
 
@@ -32,7 +34,8 @@ const PIPELINE_STAGES = [
   { key: 'closed', label: 'Closed', color: 'bg-emerald-600' },
 ];
 
-const formatCurrency = (amount: number): string => {
+const formatCurrency = (amount: number | undefined | null): string => {
+  if (amount == null || isNaN(amount)) return '—';
   if (amount >= 1_000_000) return `$${(amount / 1_000_000).toFixed(1)}m`;
   if (amount >= 1_000) return `$${(amount / 1_000).toFixed(0)}k`;
   return `$${amount.toFixed(0)}`;
@@ -49,6 +52,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
   const [startingEnrichment, setStartingEnrichment] = useState(false);
   const [refreshingViolations, setRefreshingViolations] = useState(false);
   const [dataStatus, setDataStatus] = useState<DataStatus | null>(null);
+  const [enrichmentGaps, setEnrichmentGaps] = useState<EnrichmentGaps | null>(null);
   const [backendStarting, setBackendStarting] = useState(false);
 
   const loadData = useCallback(async () => {
@@ -60,12 +64,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
         ]);
       };
 
-      const [leadsResult, statsResult, enrichResult, followUpsResult, dataStatusResult] = await Promise.allSettled([
+      const [leadsResult, statsResult, enrichResult, followUpsResult, dataStatusResult, gapsResult] = await Promise.allSettled([
         withTimeout(fetchLeads({ limit: 100, min_portfolio: 10 }), 15000),
         withTimeout(fetchStats(), 15000),
         withTimeout(getEnrichmentProgress(), 10000),
         withTimeout(getFollowUpsDue(), 10000),
         withTimeout(fetchDataStatus(), 10000),
+        withTimeout(getEnrichmentGaps(), 10000),
       ]);
       
       if (leadsResult.status === 'fulfilled') {
@@ -109,6 +114,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
 
       if (dataStatusResult.status === 'fulfilled') {
         setDataStatus(dataStatusResult.value);
+      }
+
+      if (gapsResult.status === 'fulfilled') {
+        setEnrichmentGaps(gapsResult.value);
       }
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
@@ -277,7 +286,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
       </div>
 
       {/* Key Metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-4">
           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Target Leads</p>
           <p className="text-2xl font-mono font-bold text-white">{highValueCount.toLocaleString()}</p>
@@ -311,6 +320,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
           <p className="text-2xl font-mono font-bold text-orange-400">{leadsWithViolations}</p>
           <p className="text-[10px] text-slate-600 mt-0.5">Open HPD violations</p>
         </div>
+        {enrichmentGaps && enrichmentGaps.unenriched > 0 && (
+          <div className="bg-slate-900/50 border border-amber-500/20 rounded-2xl p-4 col-span-2 md:col-span-1" title="Leads that have not been enriched with contact info yet">
+            <p className="text-[10px] font-bold text-amber-500 uppercase tracking-wider mb-1">Needs Enrichment</p>
+            <p className="text-2xl font-mono font-bold text-amber-400">{enrichmentGaps.unenriched.toLocaleString()}</p>
+            <p className="text-[10px] text-slate-600 mt-0.5">of {enrichmentGaps.total_leads.toLocaleString()} total</p>
+          </div>
+        )}
       </div>
 
       {/* Action Cards Row */}
@@ -376,7 +392,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                 >
                   <div>
                     <p className="text-white font-medium text-sm">{lead.company_name || lead.agent_name || lead.owner_name}</p>
-                    <p className="text-slate-500 text-xs">{lead.portfolio_size} bldgs • {lead.total_units.toLocaleString()} units</p>
+                    <p className="text-slate-500 text-xs">{lead.portfolio_size} bldgs • {(lead.total_units || 0).toLocaleString()} units</p>
                   </div>
                   <div className="flex items-center gap-1.5">
                     {lead.phone && <span className="p-1 bg-emerald-900/50 rounded text-emerald-400 text-[10px]">Phone</span>}
@@ -406,7 +422,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                 >
                   <div>
                     <p className="text-white font-medium text-sm">{lead.company_name || lead.agent_name || lead.owner_name}</p>
-                    <p className="text-slate-500 text-xs">{lead.portfolio_size} bldgs • {lead.total_units.toLocaleString()} units</p>
+                    <p className="text-slate-500 text-xs">{lead.portfolio_size} bldgs • {(lead.total_units || 0).toLocaleString()} units</p>
                   </div>
                   <div className="flex items-center gap-1.5">
                     {lead.phone && <span className="p-1 bg-emerald-900/50 rounded text-emerald-400 text-[10px]">Phone</span>}
@@ -455,7 +471,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                     )}
                   </td>
                   <td className="py-3 px-3 text-right font-mono text-sm text-blue-400 font-bold">{lead.portfolio_size}</td>
-                  <td className="py-3 px-3 text-right font-mono text-sm text-slate-300">{lead.total_units.toLocaleString()}</td>
+                  <td className="py-3 px-3 text-right font-mono text-sm text-slate-300">{(lead.total_units || 0).toLocaleString()}</td>
                   <td className="py-3 px-3 text-right font-mono text-sm text-emerald-400">
                     {lead.estimated_annual_revenue > 0 ? formatCurrency(lead.estimated_annual_revenue) : '—'}
                   </td>

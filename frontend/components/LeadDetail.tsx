@@ -1,6 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { toast } from 'react-hot-toast';
 import { ApiLead, updateLead, researchLead, addOutreachAttempt, enrichLeadContacts, generateAiSummary, getDueDiligence, CompanyResearch, OutreachAttempt, DOSInfo } from '../services/api';
+
+// Lazy-load map to avoid large initial bundle
+const PortfolioMap = lazy(() => import('./PortfolioMap'));
 
 const PIPELINE_STAGES = [
   { value: 'research', label: 'Research' },
@@ -24,7 +27,8 @@ const OUTREACH_STATUSES = [
 const OUTREACH_METHODS = ['phone', 'email', 'linkedin', 'in_person', 'other'];
 const OUTREACH_OUTCOMES = ['no_answer', 'left_voicemail', 'spoke_with_contact', 'sent_email', 'meeting_scheduled', 'not_interested', 'other'];
 
-const formatCurrency = (amount: number): string => {
+const formatCurrency = (amount: number | undefined | null): string => {
+  if (amount == null || isNaN(amount)) return '—';
   if (amount >= 1_000_000) return `$${(amount / 1_000_000).toFixed(1)}m`;
   if (amount >= 1_000) return `$${(amount / 1_000).toFixed(0)}k`;
   return `$${amount.toFixed(0)}`;
@@ -58,6 +62,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
   const [ddReport, setDdReport] = useState<{ report_markdown: string; comparables: any[] } | null>(null);
   const [isLoadingDD, setIsLoadingDD] = useState(false);
   const [buildingSearch, setBuildingSearch] = useState('');
+  const [showEmailMenu, setShowEmailMenu] = useState(false);
 
   useEffect(() => {
     setEnrichedLead(lead);
@@ -71,6 +76,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
     setDosInfo(null);
     setCompanyResearch(null);
     setActiveTab('overview');
+    setShowEmailMenu(false);
   }, [lead]);
 
   // === Handlers ===
@@ -195,8 +201,8 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
   ];
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-slate-900 border border-white/10 rounded-2xl max-w-3xl w-full max-h-[90vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-0 md:p-4" onClick={onClose}>
+      <div className="bg-slate-900 border border-white/10 md:rounded-2xl max-w-3xl w-full h-full md:h-auto md:max-h-[90vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
         
         {/* === STICKY HEADER === */}
         <div className="flex-shrink-0 border-b border-white/10">
@@ -225,13 +231,13 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
             <div className="flex items-center gap-3 ml-4">
               {/* Score with context */}
               <div className={`px-3 py-1 rounded-lg text-center ${
-                enrichedLead.score >= 60 ? 'bg-emerald-900/30' :
-                enrichedLead.score >= 40 ? 'bg-amber-900/30' : 'bg-slate-800'
-              }`} title={`Lead quality score (0–100): ${enrichedLead.score >= 60 ? 'Strong acquisition target' : enrichedLead.score >= 40 ? 'Moderate potential' : 'Lower priority'}\nBased on portfolio size, building types, registration status, and data completeness`}>
+                (enrichedLead.score || 0) >= 60 ? 'bg-emerald-900/30' :
+                (enrichedLead.score || 0) >= 40 ? 'bg-amber-900/30' : 'bg-slate-800'
+              }`} title={`Lead quality score (0–100): ${(enrichedLead.score || 0) >= 60 ? 'Strong acquisition target' : (enrichedLead.score || 0) >= 40 ? 'Moderate potential' : 'Lower priority'}\nBased on portfolio size, building types, registration status, and data completeness`}>
                 <div className={`text-2xl font-bold font-mono ${
-                  enrichedLead.score >= 60 ? 'text-emerald-400' :
-                  enrichedLead.score >= 40 ? 'text-amber-400' : 'text-slate-400'
-                }`}>{enrichedLead.score.toFixed(0)}</div>
+                  (enrichedLead.score || 0) >= 60 ? 'text-emerald-400' :
+                  (enrichedLead.score || 0) >= 40 ? 'text-amber-400' : 'text-slate-400'
+                }`}>{(enrichedLead.score || 0).toFixed(0)}</div>
                 <div className="text-[9px] text-slate-500 uppercase font-bold">Score</div>
               </div>
               {/* Revenue */}
@@ -258,10 +264,34 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               </a>
             )}
             {enrichedLead.email && (
-              <a href={`mailto:${enrichedLead.email}`} className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-500 transition-colors flex items-center gap-1">
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
-                Email
-              </a>
+              <div className="relative">
+                <button 
+                  onClick={(e) => { e.preventDefault(); setShowEmailMenu(!showEmailMenu); }}
+                  className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-500 transition-colors flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                  Email
+                  <svg className={`w-3 h-3 ml-0.5 transition-transform ${showEmailMenu ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"/></svg>
+                </button>
+                {showEmailMenu && (
+                <div className="absolute top-full left-0 mt-1 w-56 bg-slate-800 border border-white/10 rounded-lg shadow-xl z-50 py-1">
+                  <a href={`mailto:${enrichedLead.email}?subject=Property Management Services — ${enrichedLead.company_name || enrichedLead.agent_name || 'Introduction'}&body=Hi ${enrichedLead.primary_contact || 'there'},%0D%0A%0D%0AI noticed your portfolio of ${enrichedLead.portfolio_size} buildings across ${(enrichedLead.boros || [enrichedLead.boro]).join(', ')} and wanted to introduce our property management services.%0D%0A%0D%0AWould you have time for a brief call this week?%0D%0A%0D%0ABest regards`}
+                    onClick={() => { setShowEmailMenu(false); addOutreachAttempt(lead.lead_id, { method: 'email', outcome: 'sent_email', notes: 'Intro template sent' }).catch(() => {}); }}
+                    className="block px-4 py-2 text-xs text-slate-300 hover:bg-slate-700 transition-colors">
+                    Intro Template
+                  </a>
+                  <a href={`mailto:${enrichedLead.email}?subject=Following up — ${enrichedLead.company_name || enrichedLead.agent_name || ''}&body=Hi ${enrichedLead.primary_contact || 'there'},%0D%0A%0D%0AI wanted to follow up on my previous message regarding your ${enrichedLead.portfolio_size}-building portfolio.%0D%0A%0D%0AWe specialize in portfolios like yours in ${(enrichedLead.boros || [enrichedLead.boro]).join(' and ')} and believe we can add value.%0D%0A%0D%0AWould you be open to a brief conversation?%0D%0A%0D%0ABest regards`}
+                    onClick={() => { setShowEmailMenu(false); addOutreachAttempt(lead.lead_id, { method: 'email', outcome: 'sent_email', notes: 'Follow-up template sent' }).catch(() => {}); }}
+                    className="block px-4 py-2 text-xs text-slate-300 hover:bg-slate-700 transition-colors">
+                    Follow-Up Template
+                  </a>
+                  <a href={`mailto:${enrichedLead.email}`}
+                    onClick={() => setShowEmailMenu(false)}
+                    className="block px-4 py-2 text-xs text-slate-300 hover:bg-slate-700 transition-colors border-t border-white/5">
+                    Blank Email
+                  </a>
+                </div>
+                )}
+              </div>
             )}
             <button onClick={openWebsite} className="px-3 py-1.5 bg-purple-600 text-white text-xs font-bold rounded-lg hover:bg-purple-500 transition-colors">
               {enrichedLead.website ? 'Website' : 'Search'}
@@ -353,12 +383,12 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                     <div>
                       <div className="flex items-baseline gap-2">
                         <span className={`text-2xl font-bold font-mono ${
-                          enrichedLead.violations_per_unit > 1.0 ? 'text-rose-400' :
-                          enrichedLead.violations_per_unit > 0.3 ? 'text-amber-400' : 'text-white'
-                        }`}>{enrichedLead.violations_per_unit.toFixed(2)}</span>
+                          (enrichedLead.violations_per_unit || 0) > 1.0 ? 'text-rose-400' :
+                          (enrichedLead.violations_per_unit || 0) > 0.3 ? 'text-amber-400' : 'text-white'
+                        }`}>{(enrichedLead.violations_per_unit || 0).toFixed(2)}</span>
                         <span className="text-xs text-slate-500">per unit</span>
                       </div>
-                      <div className="text-sm text-slate-500 mt-1 font-mono">{enrichedLead.violation_count.toLocaleString()} total violations</div>
+                      <div className="text-sm text-slate-500 mt-1 font-mono">{(enrichedLead.violation_count || 0).toLocaleString()} total violations</div>
                       <div className="flex flex-col gap-1 mt-2 text-xs">
                         <div className="flex gap-3">
                           <span className="text-slate-400" title="Non-hazardous conditions">A: {enrichedLead.violation_class_a}</span>
@@ -377,15 +407,15 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               {/* Portfolio Summary */}
               <div className="grid grid-cols-3 gap-3">
                 <div className="bg-slate-800/50 rounded-xl p-3 text-center" title="Lead quality score (0–100) based on portfolio size, building mix, registration status, and data completeness">
-                  <div className={`text-2xl font-bold font-mono ${enrichedLead.score >= 60 ? 'text-emerald-400' : enrichedLead.score >= 40 ? 'text-amber-400' : 'text-slate-400'}`}>{enrichedLead.score.toFixed(1)}</div>
+                  <div className={`text-2xl font-bold font-mono ${(enrichedLead.score || 0) >= 60 ? 'text-emerald-400' : (enrichedLead.score || 0) >= 40 ? 'text-amber-400' : 'text-slate-400'}`}>{(enrichedLead.score || 0).toFixed(1)}</div>
                   <div className="text-[10px] text-slate-500 mt-0.5 uppercase">Lead Score</div>
                 </div>
                 <div className="bg-slate-800/50 rounded-xl p-3 text-center" title="Total number of buildings managed by this entity per HPD registration records">
-                  <div className="text-2xl font-bold font-mono text-blue-400">{enrichedLead.portfolio_size}</div>
+                  <div className="text-2xl font-bold font-mono text-blue-400">{enrichedLead.portfolio_size || 0}</div>
                   <div className="text-[10px] text-slate-500 mt-0.5 uppercase">Buildings</div>
                 </div>
                 <div className="bg-slate-800/50 rounded-xl p-3 text-center" title="Total residential units across all buildings in this portfolio">
-                  <div className="text-2xl font-bold font-mono text-purple-400">{enrichedLead.total_units.toLocaleString()}</div>
+                  <div className="text-2xl font-bold font-mono text-purple-400">{(enrichedLead.total_units || 0).toLocaleString()}</div>
                   <div className="text-[10px] text-slate-500 mt-0.5 uppercase">Res. Units</div>
                 </div>
               </div>
@@ -452,17 +482,13 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                 </details>
               )}
 
-              {/* Map - only show if API key is configured */}
-              {enrichedLead.buildings && enrichedLead.buildings.length > 0 && import.meta.env.VITE_GOOGLE_MAPS_KEY && (
+              {/* Interactive Map (OpenStreetMap) */}
+              {enrichedLead.buildings && enrichedLead.buildings.length > 0 && (
                 <div className="bg-slate-800/30 rounded-xl p-4">
                   <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">Portfolio Footprint</h3>
-                  <img
-                    src={`https://maps.googleapis.com/maps/api/staticmap?size=600x250&scale=2&maptype=roadmap&center=40.7128,-73.95&zoom=11${
-                      enrichedLead.buildings.slice(0, 20).map((b: string) => `&markers=size:tiny|color:0x3b82f6|${encodeURIComponent(b + ', New York, NY')}`).join('')
-                    }&key=${import.meta.env.VITE_GOOGLE_MAPS_KEY}`}
-                    alt="Portfolio map" className="w-full rounded-lg"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                  />
+                  <Suspense fallback={<div className="h-[250px] bg-slate-800 rounded-lg animate-pulse" />}>
+                    <PortfolioMap buildings={enrichedLead.buildings} boro={enrichedLead.boro} boros={enrichedLead.boros} />
+                  </Suspense>
                 </div>
               )}
             </>
@@ -710,15 +736,11 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
               <input type="text" value={buildingSearch} onChange={e => setBuildingSearch(e.target.value)} placeholder="Search buildings..."
                 className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-300" />
               
-              {/* Map - only show if API key is configured */}
-              {enrichedLead.buildings && enrichedLead.buildings.length > 0 && import.meta.env.VITE_GOOGLE_MAPS_KEY && (
-                <img
-                  src={`https://maps.googleapis.com/maps/api/staticmap?size=600x250&scale=2&maptype=roadmap&center=40.7128,-73.95&zoom=11${
-                    enrichedLead.buildings.slice(0, 25).map((b: string) => `&markers=size:tiny|color:0x3b82f6|${encodeURIComponent(b + ', New York, NY')}`).join('')
-                  }&key=${import.meta.env.VITE_GOOGLE_MAPS_KEY}`}
-                  alt="Portfolio map" className="w-full rounded-lg"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                />
+              {/* Interactive Map (OpenStreetMap) */}
+              {enrichedLead.buildings && enrichedLead.buildings.length > 0 && (
+                <Suspense fallback={<div className="h-[250px] bg-slate-800 rounded-lg animate-pulse" />}>
+                  <PortfolioMap buildings={enrichedLead.buildings} boro={enrichedLead.boro} boros={enrichedLead.boros} />
+                </Suspense>
               )}
 
               {/* Building List */}
@@ -750,9 +772,82 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
 
               {ddReport && (
                 <div className="space-y-4">
-                  <div className="flex justify-end">
+                  {/* Key Risks Summary */}
+                  <div className="bg-gradient-to-r from-rose-900/20 to-amber-900/20 border border-rose-500/20 rounded-xl p-4">
+                    <h3 className="text-xs font-bold text-rose-400 uppercase tracking-wider mb-2">Key Risks</h3>
+                    <div className="space-y-1.5 text-sm">
+                      {enrichedLead.violations_per_unit > 1.0 && (
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-rose-500" />
+                          <span className="text-slate-300">High violation density ({enrichedLead.violations_per_unit.toFixed(2)}/unit) — may indicate deferred maintenance</span>
+                        </div>
+                      )}
+                      {enrichedLead.violation_class_c > 10 && (
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-rose-500" />
+                          <span className="text-slate-300">{enrichedLead.violation_class_c} Class C (immediately hazardous) violations</span>
+                        </div>
+                      )}
+                      {!enrichedLead.phone && !enrichedLead.email && (
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-amber-500" />
+                          <span className="text-slate-300">No direct contact info found — may be difficult to reach</span>
+                        </div>
+                      )}
+                      {enrichedLead.portfolio_size <= 5 && (
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-amber-500" />
+                          <span className="text-slate-300">Small portfolio ({enrichedLead.portfolio_size} buildings) — lower revenue potential</span>
+                        </div>
+                      )}
+                      {enrichedLead.violations_per_unit <= 1.0 && enrichedLead.violation_class_c <= 10 && (enrichedLead.phone || enrichedLead.email) && enrichedLead.portfolio_size > 5 && (
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                          <span className="text-slate-300">No major red flags identified</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2">
                     <button onClick={() => { navigator.clipboard.writeText(ddReport.report_markdown); toast.success('Copied to clipboard'); }}
                       className="px-3 py-1 bg-slate-700 text-slate-300 text-xs rounded-lg hover:bg-slate-600">Copy Markdown</button>
+                    <button onClick={() => {
+                      const printWindow = window.open('', '_blank');
+                      if (printWindow) {
+                        printWindow.document.write(`<html><head><title>DD Report - ${enrichedLead.company_name || enrichedLead.agent_name}</title>
+                          <style>body{font-family:system-ui,sans-serif;max-width:800px;margin:40px auto;padding:0 20px;color:#1e293b}
+                          h1{font-size:24px;border-bottom:2px solid #e2e8f0;padding-bottom:8px}
+                          h2{font-size:18px;color:#3b82f6;margin-top:24px}
+                          h3{font-size:14px;margin-top:16px}
+                          li{margin:4px 0}p{line-height:1.6}
+                          table{width:100%;border-collapse:collapse;margin:16px 0}
+                          th,td{border:1px solid #e2e8f0;padding:6px 10px;text-align:left;font-size:13px}
+                          th{background:#f8fafc;font-weight:600}
+                          @media print{body{margin:20px}}</style></head><body>`);
+                        printWindow.document.write(ddReport.report_markdown
+                          .replace(/^# (.*)/gm, '<h1>$1</h1>')
+                          .replace(/^## (.*)/gm, '<h2>$1</h2>')
+                          .replace(/^### (.*)/gm, '<h3>$1</h3>')
+                          .replace(/^- (.*)/gm, '<li>$1</li>')
+                          .replace(/\n\n/g, '<p></p>')
+                          .replace(/\n/g, '<br>'));
+                        if (ddReport.comparables?.length > 0) {
+                          printWindow.document.write('<h2>Comparables</h2><table><tr><th>Name</th><th>Score</th><th>Buildings</th><th>Revenue</th></tr>');
+                          ddReport.comparables.forEach((c: any) => {
+                            printWindow.document.write(`<tr><td>${c.name || c.lead_name || ''}</td><td>${c.score?.toFixed(1) || ''}</td><td>${c.portfolio_size || c.buildings || ''}</td><td>${c.estimated_annual_revenue ? formatCurrency(c.estimated_annual_revenue) : '—'}</td></tr>`);
+                          });
+                          printWindow.document.write('</table>');
+                        }
+                        printWindow.document.write('</body></html>');
+                        printWindow.document.close();
+                        printWindow.print();
+                      }
+                    }}
+                      className="px-3 py-1 bg-indigo-700 text-white text-xs rounded-lg hover:bg-indigo-600 flex items-center gap-1">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+                      Print / PDF
+                    </button>
                   </div>
                   <div className="prose prose-invert prose-sm max-w-none">
                     {ddReport.report_markdown.split('\n').map((line, i) => {
@@ -767,21 +862,28 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
                   {ddReport.comparables?.length > 0 && (
                     <div className="border-t border-slate-800 pt-3">
                       <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Comparables</h3>
-                      <table className="w-full text-sm">
-                        <thead><tr className="text-slate-500 text-xs uppercase">
-                          <th className="text-left py-1 px-2">Name</th><th className="text-right py-1 px-2">Score</th><th className="text-right py-1 px-2">Buildings</th><th className="text-right py-1 px-2">Revenue</th>
-                        </tr></thead>
-                        <tbody className="divide-y divide-slate-800">
-                          {ddReport.comparables.map((comp: any, i: number) => (
-                            <tr key={i} className="text-slate-300">
-                              <td className="py-1 px-2">{comp.name || comp.lead_name}</td>
-                              <td className="py-1 px-2 text-right font-mono">{comp.score?.toFixed(1)}</td>
-                              <td className="py-1 px-2 text-right font-mono">{comp.portfolio_size || comp.buildings}</td>
-                              <td className="py-1 px-2 text-right font-mono text-emerald-400">{comp.estimated_annual_revenue ? formatCurrency(comp.estimated_annual_revenue) : '---'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead><tr className="text-slate-500 text-xs uppercase">
+                            <th className="text-left py-1 px-2">Name</th><th className="text-right py-1 px-2">Score</th><th className="text-right py-1 px-2">Buildings</th><th className="text-right py-1 px-2">Units</th><th className="text-right py-1 px-2">Revenue</th>
+                          </tr></thead>
+                          <tbody className="divide-y divide-slate-800">
+                            {ddReport.comparables.map((comp: any, i: number) => (
+                              <tr key={i} className="text-slate-300 hover:bg-slate-800/30">
+                                <td className="py-1.5 px-2">{comp.name || comp.lead_name}</td>
+                                <td className="py-1.5 px-2 text-right font-mono">
+                                  <span className={comp.score >= 60 ? 'text-emerald-400' : comp.score >= 40 ? 'text-amber-400' : 'text-slate-400'}>
+                                    {comp.score?.toFixed(1)}
+                                  </span>
+                                </td>
+                                <td className="py-1.5 px-2 text-right font-mono">{comp.portfolio_size || comp.buildings}</td>
+                                <td className="py-1.5 px-2 text-right font-mono text-blue-400">{comp.total_units?.toLocaleString() || '—'}</td>
+                                <td className="py-1.5 px-2 text-right font-mono text-emerald-400">{comp.estimated_annual_revenue ? formatCurrency(comp.estimated_annual_revenue) : '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   )}
                 </div>

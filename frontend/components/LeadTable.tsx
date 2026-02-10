@@ -15,7 +15,8 @@ type SortDir = 'asc' | 'desc';
 const BOROUGHS = ['MANHATTAN', 'BROOKLYN', 'QUEENS', 'BRONX', 'STATEN ISLAND'];
 const BOROUGH_SHORT: Record<string, string> = { 'MANHATTAN': 'Man', 'BROOKLYN': 'Bklyn', 'QUEENS': 'Qns', 'BRONX': 'Bronx', 'STATEN ISLAND': 'SI' };
 
-const formatCurrency = (amount: number): string => {
+const formatCurrency = (amount: number | undefined | null): string => {
+  if (amount == null || isNaN(amount)) return '—';
   if (amount >= 1_000_000) return `$${(amount / 1_000_000).toFixed(1)}m`;
   if (amount >= 1_000) return `$${(amount / 1_000).toFixed(0)}k`;
   return `$${amount.toFixed(0)}`;
@@ -72,7 +73,16 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     filterHasWebsite === true ? 'yes' : '',
   ].filter(Boolean).length;
 
-  // Fetch leads from server with current filters
+  // Debounced search term for server requests
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  
+  // Debounce search input (300ms)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchTerm), 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  // Fetch leads from server with current filters, sort, and search
   const loadLeads = useCallback(async (currentPage: number = 0) => {
     setLoading(true);
     setError(null);
@@ -80,6 +90,8 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       const params: Record<string, any> = {
         limit: pageSize,
         offset: currentPage * pageSize,
+        sort_by: sortField === 'agent_name' ? 'company_name' : sortField,
+        sort_dir: sortDir,
       };
       
       const minScore = parseFloat(filterMinScore);
@@ -94,7 +106,8 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       if (filterHasWebsite !== null) params.has_website = filterHasWebsite;
       if (filterEntityType) params.entity_type = filterEntityType;
       if (filterOutreachStatus) params.outreach_status = filterOutreachStatus;
-      if (filterPipelineStage) (params as any).pipeline_stage = filterPipelineStage;
+      if (filterPipelineStage) params.pipeline_stage = filterPipelineStage;
+      if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
       
       const minUnits = parseInt(filterMinUnits);
       if (!isNaN(minUnits) && minUnits > 0) params.min_units = minUnits;
@@ -108,7 +121,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     } finally {
       setLoading(false);
     }
-  }, [filterMinScore, filterMinPortfolio, filterBoroughs, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterPipelineStage, filterMinUnits, pageSize]);
+  }, [filterMinScore, filterMinPortfolio, filterBoroughs, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterPipelineStage, filterMinUnits, pageSize, sortField, sortDir, debouncedSearch]);
 
   // R4: Health check on initial mount — show cold-start banner if backend is booting
   useEffect(() => {
@@ -157,63 +170,8 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
 
   const totalPages = Math.ceil(totalLeads / pageSize);
 
-  // Client-side search + pipeline filter
-  const filteredLeads = leads.filter(lead => {
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      const matchesSearch = (lead.agent_name || '').toLowerCase().includes(term) ||
-        (lead.owner_name || '').toLowerCase().includes(term) ||
-        (lead.company_name || '').toLowerCase().includes(term) ||
-        (lead.primary_contact || '').toLowerCase().includes(term) ||
-        (lead.address || '').toLowerCase().includes(term);
-      if (!matchesSearch) return false;
-    }
-    if (filterPipelineStage && (lead.pipeline_stage || 'research') !== filterPipelineStage) return false;
-    return true;
-  });
-
-  // Client-side sorting
-  const displayLeads = [...filteredLeads].sort((a, b) => {
-    let aVal: string | number = '';
-    let bVal: string | number = '';
-    switch (sortField) {
-      case 'agent_name':
-        aVal = (a.company_name || a.agent_name || a.owner_name || '').toLowerCase();
-        bVal = (b.company_name || b.agent_name || b.owner_name || '').toLowerCase();
-        break;
-      case 'portfolio_size':
-        aVal = a.portfolio_size;
-        bVal = b.portfolio_size;
-        break;
-      case 'total_units':
-        aVal = a.total_units;
-        bVal = b.total_units;
-        break;
-      case 'score':
-        aVal = a.score;
-        bVal = b.score;
-        break;
-      case 'boro':
-        aVal = (a.boros?.[0] || a.boro || '').toLowerCase();
-        bVal = (b.boros?.[0] || b.boro || '').toLowerCase();
-        break;
-      case 'enrichment_status':
-        aVal = a.enrichment_status || '';
-        bVal = b.enrichment_status || '';
-        break;
-      case 'estimated_annual_revenue':
-        aVal = a.estimated_annual_revenue || 0;
-        bVal = b.estimated_annual_revenue || 0;
-        break;
-      case 'violations_per_unit':
-        aVal = a.violations_per_unit || 0;
-        bVal = b.violations_per_unit || 0;
-        break;
-    }
-    if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
-    if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
-    return 0;
-  });
+  // Server handles filtering, sorting, and search — display leads directly
+  const displayLeads = leads;
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -222,6 +180,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       setSortField(field);
       setSortDir('desc');
     }
+    setPage(0); // Reset to first page on sort change
   };
 
   const toggleSelect = (id: string) => {
@@ -374,10 +333,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   return (
     <div className="space-y-4">
       {/* Filter Bar */}
-      <div className="bg-slate-900/60 border border-white/5 rounded-xl p-4">
+      <div className="bg-slate-900/60 border border-white/5 rounded-xl p-3 md:p-4">
         {/* Primary Filters Row */}
-        <div className="flex flex-wrap gap-3 items-center">
-          <div className="flex-1 min-w-[200px]">
+        <div className="flex flex-wrap gap-2 md:gap-3 items-center">
+          <div className="flex-1 min-w-[160px] md:min-w-[200px]">
             <input type="text" placeholder="Search name, company, address..."
               className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-lg text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
               value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
@@ -480,9 +439,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
         </div>
       </div>
 
-      {/* Data Table */}
+      {/* Data Table — desktop table, mobile cards */}
       <div className="bg-slate-900/40 border border-white/5 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
+        {/* Desktop Table */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left">
             <thead>
               <tr className="bg-slate-950/80 text-slate-500 text-xs uppercase tracking-wider border-b border-white/5">
@@ -562,9 +522,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-1">
-                      {(lead.boros?.length > 0 ? lead.boros : [lead.boro]).map((b, i) => (
+                      {(lead.boros?.length > 0 ? lead.boros : [lead.boro]).filter(Boolean).map((b, i) => (
                         <span key={i} className="px-1.5 py-0.5 bg-slate-800 text-slate-400 text-[10px] rounded capitalize">
-                          {b.charAt(0) + b.slice(1).toLowerCase()}
+                          {b ? b.charAt(0) + b.slice(1).toLowerCase() : ''}
                         </span>
                       ))}
                     </div>
@@ -612,21 +572,21 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                     <div className="flex gap-1.5">
                       {lead.phone && (
-                        <a href={`tel:${lead.phone}`} title={`Call: ${lead.phone}`} className="p-1 hover:bg-emerald-900/50 rounded transition-colors">
+                        <a href={`tel:${lead.phone}`} title={`Call: ${lead.phone}`} className="p-1.5 hover:bg-emerald-900/50 rounded transition-colors">
                           <svg className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
                           </svg>
                         </a>
                       )}
                       {lead.email && (
-                        <a href={`mailto:${lead.email}`} title={`Email: ${lead.email}`} className="p-1 hover:bg-blue-900/50 rounded transition-colors">
+                        <a href={`mailto:${lead.email}`} title={`Email: ${lead.email}`} className="p-1.5 hover:bg-blue-900/50 rounded transition-colors">
                           <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
                           </svg>
                         </a>
                       )}
                       {lead.website && (
-                        <a href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`} target="_blank" rel="noopener noreferrer" title={`Website: ${lead.website}`} className="p-1 hover:bg-purple-900/50 rounded transition-colors">
+                        <a href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`} target="_blank" rel="noopener noreferrer" title={`Website: ${lead.website}`} className="p-1.5 hover:bg-purple-900/50 rounded transition-colors">
                           <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>
                           </svg>
@@ -637,7 +597,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-col gap-1">
-                      {/* Data quality: labeled micro-indicators */}
                       <div className="flex items-center gap-1.5" title={`Contact: ${lead.phone || lead.email ? 'Found' : 'Missing'} • Website: ${lead.website ? 'Found' : 'Missing'} • Research: ${lead.enrichment_status}`}>
                         <span className={`text-[9px] font-medium ${lead.phone || lead.email ? 'text-emerald-400' : 'text-slate-700'}`}>
                           {lead.phone || lead.email ? '● Contact' : '○ Contact'}
@@ -661,6 +620,90 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
               })}
             </tbody>
           </table>
+        </div>
+
+        {/* Empty State */}
+        {displayLeads.length === 0 && !loading && (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <svg className="w-12 h-12 text-slate-700 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            <p className="text-slate-400 text-sm font-medium">No leads match your filters</p>
+            <p className="text-slate-600 text-xs mt-1">Try adjusting your search or filter criteria</p>
+            <button onClick={clearFilters} className="mt-3 px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-medium transition-colors">
+              Clear All Filters
+            </button>
+          </div>
+        )}
+
+        {/* Mobile Card View */}
+        <div className="md:hidden divide-y divide-white/5">
+          {displayLeads.map((lead) => (
+            <div
+              key={lead.lead_id}
+              className="p-4 active:bg-slate-800/50 transition-colors cursor-pointer"
+              onClick={() => onSelectLead(lead)}
+            >
+              <div className="flex justify-between items-start mb-2">
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-slate-200 text-sm truncate">{lead.company_name || lead.agent_name || lead.owner_name}</div>
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
+                      lead.entity_type === 'company' ? 'bg-blue-900/40 text-blue-400' :
+                      lead.entity_type === 'individual_agent' ? 'bg-amber-900/40 text-amber-400' :
+                      lead.entity_type === 'owner_operator' ? 'bg-purple-900/40 text-purple-400' :
+                      'bg-slate-800 text-slate-600'
+                    }`}>
+                      {lead.entity_type === 'company' ? 'Company' : 
+                       lead.entity_type === 'individual_agent' ? 'Individual' : 
+                       lead.entity_type === 'owner_operator' ? 'Owner-Op' : 'Unknown'}
+                    </span>
+                    {(lead.boros?.length > 0 ? lead.boros : [lead.boro]).filter(Boolean).slice(0, 2).map((b, i) => (
+                      <span key={i} className="px-1 py-0.5 bg-slate-800 text-slate-400 text-[9px] rounded capitalize">
+                        {b ? b.charAt(0) + b.slice(1).toLowerCase() : ''}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <span className={`font-mono text-lg font-bold ${scoreColor(lead.score)}`}>
+                  {lead.score.toFixed(0)}
+                </span>
+              </div>
+              <div className="flex items-center gap-4 text-xs">
+                <span className="text-slate-400"><span className="font-mono text-slate-300">{lead.portfolio_size}</span> bldgs</span>
+                <span className="text-slate-400"><span className="font-mono text-blue-400">{lead.total_units.toLocaleString()}</span> units</span>
+                {lead.estimated_annual_revenue > 0 && (
+                  <span className="font-mono text-emerald-400">{formatCurrency(lead.estimated_annual_revenue)}</span>
+                )}
+                {lead.violations_per_unit > 0 && (
+                  <span className={`font-mono ${lead.violations_per_unit > 1.0 ? 'text-rose-400' : 'text-amber-400'}`}>
+                    {lead.violations_per_unit.toFixed(2)} v/u
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 mt-2" onClick={(e) => e.stopPropagation()}>
+                {lead.phone && (
+                  <a href={`tel:${lead.phone}`} className="p-2 bg-emerald-900/30 rounded-lg">
+                    <svg className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
+                    </svg>
+                  </a>
+                )}
+                {lead.email && (
+                  <a href={`mailto:${lead.email}`} className="p-2 bg-blue-900/30 rounded-lg">
+                    <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                    </svg>
+                  </a>
+                )}
+                {lead.pipeline_stage && lead.pipeline_stage !== 'research' && (
+                  <span className="px-2 py-1 text-[10px] rounded bg-blue-900/30 text-blue-400 ml-auto">
+                    {lead.pipeline_stage.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
         
         {/* Pagination */}

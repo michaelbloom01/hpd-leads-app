@@ -98,7 +98,7 @@ const App: React.FC = () => {
       <div className="flex-1 flex flex-col min-w-0">
         <Header />
         
-        <main className="flex-1 overflow-y-auto p-6 lg:p-12">
+        <main className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-12">
           <div className="max-w-[1600px] mx-auto space-y-12">
             <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
               <div className="space-y-2">

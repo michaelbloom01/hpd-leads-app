@@ -301,6 +301,10 @@ export async function fetchLeads(params?: {
   entity_type?: string;
   enrichment_status?: string;
   outreach_status?: string;
+  pipeline_stage?: string;
+  search?: string;
+  sort_by?: string;
+  sort_dir?: string;
   min_units?: number;
   limit?: number;
   offset?: number;
@@ -317,6 +321,10 @@ export async function fetchLeads(params?: {
     if (params.entity_type) searchParams.set('entity_type', params.entity_type);
     if (params.enrichment_status) searchParams.set('enrichment_status', params.enrichment_status);
     if (params.outreach_status) searchParams.set('outreach_status', params.outreach_status);
+    if (params.pipeline_stage) searchParams.set('pipeline_stage', params.pipeline_stage);
+    if (params.search) searchParams.set('search', params.search);
+    if (params.sort_by) searchParams.set('sort_by', params.sort_by);
+    if (params.sort_dir) searchParams.set('sort_dir', params.sort_dir);
     if (params.min_units !== undefined) searchParams.set('min_units', params.min_units.toString());
     if (params.limit !== undefined) searchParams.set('limit', params.limit.toString());
     if (params.offset !== undefined) searchParams.set('offset', params.offset.toString());
@@ -654,5 +662,20 @@ export async function rescoreLeads(): Promise<{ status: string; leads_rescored: 
 export async function checkForUpdates(): Promise<{ status: string; alerts_created: number }> {
   const response = await fetchWithRetry(`${API_BASE_URL}/api/refresh/check-updates`, { method: 'POST' });
   if (!response.ok) throw new Error(`Failed to check for updates: ${response.statusText}`);
+  return response.json();
+}
+
+/**
+ * Get enrichment gap stats (1D)
+ */
+export interface EnrichmentGaps {
+  total_leads: number;
+  unenriched: number;
+  breakdown: Record<string, number>;
+}
+
+export async function getEnrichmentGaps(): Promise<EnrichmentGaps> {
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/enrichment-gaps`);
+  if (!response.ok) throw new Error(`Failed to get enrichment gaps: ${response.statusText}`);
   return response.json();
 }

@@ -761,6 +761,10 @@ class LeadsDatabase:
         min_units: Optional[int] = None,
         enrichment_status: Optional[str] = None,
         outreach_status: Optional[str] = None,
+        pipeline_stage: Optional[str] = None,
+        search: Optional[str] = None,
+        sort_by: str = 'score',
+        sort_dir: str = 'desc',
         limit: int = 50,
         offset: int = 0,
     ) -> tuple:
@@ -815,8 +819,34 @@ class LeadsDatabase:
         if outreach_status is not None:
             where_clauses.append("outreach_status = ?")
             params.append(outreach_status)
+        if pipeline_stage is not None:
+            where_clauses.append("(pipeline_stage = ? OR (? = 'research' AND (pipeline_stage IS NULL OR pipeline_stage = '')))")
+            params.extend([pipeline_stage, pipeline_stage])
+        
+        # 2B: Full-text search across name/company/address fields
+        if search is not None and search.strip():
+            search_term = f"%{search.strip()}%"
+            where_clauses.append(
+                "(agent_name LIKE ? COLLATE NOCASE OR owner_name LIKE ? COLLATE NOCASE "
+                "OR company_name LIKE ? COLLATE NOCASE OR primary_contact LIKE ? COLLATE NOCASE "
+                "OR address LIKE ? COLLATE NOCASE)"
+            )
+            params.extend([search_term] * 5)
         
         where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+        
+        # 2A: Server-side sorting with validated column names
+        ALLOWED_SORT_COLS = {
+            'score', 'portfolio_size', 'total_units', 'estimated_annual_revenue',
+            'violations_per_unit', 'agent_name', 'boro', 'enrichment_status',
+            'outreach_status', 'pipeline_stage', 'priority_rank', 'company_name',
+        }
+        sort_col = sort_by if sort_by in ALLOWED_SORT_COLS else 'score'
+        sort_direction = 'ASC' if sort_dir.lower() == 'asc' else 'DESC'
+        order_sql = f"{sort_col} {sort_direction}"
+        # Secondary sort for stability
+        if sort_col != 'score':
+            order_sql += ", score DESC"
         
         with self._get_connection() as conn:
             # Get total count
@@ -827,7 +857,7 @@ class LeadsDatabase:
             
             # Get paginated results
             rows = conn.execute(
-                f"SELECT * FROM leads WHERE {where_sql} ORDER BY score DESC LIMIT ? OFFSET ?",
+                f"SELECT * FROM leads WHERE {where_sql} ORDER BY {order_sql} LIMIT ? OFFSET ?",
                 params + [limit, offset]
             ).fetchall()
             

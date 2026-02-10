@@ -136,6 +136,17 @@ async def _startup_load_inner():
     """Inner startup logic — separated so startup_load can catch all errors."""
     global _leads_cache, _last_refresh
     
+    # 1B: Run a database backup on startup (non-blocking, best-effort)
+    try:
+        from scripts.backup_db import backup_database, DB_PATH
+        if DB_PATH.exists():
+            backup_path = backup_database(max_backups=7)
+            logger.info(f"Startup: Database backed up to {backup_path}")
+        else:
+            logger.info("Startup: No database file yet — skipping backup")
+    except Exception as e:
+        logger.warning(f"Startup: Backup failed (non-fatal): {e}")
+    
     # R7: Verify Socrata endpoints are still valid
     _ping_socrata_endpoints()
     
@@ -718,8 +729,12 @@ async def get_leads(
     entity_type: Optional[str] = Query(None, description="Filter by entity type (company, individual_agent, owner_operator)"),
     enrichment_status: Optional[str] = Query(None, description="Filter by enrichment status"),
     outreach_status: Optional[str] = Query(None, description="Filter by outreach status"),
+    pipeline_stage: Optional[str] = Query(None, description="Filter by pipeline stage"),
+    search: Optional[str] = Query(None, description="Full-text search across name, company, address"),
+    sort_by: str = Query('score', description="Sort column"),
+    sort_dir: str = Query('desc', description="Sort direction (asc/desc)"),
     min_units: Optional[int] = Query(None, description="Minimum total residential units"),
-    limit: int = Query(50, le=1000, description="Max results to return"),
+    limit: int = Query(50, ge=1, le=1000, description="Max results to return"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
 ):
     """
@@ -732,6 +747,8 @@ async def get_leads(
         has_phone=has_phone, has_email=has_email, has_website=has_website,
         entity_type=entity_type, min_units=min_units,
         enrichment_status=enrichment_status, outreach_status=outreach_status,
+        pipeline_stage=pipeline_stage, search=search,
+        sort_by=sort_by, sort_dir=sort_dir,
         limit=limit, offset=offset,
     )
     
@@ -743,6 +760,38 @@ async def get_leads(
         offset=offset,
         limit=limit,
     )
+
+
+@app.get("/api/enrichment-gaps")
+async def get_enrichment_gaps():
+    """1D: Return counts of unenriched leads broken down by enrichment status."""
+    db = get_database()
+    with db._get_connection() as conn:
+        rows = conn.execute(
+            "SELECT enrichment_status, COUNT(*) as cnt FROM leads GROUP BY enrichment_status"
+        ).fetchall()
+        breakdown = {r['enrichment_status'] or 'none': r['cnt'] for r in rows}
+        total = sum(breakdown.values())
+        unenriched = breakdown.get('none', 0) + breakdown.get('pending', 0)
+        return {
+            "total_leads": total,
+            "unenriched": unenriched,
+            "breakdown": breakdown,
+        }
+
+
+@app.post("/api/backup")
+async def trigger_backup():
+    """Trigger a manual database backup."""
+    try:
+        from scripts.backup_db import backup_database, DB_PATH
+        if not DB_PATH.exists():
+            raise HTTPException(status_code=404, detail="No database file found")
+        backup_path = backup_database(max_backups=7)
+        return {"status": "ok", "backup_path": str(backup_path)}
+    except Exception as e:
+        logger.error(f"Backup failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/leads/{lead_id}", response_model=LeadResponse)
