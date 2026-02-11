@@ -59,7 +59,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   const [pipelineStage, setPipelineStage] = useState(lead.pipeline_stage || 'research');
   const [priorityRank, setPriorityRank] = useState(lead.priority_rank || 0);
   const [nextFollowUp, setNextFollowUp] = useState(lead.next_follow_up || '');
-  const [ddReport, setDdReport] = useState<{ report_markdown: string; comparables: any[] } | null>(null);
+  const [ddReport, setDdReport] = useState<{ report_markdown: string; comparables: Record<string, unknown>[] } | null>(null);
   const [isLoadingDD, setIsLoadingDD] = useState(false);
   const [buildingSearch, setBuildingSearch] = useState('');
   const [showEmailMenu, setShowEmailMenu] = useState(false);

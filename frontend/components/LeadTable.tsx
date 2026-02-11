@@ -99,7 +99,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     setLoading(true);
     setError(null);
     try {
-      const params: Record<string, any> = {
+      const params: Record<string, string | number | boolean> = {
         limit: pageSize,
         offset: currentPage * pageSize,
         sort_by: sortField === 'agent_name' ? 'company_name' : sortField,
@@ -319,7 +319,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     if (searchTerm.trim()) params.set('search', searchTerm.trim());
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/export/csv?${params.toString()}`);
+      const { getAuthHeaders } = await import('../services/auth');
+      const response = await fetch(`${API_BASE_URL}/api/export/csv?${params.toString()}`, {
+        headers: getAuthHeaders(),
+      });
       if (!response.ok) throw new Error('Export failed');
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);

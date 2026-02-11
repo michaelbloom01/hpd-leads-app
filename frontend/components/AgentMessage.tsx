@@ -7,6 +7,7 @@ import {
   AgentBriefingPreview,
   AgentRentComparison,
   AgentConfirmation,
+  API_BASE_URL,
 } from '../services/api';
 
 interface MessageData {
@@ -190,7 +191,7 @@ const BriefingPreview: React.FC<{ briefing: AgentBriefingPreview }> = ({ briefin
       <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
         <span className="text-sm font-medium text-gray-900">Email Briefing — {briefing.lead_count} leads</span>
         <a
-          href={`${(import.meta as any).env.VITE_API_URL || 'http://localhost:8000'}/api/agent/briefing/${briefing.briefing_id}`}
+          href={`${API_BASE_URL}/api/agent/briefing/${briefing.briefing_id}`}
           target="_blank"
           rel="noopener noreferrer"
           className="text-xs text-emerald-600 hover:text-emerald-700 font-medium"

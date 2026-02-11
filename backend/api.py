@@ -9,14 +9,35 @@ Exposes REST endpoints for the frontend to:
 import gc
 import json
 import logging
+import os
 import threading
 from datetime import datetime
 from typing import List, Optional, Dict
 
-from fastapi import FastAPI, Query, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Query, HTTPException, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import uuid
 
+from starlette.responses import JSONResponse
+from starlette.requests import Request
+
+# Rate limiting
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+limiter = Limiter(key_func=get_remote_address)
+
+from src.auth.auth import (
+    get_current_user,
+    get_current_admin,
+    create_access_token,
+    hash_password,
+    verify_password,
+    decode_token,
+    AuthUser,
+)
 from src.ingest.hpd_client import HPDClient
 from src.transform.normalize import normalize_building
 from src.transform.aggregate import aggregate_to_leads, Lead, StreamingLeadAggregator
@@ -25,9 +46,25 @@ from src.enrich.enricher import Enricher
 from src.enrich.ny_dos import NYDOSClient
 from src.storage.database import get_database
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure structured logging
+from src.logging_config import setup_logging
+setup_logging(os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
+
+# Sentry error tracking (optional — only if SENTRY_DSN is set)
+_sentry_dsn = os.environ.get("SENTRY_DSN")
+if _sentry_dsn:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(
+            dsn=_sentry_dsn,
+            traces_sample_rate=0.1,  # 10% of requests traced
+            profiles_sample_rate=0.1,
+            environment=os.environ.get("ENVIRONMENT", "production"),
+        )
+        logger.info("Sentry error tracking initialized")
+    except ImportError:
+        logger.warning("sentry-sdk not installed, skipping Sentry init")
 
 # Create FastAPI app
 app = FastAPI(
@@ -36,9 +73,22 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Attach rate limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# Global unhandled exception handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception on {request.method} {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error. This has been logged for investigation."},
+    )
+
 # Enable CORS for frontend
 # R9: Use regex-based origin matching so all Vercel preview deploys work automatically
-import os
 _cors_origins_env = os.environ.get("CORS_ORIGINS", "")
 _allowed_origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()] if _cors_origins_env else []
 # Always allow localhost for dev
@@ -52,6 +102,34 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Auth middleware — protects all /api/ routes except whitelisted paths
+_AUTH_EXEMPT_PREFIXES = (
+    "/api/auth/",
+    "/api/health",
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+)
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    # Allow root, OPTIONS (CORS preflight), and exempted paths through
+    if path == "/" or request.method == "OPTIONS" or any(path.startswith(p) for p in _AUTH_EXEMPT_PREFIXES):
+        return await call_next(request)
+    # All other /api/ paths require a valid JWT
+    if path.startswith("/api/"):
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+        try:
+            token = auth_header.split(" ", 1)[1]
+            user = decode_token(token)
+            request.state.user = user
+        except HTTPException:
+            return JSONResponse(status_code=401, content={"detail": "Token expired or invalid"})
+    return await call_next(request)
 
 # Global state - loaded from SQLite on startup
 _leads_cache: List[Lead] = []
@@ -376,6 +454,88 @@ async def _resume_enrichment_job(job: dict):
     thread.start()
 
 
+# ===========================================================================
+# Auth Endpoints (unauthenticated)
+# ===========================================================================
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+def _seed_admin_user():
+    """Create the admin user from env vars if it doesn't exist yet."""
+    admin_email = os.environ.get("ADMIN_EMAIL")
+    admin_password = os.environ.get("ADMIN_PASSWORD")
+    if not admin_email or not admin_password:
+        return
+    db = get_database()
+    existing = db.get_user_by_email(admin_email)
+    if not existing:
+        uid = str(uuid.uuid4())
+        db.create_user(uid, admin_email, hash_password(admin_password), role="admin")
+        logger.info(f"Admin user seeded: {admin_email}")
+
+
+@app.on_event("startup")
+async def seed_admin():
+    _seed_admin_user()
+
+
+@app.post("/api/auth/login")
+@limiter.limit("10/minute")
+async def auth_login(request: Request, req: LoginRequest):
+    """Authenticate and return a JWT token."""
+    db = get_database()
+    user = db.get_user_by_email(req.email)
+    if not user or not verify_password(req.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    auth_user = AuthUser(user_id=user["user_id"], email=user["email"], role=user["role"])
+    token = create_access_token(auth_user)
+    db.update_user_last_login(user["user_id"])
+    return {"token": token, "user": {"user_id": user["user_id"], "email": user["email"], "role": user["role"]}}
+
+
+@app.post("/api/auth/register")
+async def auth_register(req: RegisterRequest, _admin: AuthUser = Depends(get_current_admin)):
+    """Register a new user (admin only)."""
+    if len(req.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    db = get_database()
+    uid = str(uuid.uuid4())
+    created = db.create_user(uid, req.email, hash_password(req.password))
+    if not created:
+        raise HTTPException(status_code=409, detail="Email already registered")
+    return {"status": "created", "user_id": uid, "email": req.email}
+
+
+@app.get("/api/auth/me")
+async def auth_me(current_user: AuthUser = Depends(get_current_user)):
+    """Return the current user's info."""
+    return {"user_id": current_user.user_id, "email": current_user.email, "role": current_user.role}
+
+
+@app.post("/api/auth/change-password")
+async def auth_change_password(req: ChangePasswordRequest, current_user: AuthUser = Depends(get_current_user)):
+    """Change the current user's password."""
+    if len(req.new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+    db = get_database()
+    user = db.get_user_by_id(current_user.user_id)
+    if not user or not verify_password(req.current_password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    db.update_user_password(current_user.user_id, hash_password(req.new_password))
+    return {"status": "password_changed"}
+
+
 # Health check endpoint
 @app.get("/api/health")
 async def health_check():
@@ -386,15 +546,14 @@ async def health_check():
     db = get_database()
     lead_count = db.get_leads_count()
     
-    # Thread-safe snapshot of cache (Phase 4.1)
-    with _leads_lock:
-        cache_size = len(_leads_cache)
-        unenriched_count = sum(1 for lead in _leads_cache 
-                              if lead.portfolio_size >= 10 and lead.enrichment_status in ['none', None, ''])
+    # Count unenriched high-value leads from DB
+    with db._get_connection() as conn:
+        unenriched_count = conn.execute(
+            "SELECT COUNT(*) FROM leads WHERE portfolio_size >= 10 AND (enrichment_status IS NULL OR enrichment_status IN ('none', ''))"
+        ).fetchone()[0]
     
     return {
         "status": "ok",
-        "leads_in_cache": cache_size,
         "leads_in_db": lead_count,
         "enrichment_running": _enrichment_state.get("running", False),
         "unenriched_high_value": unenriched_count,
@@ -418,9 +577,6 @@ async def health_detailed():
         db_size_bytes = db.db_path.stat().st_size if db.db_path.exists() else 0
     except Exception:
         pass
-    
-    with _leads_lock:
-        cache_size = len(_leads_cache)
     
     # Active enrichment job
     active_job = db.get_active_enrichment_job()
@@ -952,11 +1108,15 @@ async def get_follow_ups_due(before: Optional[str] = None):
 
 @app.get("/api/status", response_model=PipelineStatus)
 async def get_status():
-    """Get pipeline status (thread-safe, Phase 4.1)."""
-    with _leads_lock:
-        enriched = len([l for l in _leads_cache if l.enrichment_status in ["complete", "partial"]])
-        top = max((l.score for l in _leads_cache), default=0)
-        total = len(_leads_cache)
+    """Get pipeline status (reads from DB for accuracy)."""
+    db = get_database()
+    with db._get_connection() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
+        enriched = conn.execute(
+            "SELECT COUNT(*) FROM leads WHERE enrichment_status IN ('complete', 'partial')"
+        ).fetchone()[0]
+        top_row = conn.execute("SELECT MAX(score) FROM leads").fetchone()
+        top = top_row[0] if top_row and top_row[0] else 0
     
     return PipelineStatus(
         total_leads=total,
@@ -1162,7 +1322,9 @@ def _run_background_refresh(limit: Optional[int], include_pluto: bool = True):
 
 
 @app.post("/api/refresh")
+@limiter.limit("2/minute")
 async def refresh_pipeline(
+    request: Request,
     background_tasks: BackgroundTasks,
     limit: Optional[int] = Query(None, description="Max buildings to fetch (None = ALL ~200k)"),
     full: bool = Query(False, description="Fetch ALL buildings (overrides limit)"),
@@ -3028,7 +3190,8 @@ async def generate_ai_summary(lead_id: str):
 
 
 @app.post("/api/leads/{lead_id}/enrich-all")
-async def enrich_lead_all(lead_id: str):
+@limiter.limit("30/minute")
+async def enrich_lead_all(request: Request, lead_id: str):
     """
     Unified enrichment: contacts (multi-source) + deep research + AI summary.
     One button, one call, does everything.
@@ -3246,8 +3409,6 @@ async def add_outreach_attempt(lead_id: str, request: OutreachAttemptRequest):
     """
     Log an outreach attempt for a lead.
     """
-    import uuid
-    
     # Validate lead exists
     lead_exists = any(l.lead_id == lead_id for l in _leads_cache)
     if not lead_exists:
@@ -3921,90 +4082,10 @@ async def export_leads_csv(
 
 
 # ===========================================================================
-# Agent Endpoints (AI Agent feature)
+# Agent Router (extracted to src/routers/agent.py)
 # ===========================================================================
-
-from sse_starlette.sse import EventSourceResponse
-from src.agent.types import AgentChatRequest
-from src.agent.orchestrator import run_agent
-from src.agent import memory as agent_memory
-from src.agent.email_service import get_briefing, send_briefing_email
-
-
-@app.post("/api/agent/chat")
-async def agent_chat(request: AgentChatRequest):
-    """SSE streaming endpoint for agent chat."""
-    has_msg = bool(request.message and request.message.strip())
-    has_conf = request.confirmation is not None
-    if not has_msg and not has_conf:
-        raise HTTPException(400, "Provide either a message or a confirmation")
-    if has_msg and has_conf:
-        raise HTTPException(400, "Provide either a message or a confirmation, not both")
-
-    async def event_generator():
-        async for event in run_agent(
-            message=request.message,
-            conversation_id=request.conversation_id,
-            confirmation=request.confirmation,
-        ):
-            yield event
-
-    return EventSourceResponse(
-        event_generator(),
-        headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
-    )
-
-
-@app.get("/api/agent/conversations")
-async def list_agent_conversations():
-    """Returns list of past conversations."""
-    conversations = agent_memory.list_conversations(limit=20)
-    return {"conversations": conversations}
-
-
-@app.get("/api/agent/conversations/{conversation_id}")
-async def get_agent_conversation(conversation_id: str):
-    """Returns full message history for a conversation."""
-    if not agent_memory.conversation_exists(conversation_id):
-        raise HTTPException(404, "Conversation not found")
-    messages = agent_memory.get_messages(conversation_id)
-    return {"conversation_id": conversation_id, "messages": messages}
-
-
-@app.delete("/api/agent/conversations/{conversation_id}")
-async def delete_agent_conversation(conversation_id: str):
-    """Delete a conversation and all its messages."""
-    deleted = agent_memory.delete_conversation(conversation_id)
-    if not deleted:
-        raise HTTPException(404, "Conversation not found")
-    return {"status": "deleted"}
-
-
-@app.get("/api/agent/briefing/{briefing_id}")
-async def get_agent_briefing(briefing_id: str):
-    """Serve a saved HTML briefing for download."""
-    html = get_briefing(briefing_id)
-    if not html:
-        raise HTTPException(404, "Briefing not found")
-    from starlette.responses import HTMLResponse
-    return HTMLResponse(content=html)
-
-
-@app.post("/api/agent/briefing/{briefing_id}/send")
-async def send_agent_briefing(briefing_id: str, recipient: Optional[str] = Query(None)):
-    """Send a saved briefing via email."""
-    html = get_briefing(briefing_id)
-    if not html:
-        raise HTTPException(404, "Briefing not found")
-    to = recipient or os.environ.get("EMAIL_TO_DEFAULT", "")
-    if not to:
-        raise HTTPException(400, "No recipient email provided and no default configured")
-    result = send_briefing_email(f"HPD Leads Briefing", html, to)
-    return result
+from src.routers.agent import router as agent_router
+app.include_router(agent_router)
 
 
 if __name__ == "__main__":

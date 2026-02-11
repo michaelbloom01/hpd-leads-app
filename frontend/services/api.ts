@@ -4,8 +4,11 @@
  * R4/R5: Added health check, fetchWithRetry, AbortController timeouts
  */
 
-// API base URL - uses environment variable in production, localhost in dev
-export const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000').trim().replace(/\\r\\n$/, '').replace(/[\r\n]+$/, '');
+import { getAuthHeaders, clearToken } from './auth';
+import { API_BASE_URL } from './config';
+
+// Re-export for backward compatibility (other files import from api.ts)
+export { API_BASE_URL };
 
 // ============================================================================
 // R4: Health Check
@@ -56,12 +59,27 @@ async function fetchWithRetry(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     
+    // Inject auth headers into every request
+    const authHeaders = getAuthHeaders();
+    const mergedHeaders = {
+      ...authHeaders,
+      ...(options.headers || {}),
+    };
+    
     try {
       const response = await fetch(url, {
         ...options,
+        headers: mergedHeaders,
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
+      
+      // If we get a 401, token is expired/invalid — clear it so login page shows
+      if (response.status === 401) {
+        clearToken();
+        window.dispatchEvent(new Event('auth:logout'));
+        throw new Error('Session expired — please log in again');
+      }
       
       // Retry on 502/503/504 (transient server errors)
       if (response.status >= 502 && response.status <= 504 && attempt < retries) {
@@ -806,7 +824,7 @@ export function agentChat(
     try {
       const response = await fetch(`${API_BASE_URL}/api/agent/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify(request),
         signal: controller.signal,
       });

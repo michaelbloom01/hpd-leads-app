@@ -6,9 +6,11 @@ interface Props {
   onTabChange: (tab: 'dashboard' | 'leads') => void;
   isMobileOpen?: boolean;
   onToggleAgent?: () => void;
+  onLogout?: () => void;
+  userEmail?: string;
 }
 
-const Sidebar: React.FC<Props> = ({ activeTab, onTabChange, isMobileOpen = false, onToggleAgent }) => {
+const Sidebar: React.FC<Props> = ({ activeTab, onTabChange, isMobileOpen = false, onToggleAgent, onLogout, userEmail }) => {
   const navItems = [
     { id: 'dashboard' as const, label: 'Dashboard', icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
@@ -71,11 +73,27 @@ const Sidebar: React.FC<Props> = ({ activeTab, onTabChange, isMobileOpen = false
         )}
       </nav>
 
-      <div className="space-y-4">
+      <div className="space-y-3">
         <div className="flex items-center gap-2 px-2">
            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
            <span className="text-xs text-gray-400">Connected to HPD</span>
         </div>
+        {userEmail && (
+          <div className="px-2">
+            <p className="text-xs text-gray-400 truncate" title={userEmail}>{userEmail}</p>
+          </div>
+        )}
+        {onLogout && (
+          <button
+            onClick={onLogout}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-gray-500 hover:text-red-600 hover:bg-red-50 transition-all"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+            Sign out
+          </button>
+        )}
       </div>
     </div>
   );
