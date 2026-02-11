@@ -523,6 +523,9 @@ export async function enrichLeadAll(leadId: string): Promise<{
   research: { owner_names: string[]; year_established: string | null; website_scraped: boolean };
   ai_summary: { generated: boolean; description: string | null };
   errors: string[];
+  enrichment_status: string;
+  pipeline_stage: string;
+  lead: ApiLead;  // Full updated lead — use this directly, no second API call needed
 }> {
   const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/enrich-all`, { method: 'POST' }, 1, 120000);
   if (!response.ok) throw new Error(`Failed to enrich lead: ${response.statusText}`);

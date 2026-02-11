@@ -3231,6 +3231,13 @@ async def enrich_lead_all(lead_id: str):
     results["pipeline_stage"] = lead.pipeline_stage
     results["enrichment_sources"] = enrichment_sources
     
+    # Return the full serialized lead so the frontend never needs a second API call
+    lead_response = _lead_to_response(lead).model_dump()
+    # Override the truncated business_summary with the full version
+    if lead.business_summary:
+        lead_response["business_summary"] = lead.business_summary
+    results["lead"] = lead_response
+    
     return results
 
 

@@ -39,9 +39,10 @@ type TabId = 'overview' | 'contacts' | 'pipeline' | 'buildings' | 'dd';
 interface Props {
   lead: ApiLead;
   onClose: () => void;
+  onLeadUpdated?: (lead: ApiLead) => void;
 }
 
-const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
+const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   const [isEnriching, setIsEnriching] = useState(false);
   // isResearching and isGeneratingAI removed — unified into isEnriching via handleEnrichAll
@@ -124,7 +125,8 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
     finally { setIsLoadingDD(false); }
   };
 
-  // Unified enrichment: contacts + research + AI summary in one call
+  // Unified enrichment: contacts + research + AI summary in one call.
+  // The backend returns the full updated lead in the response — no second API call needed.
   const handleEnrichAll = async () => {
     setIsEnriching(true);
     try {
@@ -148,20 +150,16 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
         console.warn('Enrichment partial errors:', result.errors);
       }
       
-      // Refetch the lead from the server to get authoritative state
-      // (enrichment_status, pipeline_stage, etc. are computed server-side)
-      try {
-        const { fetchLead } = await import('../services/api');
-        const refreshed = await fetchLead(lead.lead_id);
-        if (refreshed) {
-          setEnrichedLead(refreshed);
-          if (refreshed.business_summary) {
-            setAiDescription(refreshed.business_summary);
-          }
+      // Use the full lead returned by the backend — single source of truth, no second call
+      if (result.lead) {
+        const updatedLead = result.lead;
+        setEnrichedLead(updatedLead);
+        if (updatedLead.business_summary) {
+          setAiDescription(updatedLead.business_summary);
         }
-      } catch (refetchErr) {
-        console.warn('Could not refetch lead, falling back to page reload:', refetchErr);
-        window.location.reload();
+        setPipelineStage(updatedLead.pipeline_stage || 'research');
+        // Propagate to parent so the table updates without a page reload
+        onLeadUpdated?.(updatedLead);
       }
     } catch (err) { console.error('Enrichment failed:', err); toast.error('Enrichment failed — check server logs'); } 
     finally { setIsEnriching(false); }

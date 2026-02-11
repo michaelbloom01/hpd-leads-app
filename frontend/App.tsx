@@ -18,6 +18,12 @@ const App: React.FC = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isAgentOpen, setIsAgentOpen] = useState(false);
 
+  // Called when LeadDetail enriches or updates a lead — refreshes both the detail and the table
+  const handleLeadUpdated = useCallback((updatedLead: ApiLead) => {
+    setSelectedLead(updatedLead);       // Update the detail modal with fresh data
+    setRefreshKey(k => k + 1);          // Trigger table reload so it reflects changes
+  }, []);
+
   // Cmd/Ctrl + K shortcut to toggle agent panel
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -163,7 +169,8 @@ const App: React.FC = () => {
       {selectedLead && (
         <LeadDetail 
           lead={selectedLead} 
-          onClose={() => setSelectedLead(null)} 
+          onClose={() => setSelectedLead(null)}
+          onLeadUpdated={handleLeadUpdated}
         />
       )}
     </div>
