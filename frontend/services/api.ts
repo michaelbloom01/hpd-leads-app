@@ -817,6 +817,9 @@ export function agentChat(
 
       const decoder = new TextDecoder();
       let buffer = '';
+      // SSE parser state — MUST persist across chunk boundaries
+      let currentEvent = '';
+      let currentData = '';
 
       while (true) {
         const { done, value } = await reader.read();
@@ -824,18 +827,18 @@ export function agentChat(
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        let currentEvent = '';
-        let currentData = '';
+        buffer = lines.pop() || ''; // last element may be incomplete
 
         for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEvent = line.slice(7).trim();
-          } else if (line.startsWith('data: ')) {
-            currentData = line.slice(6).trim();
-          } else if (line === '' && currentEvent) {
-            // End of SSE message — dispatch
+          const trimmed = line.replace(/\r$/, ''); // handle \r\n
+          if (trimmed.startsWith('event: ') || trimmed.startsWith('event:')) {
+            currentEvent = trimmed.slice(trimmed.indexOf(':') + 1).trim();
+          } else if (trimmed.startsWith('data: ') || trimmed.startsWith('data:')) {
+            // Append to currentData (SSE spec allows multi-line data)
+            const dataContent = trimmed.slice(trimmed.indexOf(':') + 1).trim();
+            currentData = currentData ? currentData + '\n' + dataContent : dataContent;
+          } else if (trimmed === '' && currentEvent) {
+            // Empty line = end of SSE message — dispatch
             try {
               let parsedData: unknown;
               try {
@@ -850,6 +853,21 @@ export function agentChat(
             currentEvent = '';
             currentData = '';
           }
+        }
+      }
+
+      // Dispatch any remaining event if stream ended without trailing newline
+      if (currentEvent && currentData) {
+        try {
+          let parsedData: unknown;
+          try {
+            parsedData = JSON.parse(currentData);
+          } catch {
+            parsedData = currentData;
+          }
+          onEvent({ type: currentEvent, data: parsedData } as AgentSSEEvent);
+        } catch (e) {
+          console.warn('Failed to parse final SSE event:', currentEvent, currentData);
         }
       }
     } catch (err: unknown) {

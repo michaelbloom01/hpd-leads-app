@@ -176,9 +176,20 @@ def save_pending_action(
     tool_name: str,
     tool_input: dict,
     description: str,
+    tool_use_id: Optional[str] = None,
 ) -> None:
-    """Save a pending action that requires user confirmation."""
+    """Save a pending action that requires user confirmation.
+
+    Args:
+        tool_use_id: The original tool_use block ID from Claude's response.
+            Critical for building the matching tool_result when the user confirms/cancels.
+    """
     db = get_database()
+    # Store tool_use_id alongside tool_input for retrieval later
+    stored_input = dict(tool_input)
+    if tool_use_id:
+        stored_input["_tool_use_id"] = tool_use_id
+
     with db._get_connection() as conn:
         # Clear any prior pending actions for this conversation
         conn.execute(
@@ -193,7 +204,7 @@ def save_pending_action(
                 action_id,
                 conversation_id,
                 tool_name,
-                json.dumps(tool_input),
+                json.dumps(stored_input),
                 description,
                 datetime.now().isoformat(),
             ),
@@ -203,7 +214,11 @@ def save_pending_action(
 
 
 def get_pending_action(conversation_id: str, action_id: str) -> Optional[dict]:
-    """Get a pending action by conversation and action ID."""
+    """Get a pending action by conversation and action ID.
+
+    Extracts the stored _tool_use_id from tool_input and returns it as a
+    top-level field for easy access by the orchestrator.
+    """
     db = get_database()
     with db._get_connection() as conn:
         row = conn.execute(
@@ -219,6 +234,11 @@ def get_pending_action(conversation_id: str, action_id: str) -> Optional[dict]:
         result["tool_input"] = json.loads(result["tool_input"])
     except (json.JSONDecodeError, TypeError):
         pass
+    # Extract the stored tool_use_id and clean it from tool_input
+    if isinstance(result.get("tool_input"), dict):
+        result["tool_use_id"] = result["tool_input"].pop("_tool_use_id", None)
+    else:
+        result["tool_use_id"] = None
     return result
 
 

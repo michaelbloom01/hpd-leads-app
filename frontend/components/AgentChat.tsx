@@ -39,6 +39,25 @@ const EXAMPLE_PROMPTS = [
   "Email me a brief of all leads in first_contact stage",
 ];
 
+// Friendly tool name mapping
+const TOOL_LABELS: Record<string, string> = {
+  query_leads: 'Searching leads',
+  get_lead_details: 'Looking up lead details',
+  get_stats: 'Pulling database stats',
+  generate_cold_call_scripts: 'Writing cold call scripts',
+  compile_email_briefing: 'Compiling email briefing',
+  refine_rent_estimates: 'Researching rent data',
+  update_leads_batch: 'Preparing lead updates',
+  enrich_leads_batch: 'Starting enrichment',
+};
+
+// Elapsed time display
+function formatElapsed(seconds: number): string {
+  if (seconds < 5) return '';
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
 const AgentChat: React.FC<AgentChatProps> = ({
   conversationId,
   onConversationIdChange,
@@ -48,9 +67,12 @@ const AgentChat: React.FC<AgentChatProps> = ({
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [elapsedSecs, setElapsedSecs] = useState(0);
+  const [lastFailedMsg, setLastFailedMsg] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -69,9 +91,38 @@ const AgentChat: React.FC<AgentChatProps> = ({
     }
   }, [conversationId]);
 
+  // Elapsed time ticker
+  useEffect(() => {
+    if (isStreaming) {
+      setElapsedSecs(0);
+      timerRef.current = setInterval(() => {
+        setElapsedSecs(prev => prev + 1);
+      }, 1000);
+    } else {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      setElapsedSecs(0);
+    }
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [isStreaming]);
+
+  const handleCancel = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    setIsStreaming(false);
+    setStatus(null);
+  }, []);
+
   const sendMessage = useCallback((text: string, confirmation?: { action_id: string; confirmed: boolean }) => {
     if (!text.trim() && !confirmation) return;
     if (isStreaming) return;
+    setLastFailedMsg(null);
 
     // Add user message to UI
     if (text.trim()) {
@@ -85,7 +136,7 @@ const AgentChat: React.FC<AgentChatProps> = ({
 
     setInput('');
     setIsStreaming(true);
-    setStatus('Thinking...');
+    setStatus('Connecting...');
 
     // Prepare assistant message accumulator
     const assistantId = `assistant-${Date.now()}`;
@@ -98,6 +149,7 @@ const AgentChat: React.FC<AgentChatProps> = ({
     let accumulatedActions: string[] | undefined;
     let accumulatedError: string | undefined;
     let accumulatedFilters: Record<string, unknown> | undefined;
+    let receivedAnyData = false;
 
     const updateAssistant = () => {
       setMessages(prev => {
@@ -123,6 +175,7 @@ const AgentChat: React.FC<AgentChatProps> = ({
     };
 
     const handleEvent = (event: AgentSSEEvent) => {
+      receivedAnyData = true;
       switch (event.type) {
         case 'status':
           setStatus(event.data);
@@ -165,11 +218,14 @@ const AgentChat: React.FC<AgentChatProps> = ({
         case 'error':
           accumulatedError = event.data;
           setStatus(null);
+          setLastFailedMsg(text.trim());
           updateAssistant();
           break;
-        case 'tool_call':
-          setStatus(`Running ${event.data.name}...`);
+        case 'tool_call': {
+          const toolLabel = TOOL_LABELS[event.data.name] || `Running ${event.data.name}`;
+          setStatus(toolLabel + '...');
           break;
+        }
         case 'done':
           setIsStreaming(false);
           setStatus(null);
@@ -180,17 +236,42 @@ const AgentChat: React.FC<AgentChatProps> = ({
       }
     };
 
+    // Safety timeout: if nothing received after 90 seconds, surface an error
+    const safetyTimeout = setTimeout(() => {
+      if (!receivedAnyData && abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
+        setIsStreaming(false);
+        setStatus(null);
+        setLastFailedMsg(text.trim());
+        accumulatedError = 'No response received after 90 seconds. The server may be starting up — try again.';
+        updateAssistant();
+      }
+    }, 90_000);
+
     abortRef.current = agentChat(
       {
         message: text.trim(),
         conversation_id: conversationId,
         confirmation,
       },
-      handleEvent,
+      (event) => {
+        clearTimeout(safetyTimeout);
+        handleEvent(event);
+      },
       (err) => {
+        clearTimeout(safetyTimeout);
         setIsStreaming(false);
         setStatus(null);
-        accumulatedError = err.message;
+        setLastFailedMsg(text.trim());
+        // Provide user-friendly error messages
+        let errorMsg = err.message;
+        if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
+          errorMsg = 'Could not reach the server. Check your connection and try again.';
+        } else if (err.message.includes('timeout') || err.message.includes('Timeout')) {
+          errorMsg = 'Request timed out. The server may be busy — try again in a moment.';
+        }
+        accumulatedError = errorMsg;
         updateAssistant();
       },
     );
@@ -199,6 +280,28 @@ const AgentChat: React.FC<AgentChatProps> = ({
   const handleConfirm = useCallback((actionId: string, confirmed: boolean) => {
     sendMessage('', { action_id: actionId, confirmed });
   }, [sendMessage]);
+
+  const handleRetry = useCallback(() => {
+    if (lastFailedMsg) {
+      // Remove the error message and its preceding user message in one atomic update
+      setMessages(prev => {
+        let trimmed = [...prev];
+        // Remove trailing assistant error
+        if (trimmed.length > 0 && trimmed[trimmed.length - 1]?.role === 'assistant' && trimmed[trimmed.length - 1]?.error) {
+          trimmed = trimmed.slice(0, -1);
+        }
+        // Remove trailing user message (the one that caused the error)
+        if (trimmed.length > 0 && trimmed[trimmed.length - 1]?.role === 'user') {
+          trimmed = trimmed.slice(0, -1);
+        }
+        return trimmed;
+      });
+      const msg = lastFailedMsg;
+      setLastFailedMsg(null);
+      // Small delay so state updates propagate
+      setTimeout(() => sendMessage(msg), 50);
+    }
+  }, [lastFailedMsg, sendMessage]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -212,6 +315,7 @@ const AgentChat: React.FC<AgentChatProps> = ({
     if (messages.length === 0) return [];
     const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
     if (!lastAssistant) return [];
+    if (lastAssistant.error) return []; // Don't show actions after an error
     if (lastAssistant.scripts) return ['Start Calling', 'Email me these', 'Narrow down'];
     if (lastAssistant.leads) return ['Enrich these', 'Generate scripts', 'Show details'];
     if (lastAssistant.actions) return ["What's next?", 'Show updated pipeline'];
@@ -219,7 +323,8 @@ const AgentChat: React.FC<AgentChatProps> = ({
   };
 
   const quickActions = getQuickActions();
-  const showEmptyState = messages.length === 0;
+  const showEmptyState = messages.length === 0 && !isStreaming;
+  const elapsedDisplay = formatElapsed(elapsedSecs);
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -268,11 +373,46 @@ const AgentChat: React.FC<AgentChatProps> = ({
               </div>
             ))}
 
-            {/* Status indicator */}
-            {status && (
-              <div className="flex items-center gap-2 px-2 py-1">
-                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-                <span className="text-xs text-gray-500">{status}</span>
+            {/* Streaming status indicator */}
+            {isStreaming && status && (
+              <div className="flex items-start gap-3 px-1 py-2">
+                <div className="flex-shrink-0 mt-1">
+                  {/* Animated spinner */}
+                  <div className="w-5 h-5 border-2 border-emerald-200 border-t-emerald-600 rounded-full animate-spin" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-gray-700">{status}</span>
+                    {elapsedDisplay && (
+                      <span className="text-xs text-gray-400">{elapsedDisplay}</span>
+                    )}
+                  </div>
+                  {elapsedSecs >= 5 && elapsedSecs < 30 && (
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      AI is analyzing your data...
+                    </p>
+                  )}
+                  {elapsedSecs >= 30 && (
+                    <p className="text-xs text-amber-500 mt-0.5">
+                      Taking longer than usual. Complex queries can take up to 2 minutes.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Retry button after error */}
+            {lastFailedMsg && !isStreaming && (
+              <div className="flex justify-center py-2">
+                <button
+                  onClick={handleRetry}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-200 transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                  </svg>
+                  Try again
+                </button>
               </div>
             )}
 
@@ -304,7 +444,7 @@ const AgentChat: React.FC<AgentChatProps> = ({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={isStreaming ? 'Agent is thinking...' : 'Ask anything...'}
+            placeholder={isStreaming ? 'Agent is working...' : 'Ask anything...'}
             disabled={isStreaming}
             rows={1}
             className="flex-1 resize-none bg-gray-50 rounded-xl border border-gray-200 text-gray-900 placeholder-gray-400 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 disabled:opacity-50 max-h-20 overflow-y-auto"
@@ -315,15 +455,29 @@ const AgentChat: React.FC<AgentChatProps> = ({
               target.style.height = Math.min(target.scrollHeight, 80) + 'px';
             }}
           />
-          <button
-            onClick={() => sendMessage(input)}
-            disabled={isStreaming || !input.trim()}
-            className="p-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
-            </svg>
-          </button>
+          {isStreaming ? (
+            /* Cancel button while streaming */
+            <button
+              onClick={handleCancel}
+              className="p-2.5 bg-gray-200 hover:bg-gray-300 text-gray-600 rounded-xl transition-colors flex-shrink-0"
+              title="Cancel"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          ) : (
+            /* Send button */
+            <button
+              onClick={() => sendMessage(input)}
+              disabled={!input.trim()}
+              className="p-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+              </svg>
+            </button>
+          )}
         </div>
       </div>
     </div>

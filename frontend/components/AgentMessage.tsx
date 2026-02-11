@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   AgentLeadRow,
   AgentScriptRow,
@@ -28,10 +30,12 @@ interface AgentMessageProps {
 const AgentMessage: React.FC<AgentMessageProps> = ({ message, onSelectLead, onConfirm }) => {
   return (
     <div className="space-y-3">
-      {/* Text content */}
+      {/* Text content — rendered as markdown */}
       {message.text && (
-        <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-          {message.text}
+        <div className="agent-markdown text-sm text-gray-700 leading-relaxed">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {message.text}
+          </ReactMarkdown>
         </div>
       )}
 
@@ -57,7 +61,12 @@ const AgentMessage: React.FC<AgentMessageProps> = ({ message, onSelectLead, onCo
 
       {/* Confirmation card */}
       {message.confirmation && (
-        <ConfirmationCard confirmation={message.confirmation} onConfirm={onConfirm} />
+        <ConfirmationCard
+          confirmation={message.confirmation}
+          onConfirm={onConfirm}
+          hasActions={!!(message.actions && message.actions.length > 0)}
+          hasError={!!message.error}
+        />
       )}
 
       {/* Actions taken */}
@@ -243,30 +252,63 @@ const RentComparisonTable: React.FC<{ comparisons: AgentRentComparison[] }> = ({
 const ConfirmationCard: React.FC<{
   confirmation: AgentConfirmation;
   onConfirm: (actionId: string, confirmed: boolean) => void;
-}> = ({ confirmation, onConfirm }) => {
-  const [responded, setResponded] = useState(false);
+  hasActions?: boolean;
+  hasError?: boolean;
+}> = ({ confirmation, onConfirm, hasActions, hasError }) => {
+  const [responded, setResponded] = useState<'confirmed' | 'cancelled' | null>(null);
+
+  // Determine the visual state
+  const isResolved = hasActions || hasError;
 
   return (
-    <div className="bg-amber-50 rounded-lg border border-amber-200 p-4">
-      <p className="text-sm font-medium text-gray-900 mb-3">{confirmation.description}?</p>
-      {!responded ? (
+    <div className={`rounded-lg border p-4 transition-colors ${
+      isResolved && hasActions ? 'bg-emerald-50 border-emerald-200' :
+      isResolved && hasError ? 'bg-rose-50 border-rose-200' :
+      responded ? 'bg-gray-50 border-gray-200' :
+      'bg-amber-50 border-amber-200'
+    }`}>
+      <div className="flex items-center gap-2 mb-2">
+        {isResolved && hasActions ? (
+          <svg className="w-4 h-4 text-emerald-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/>
+          </svg>
+        ) : isResolved && hasError ? (
+          <svg className="w-4 h-4 text-rose-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+        ) : null}
+        <p className={`text-sm font-medium ${
+          isResolved && hasActions ? 'text-emerald-800' :
+          isResolved && hasError ? 'text-rose-800' :
+          'text-gray-900'
+        }`}>
+          {confirmation.description}
+          {!responded && !isResolved ? '?' : ''}
+        </p>
+      </div>
+      {!responded && !isResolved ? (
         <div className="flex items-center gap-3">
           <button
-            onClick={() => { setResponded(true); onConfirm(confirmation.action_id, false); }}
+            onClick={() => { setResponded('cancelled'); onConfirm(confirmation.action_id, false); }}
             className="px-4 py-1.5 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
           >
             Cancel
           </button>
           <button
-            onClick={() => { setResponded(true); onConfirm(confirmation.action_id, true); }}
+            onClick={() => { setResponded('confirmed'); onConfirm(confirmation.action_id, true); }}
             className="px-4 py-1.5 text-sm text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors font-medium"
           >
             Confirm ({confirmation.count})
           </button>
         </div>
-      ) : (
-        <p className="text-xs text-gray-500">Response sent...</p>
-      )}
+      ) : responded && !isResolved ? (
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+          <p className="text-xs text-gray-500">
+            {responded === 'confirmed' ? 'Executing...' : 'Cancelling...'}
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 };

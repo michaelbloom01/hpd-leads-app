@@ -12,11 +12,17 @@ const AgentPanel: React.FC<AgentPanelProps> = ({ isOpen, onClose, onSelectLead }
   const [conversationId, setConversationId] = useState<string | undefined>(undefined);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Escape key to close
+  // Escape key to close — but not if user is typing in the input
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isOpen) {
-        onClose();
+        const active = document.activeElement;
+        if (active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) {
+          // Blur the input instead of closing the panel
+          (active as HTMLElement).blur();
+        } else {
+          onClose();
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
