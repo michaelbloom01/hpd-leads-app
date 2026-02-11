@@ -130,27 +130,6 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
     try {
       const result = await enrichLeadAll(lead.lead_id);
       
-      // Update lead with any new data
-      const updated = { ...enrichedLead };
-      if (result.contacts.phones_found > 0 || result.contacts.emails_found > 0 || result.contacts.website_found) {
-        // Re-fetch the lead to get updated data from the server
-      }
-      if (result.ai_summary.description) {
-        setAiDescription(result.ai_summary.description);
-        updated.business_summary = result.ai_summary.description;
-      }
-      
-      // Update enrichment status
-      if (result.contacts.phones_found > 0 || result.contacts.emails_found > 0) {
-        updated.enrichment_status = result.contacts.website_found ? 'complete' : 'partial';
-      } else if (result.contacts.website_found) {
-        updated.enrichment_status = 'partial';
-      } else {
-        updated.enrichment_status = 'failed';
-      }
-      
-      setEnrichedLead(updated);
-      
       // Build summary toast
       const found: string[] = [];
       if (result.contacts.phones_found > 0) found.push(`${result.contacts.phones_found} phone(s)`);
@@ -165,12 +144,25 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose }) => {
         toast.error('Enrichment complete but no new data found');
       }
       
-      if (result.errors.length > 0) {
+      if (result.errors?.length > 0) {
         console.warn('Enrichment partial errors:', result.errors);
       }
       
-      // Reload the lead detail to reflect all server-side updates
-      window.location.reload();
+      // Refetch the lead from the server to get authoritative state
+      // (enrichment_status, pipeline_stage, etc. are computed server-side)
+      try {
+        const { fetchLead } = await import('../services/api');
+        const refreshed = await fetchLead(lead.lead_id);
+        if (refreshed) {
+          setEnrichedLead(refreshed);
+          if (refreshed.business_summary) {
+            setAiDescription(refreshed.business_summary);
+          }
+        }
+      } catch (refetchErr) {
+        console.warn('Could not refetch lead, falling back to page reload:', refetchErr);
+        window.location.reload();
+      }
     } catch (err) { console.error('Enrichment failed:', err); toast.error('Enrichment failed — check server logs'); } 
     finally { setIsEnriching(false); }
   };

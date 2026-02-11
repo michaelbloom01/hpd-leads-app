@@ -470,13 +470,19 @@ class MultiSourceEnricher:
             self._api_calls["web_crawl"] += 1
             
             try:
-                # Build a richer search query using address context
-                search_name = company_name
-                if address and not result.phones:
-                    # Add address for more targeted search if we still need a phone
+                # Build a richer search query with borough + property management context
+                search_parts = [company_name]
+                # Add borough/location context for disambiguation
+                if location and location != "New York, NY":
+                    borough = location.split(",")[0].strip()
+                    if borough:
+                        search_parts.append(borough)
+                elif address:
                     addr_parts = address.split(',')
                     if addr_parts:
-                        search_name = f"{company_name} {addr_parts[0].strip()}"
+                        search_parts.append(addr_parts[0].strip())
+                search_parts.append("property management NYC")
+                search_name = " ".join(search_parts)
                 
                 web_result = self.web_crawler.enrich(search_name)
                 

@@ -463,25 +463,76 @@ class LeadsDatabase:
     
     # === Bulk Operations ===
     
+    def get_all_enrichment_from_leads(self) -> Dict[str, Dict]:
+        """Load enrichment fields from the LEADS table itself.
+
+        This is the authoritative source for enrichment data because most
+        enrichment code paths write to the leads table (via update_lead or
+        save_leads) but not all of them write to enrichment_cache.
+        """
+        enrichment_fields = [
+            "lead_id", "phone", "email", "website", "business_summary",
+            "owner_principal", "enrichment_status", "enrichment_sources",
+            "last_enriched", "pipeline_stage", "next_follow_up", "priority_rank",
+            "notes", "outreach_status",
+        ]
+        cols = ", ".join(enrichment_fields)
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                f"SELECT {cols} FROM leads WHERE enrichment_status IS NOT NULL AND enrichment_status != 'none'"
+            ).fetchall()
+            result: Dict[str, Dict] = {}
+            for row in rows:
+                data = dict(row)
+                if data.get("enrichment_sources") and isinstance(data["enrichment_sources"], str):
+                    try:
+                        data["enrichment_sources"] = json.loads(data["enrichment_sources"])
+                    except (json.JSONDecodeError, TypeError):
+                        data["enrichment_sources"] = []
+                result[data["lead_id"]] = data
+            return result
+
     def apply_persisted_data_to_leads(self, leads: list) -> list:
         """
         Apply persisted user data and enrichment to leads.
         
         Call this after loading leads from HPD to restore saved data.
+        
+        Reads from THREE sources (in priority order):
+        1. The leads table itself (authoritative — most enrichment writes here)
+        2. The enrichment_cache table (backup — older enrichment code writes here)
+        3. The lead_user_data table (pipeline stage, notes, outreach status)
         """
         user_data = self.get_all_user_data()
-        enrichments = self.get_all_enrichments()
+        enrichment_cache = self.get_all_enrichments()
+        leads_enrichment = self.get_all_enrichment_from_leads()
+        
+        # Merge: leads table takes priority, enrichment_cache fills gaps
+        merged_enrichment: Dict[str, Dict] = {}
+        all_ids = set(enrichment_cache.keys()) | set(leads_enrichment.keys())
+        for lid in all_ids:
+            le = leads_enrichment.get(lid, {})
+            ec = enrichment_cache.get(lid, {})
+            merged = {}
+            for field in ["phone", "email", "website", "business_summary",
+                          "owner_principal", "enrichment_status", "enrichment_sources",
+                          "pipeline_stage", "next_follow_up", "priority_rank"]:
+                # Prefer leads table, fall back to enrichment_cache
+                val = le.get(field) or ec.get(field)
+                if val:
+                    merged[field] = val
+            merged_enrichment[lid] = merged
         
         for lead in leads:
-            # Apply user data
+            # Apply user data (outreach status, notes)
             if lead.lead_id in user_data:
                 data = user_data[lead.lead_id]
                 lead.outreach_status = data.get('outreach_status', 'new')
                 lead.notes = data.get('notes')
             
-            # Apply enrichment
-            if lead.lead_id in enrichments:
-                enr = enrichments[lead.lead_id]
+            # Apply enrichment from merged sources
+            if lead.lead_id in merged_enrichment:
+                enr = merged_enrichment[lead.lead_id]
                 if enr.get('phone') and not lead.phone:
                     lead.phone = enr['phone']
                 if enr.get('email') and not lead.email:
@@ -492,10 +543,17 @@ class LeadsDatabase:
                     lead.business_summary = enr['business_summary']
                 if enr.get('owner_principal') and not lead.owner_principal:
                     lead.owner_principal = enr['owner_principal']
-                if enr.get('enrichment_status'):
+                if enr.get('enrichment_status') and enr['enrichment_status'] != 'none':
                     lead.enrichment_status = enr['enrichment_status']
                 if enr.get('enrichment_sources'):
                     lead.enrichment_sources = enr['enrichment_sources']
+                # Preserve pipeline/outreach state
+                if enr.get('pipeline_stage') and enr['pipeline_stage'] != 'research':
+                    lead.pipeline_stage = enr['pipeline_stage']
+                if enr.get('next_follow_up'):
+                    lead.next_follow_up = enr['next_follow_up']
+                if enr.get('priority_rank') and enr['priority_rank'] > 0:
+                    lead.priority_rank = enr['priority_rank']
         
         return leads
     
@@ -578,13 +636,15 @@ class LeadsDatabase:
         Save all leads to the database (bulk upsert).
         
         This persists the complete lead data so it survives server restarts.
+        IMPORTANT: Includes ALL columns (enrichment, pipeline, revenue, violations)
+        so that INSERT OR REPLACE doesn't clobber any data.
+        
         Returns the number of leads saved.
         """
         if not leads:
             return 0
         
         with self._get_connection() as conn:
-            # Use INSERT OR REPLACE for upsert behavior
             for lead in leads:
                 # Serialize building_types to JSON
                 building_types_json = None
@@ -599,11 +659,16 @@ class LeadsDatabase:
                         last_registration, dos_id, dos_status, phone, email,
                         website, business_summary, owner_principal, enrichment_status,
                         enrichment_sources, last_enriched, score, score_breakdown,
-                        tags, opportunity_note, outreach_status, notes, 
+                        tags, opportunity_note, outreach_status, notes,
                         building_types, building_classes,
                         entity_type, company_name, primary_contact, primary_contact_title,
+                        estimated_monthly_revenue, estimated_annual_revenue,
+                        violation_count, violation_class_a, violation_class_b, violation_class_c,
+                        violations_per_unit,
+                        pipeline_stage, next_follow_up, priority_rank,
+                        enrichment_retries,
                         updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         lead.lead_id,
                         lead.agent_name,
@@ -641,6 +706,17 @@ class LeadsDatabase:
                         getattr(lead, 'company_name', None),
                         getattr(lead, 'primary_contact', None),
                         getattr(lead, 'primary_contact_title', None),
+                        getattr(lead, 'estimated_monthly_revenue', 0.0),
+                        getattr(lead, 'estimated_annual_revenue', 0.0),
+                        getattr(lead, 'violation_count', 0),
+                        getattr(lead, 'violation_class_a', 0),
+                        getattr(lead, 'violation_class_b', 0),
+                        getattr(lead, 'violation_class_c', 0),
+                        getattr(lead, 'violations_per_unit', 0.0),
+                        getattr(lead, 'pipeline_stage', 'research'),
+                        getattr(lead, 'next_follow_up', None),
+                        getattr(lead, 'priority_rank', 0),
+                        getattr(lead, 'enrichment_retries', 0),
                         datetime.now().isoformat(),
                     )
                 )
@@ -770,6 +846,17 @@ class LeadsDatabase:
                     company_name=row_dict.get('company_name'),
                     primary_contact=row_dict.get('primary_contact'),
                     primary_contact_title=row_dict.get('primary_contact_title'),
+                    estimated_monthly_revenue=row_dict.get('estimated_monthly_revenue') or 0.0,
+                    estimated_annual_revenue=row_dict.get('estimated_annual_revenue') or 0.0,
+                    violation_count=row_dict.get('violation_count') or 0,
+                    violation_class_a=row_dict.get('violation_class_a') or 0,
+                    violation_class_b=row_dict.get('violation_class_b') or 0,
+                    violation_class_c=row_dict.get('violation_class_c') or 0,
+                    violations_per_unit=row_dict.get('violations_per_unit') or 0.0,
+                    pipeline_stage=row_dict.get('pipeline_stage') or 'research',
+                    next_follow_up=row_dict.get('next_follow_up'),
+                    priority_rank=row_dict.get('priority_rank') or 0,
+                    enrichment_retries=row_dict.get('enrichment_retries') or 0,
                     created_at=created_at,
                     updated_at=updated_at,
                 )

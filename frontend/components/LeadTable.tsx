@@ -48,6 +48,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   const [filterEntityType, setFilterEntityType] = useState<string>('');
   const [filterOutreachStatus, setFilterOutreachStatus] = useState<string>('');
   const [filterPipelineStage, setFilterPipelineStage] = useState<string>('');
+  const [filterEnrichmentStatus, setFilterEnrichmentStatus] = useState<string>('');
   const [filterMinUnits, setFilterMinUnits] = useState<string>('');
   const [filterMaxUnits, setFilterMaxUnits] = useState<string>('');
   const [filterMinUnitsPerBldg, setFilterMinUnitsPerBldg] = useState<string>('');
@@ -81,7 +82,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
 
   // Count of secondary filters active (for badge)
   const activeSecondaryFilterCount = [
-    filterEntityType, filterOutreachStatus,
+    filterEntityType, filterOutreachStatus, filterEnrichmentStatus,
     filterMinScore, filterMaxScore,
     filterMinUnits, filterMaxUnits,
     filterMinUnitsPerBldg, filterMaxUnitsPerBldg,
@@ -122,6 +123,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       if (filterEntityType) params.entity_type = filterEntityType;
       if (filterOutreachStatus) params.outreach_status = filterOutreachStatus;
       if (filterPipelineStage) params.pipeline_stage = filterPipelineStage;
+      if (filterEnrichmentStatus) params.enrichment_status = filterEnrichmentStatus;
       if (searchTerm.trim()) params.search = searchTerm.trim();
       
       const minUnits = parseInt(filterMinUnits);
@@ -146,7 +148,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterMinScore, filterMaxScore, filterMinPortfolio, filterMaxPortfolio, filterBoroughs, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterPipelineStage, filterMinUnits, filterMaxUnits, filterMinUnitsPerBldg, filterMaxUnitsPerBldg, filterBuildingTypes, pageSize, sortField, sortDir, searchTerm]);
+  }, [filterMinScore, filterMaxScore, filterMinPortfolio, filterMaxPortfolio, filterBoroughs, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterPipelineStage, filterEnrichmentStatus, filterMinUnits, filterMaxUnits, filterMinUnitsPerBldg, filterMaxUnitsPerBldg, filterBuildingTypes, pageSize, sortField, sortDir, searchTerm]);
 
   // Keep ref in sync so callbacks can call latest version
   loadLeadsRef.current = loadLeads;
@@ -262,6 +264,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     setFilterEntityType('');
     setFilterOutreachStatus('');
     setFilterPipelineStage('');
+    setFilterEnrichmentStatus('');
     setFilterMinUnits('');
     setFilterMaxUnits('');
     setFilterMinUnitsPerBldg('');
@@ -310,6 +313,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     const maxUpb = parseFloat(filterMaxUnitsPerBldg);
     if (!isNaN(maxUpb) && maxUpb > 0) params.set('max_units_per_bldg', maxUpb.toString());
     if (filterBuildingTypes.length > 0) params.set('building_type_has', filterBuildingTypes.join(','));
+    if (filterOutreachStatus) params.set('outreach_status', filterOutreachStatus);
+    if (filterPipelineStage) params.set('pipeline_stage', filterPipelineStage);
+    if (filterEnrichmentStatus) params.set('enrichment_status', filterEnrichmentStatus);
+    if (searchTerm.trim()) params.set('search', searchTerm.trim());
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/export/csv?${params.toString()}`);
@@ -528,6 +535,24 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                 <option value="not_interested">Not Interested</option>
                 <option value="closed">Closed</option>
               </select>
+              <select className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900" value={filterEnrichmentStatus} onChange={(e) => setFilterEnrichmentStatus(e.target.value)}>
+                <option value="">All Enrichment</option>
+                <option value="complete">Enriched</option>
+                <option value="partial">Partial</option>
+                <option value="failed">No Data</option>
+                <option value="none">Not Enriched</option>
+              </select>
+              <select className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900" value={filterPipelineStage} onChange={(e) => setFilterPipelineStage(e.target.value)}>
+                <option value="">All Stages</option>
+                <option value="research">Research</option>
+                <option value="first_contact">First Contact</option>
+                <option value="follow_up">Follow Up</option>
+                <option value="meeting_scheduled">Meeting Scheduled</option>
+                <option value="meeting_done">Meeting Done</option>
+                <option value="loi">LOI</option>
+                <option value="due_diligence">Due Diligence</option>
+                <option value="closed">Closed</option>
+              </select>
               <button onClick={() => setFilterHasWebsite(filterHasWebsite === true ? null : true)}
                 className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasWebsite === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
                 {filterHasWebsite === true && <span className="text-emerald-600">✓</span>}Website
@@ -727,7 +752,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                         lead.enrichment_status === 'partial' ? 'Partial — some data found' :
                         lead.enrichment_status === 'failed' ? 'Enriched but no data found' :
                         'Not yet enriched'
-                      }\nPhone: ${lead.phone || 'None'}\nEmail: ${lead.email || 'None'}\nWebsite: ${lead.website || 'None'}`}>
+                      }\nPhone: ${lead.phone || 'None'}\nEmail: ${lead.email || 'None'}\nWebsite: ${lead.website || 'None'}${lead.business_summary ? '\nAI Summary: Yes' : ''}`}>
                         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
                           lead.enrichment_status === 'complete' ? 'bg-emerald-50 text-emerald-700' :
                           lead.enrichment_status === 'partial' ? 'bg-amber-50 text-amber-700' :
@@ -739,9 +764,17 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                            lead.enrichment_status === 'failed' ? 'No Data' :
                            'Not Enriched'}
                         </span>
+                        {lead.business_summary && (
+                          <span className="text-[9px] px-1 py-0.5 rounded bg-indigo-50 text-indigo-600" title="AI summary available">AI</span>
+                        )}
                       </div>
                       {lead.pipeline_stage && lead.pipeline_stage !== 'research' && (
-                        <span className="px-2 py-0.5 text-[10px] rounded bg-blue-50 text-blue-700 inline-block w-fit">
+                        <span className={`px-2 py-0.5 text-[10px] rounded inline-block w-fit ${
+                          lead.pipeline_stage === 'meeting_scheduled' || lead.pipeline_stage === 'meeting_done' ? 'bg-purple-50 text-purple-700' :
+                          lead.pipeline_stage === 'loi' || lead.pipeline_stage === 'due_diligence' ? 'bg-emerald-50 text-emerald-700' :
+                          lead.pipeline_stage === 'closed' ? 'bg-gray-100 text-gray-600' :
+                          'bg-blue-50 text-blue-700'
+                        }`}>
                           {lead.pipeline_stage.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                         </span>
                       )}
@@ -831,8 +864,26 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                     </svg>
                   </a>
                 )}
+                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                  lead.enrichment_status === 'complete' ? 'bg-emerald-50 text-emerald-700' :
+                  lead.enrichment_status === 'partial' ? 'bg-amber-50 text-amber-700' :
+                  lead.enrichment_status === 'failed' ? 'bg-rose-50 text-rose-700' :
+                  'bg-gray-100 text-gray-400'
+                }`}>
+                  {lead.enrichment_status === 'complete' ? 'Enriched' :
+                   lead.enrichment_status === 'partial' ? 'Partial' :
+                   lead.enrichment_status === 'failed' ? 'No Data' :
+                   'Not Enriched'}
+                </span>
+                {lead.business_summary && (
+                  <span className="text-[9px] px-1 py-0.5 rounded bg-indigo-50 text-indigo-600">AI</span>
+                )}
                 {lead.pipeline_stage && lead.pipeline_stage !== 'research' && (
-                  <span className="px-2 py-1 text-[10px] rounded bg-blue-50 text-blue-700 ml-auto">
+                  <span className={`px-2 py-1 text-[10px] rounded ml-auto ${
+                    lead.pipeline_stage === 'meeting_scheduled' || lead.pipeline_stage === 'meeting_done' ? 'bg-purple-50 text-purple-700' :
+                    lead.pipeline_stage === 'loi' || lead.pipeline_stage === 'due_diligence' ? 'bg-emerald-50 text-emerald-700' :
+                    'bg-blue-50 text-blue-700'
+                  }`}>
                     {lead.pipeline_stage.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                   </span>
                 )}

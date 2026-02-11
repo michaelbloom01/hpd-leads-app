@@ -263,7 +263,10 @@ def update_leads_batch(
 # ---------------------------------------------------------------------------
 
 def enrich_leads_batch(lead_ids: list[str]) -> dict:
-    """Start background enrichment for up to 20 leads."""
+    """Start full-pipeline background enrichment for up to 20 leads.
+    
+    Full pipeline: multi-source contacts → deep website scrape → AI summary → dual-write.
+    """
     if len(lead_ids) > 20:
         return {"error": "Maximum 20 leads per enrichment batch. Please narrow your selection."}
 
@@ -278,12 +281,15 @@ def enrich_leads_batch(lead_ids: list[str]) -> dict:
     if not valid_ids:
         return {"error": "No valid lead IDs found"}
 
-    # Start enrichment in a background thread (not FastAPI BackgroundTasks — tools.py doesn't have access to it)
     def _run_enrichment():
         try:
             from src.enrich.contact_sources import MultiSourceEnricher
-            from src.enrich.ai_summary import generate_ai_summary
+            from src.enrich.ai_summary import generate_company_description
+            from src.enrich.web_crawl import WebCrawler
+            from datetime import datetime as _dt
+
             enricher = MultiSourceEnricher()
+            crawler = WebCrawler()
 
             for lid in valid_ids:
                 try:
@@ -291,11 +297,42 @@ def enrich_leads_batch(lead_ids: list[str]) -> dict:
                     if not row:
                         continue
                     company_name = row.get("company_name") or row.get("agent_name") or row.get("owner_name") or ""
+                    
+                    # Parse contacts and boros from JSON if needed
+                    contacts_raw = row.get("contacts")
+                    contacts = []
+                    if contacts_raw:
+                        try:
+                            contacts = json.loads(contacts_raw) if isinstance(contacts_raw, str) else contacts_raw
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    
+                    boros_raw = row.get("boros")
+                    boros = []
+                    if boros_raw:
+                        try:
+                            boros = json.loads(boros_raw) if isinstance(boros_raw, str) else boros_raw
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    
+                    boro = row.get("boro") or (boros[0] if boros else "")
+                    location = f"{boro}, New York, NY" if boro else "New York, NY"
+                    
+                    existing_sources = []
+                    if row.get("enrichment_sources"):
+                        try:
+                            existing_sources = json.loads(row["enrichment_sources"]) if isinstance(row["enrichment_sources"], str) else row["enrichment_sources"]
+                        except (json.JSONDecodeError, TypeError):
+                            pass
 
+                    # === Step 1: Multi-source contact enrichment ===
                     enrich_result = enricher.enrich(
                         lead_id=lid,
                         company_name=company_name,
                         website=row.get("website"),
+                        location=location,
+                        address=row.get("address"),
+                        contacts=contacts,
                     )
 
                     updates = {}
@@ -305,27 +342,118 @@ def enrich_leads_batch(lead_ids: list[str]) -> dict:
                         updates["email"] = enrich_result.emails[0].value
                     if enrich_result.website and not row.get("website"):
                         updates["website"] = enrich_result.website
+                    if enrich_result.dos_registered_agent and not row.get("owner_principal"):
+                        updates["owner_principal"] = enrich_result.dos_registered_agent
+                    
+                    # === Step 2: Deep website scrape ===
+                    current_website = updates.get("website") or row.get("website")
+                    owner_names = []
+                    if not current_website:
+                        try:
+                            found = crawler.find_website(f"{company_name} property management NYC")
+                            if found:
+                                updates["website"] = found
+                                current_website = found
+                        except Exception:
+                            pass
+                    
+                    if current_website:
+                        try:
+                            scrape_data = crawler.deep_scrape(current_website)
+                            if scrape_data.get("owner_names"):
+                                owner_names = scrape_data["owner_names"]
+                            if scrape_data.get("phones"):
+                                for p in scrape_data["phones"]:
+                                    if not (updates.get("phone") or row.get("phone")):
+                                        updates["phone"] = p
+                            if scrape_data.get("emails"):
+                                for e_val in scrape_data["emails"]:
+                                    if not (updates.get("email") or row.get("email")):
+                                        updates["email"] = e_val
+                        except Exception as scrape_err:
+                            logger.warning(f"Deep scrape failed for {lid}: {scrape_err}")
 
+                    # === Step 3: AI summary ===
+                    if not row.get("business_summary"):
+                        try:
+                            building_types = None
+                            bt_raw = row.get("building_types")
+                            if bt_raw:
+                                try:
+                                    bt = json.loads(bt_raw) if isinstance(bt_raw, str) else bt_raw
+                                    building_types = {
+                                        "condo": bt.get("condo", 0),
+                                        "coop": bt.get("coop", 0),
+                                        "rental_elevator": bt.get("rental_elevator", 0),
+                                        "rental_walkup": bt.get("rental_walkup", 0),
+                                        "small_residential": bt.get("small_residential", 0),
+                                    }
+                                except (json.JSONDecodeError, TypeError):
+                                    pass
+                            
+                            description, _ = generate_company_description(
+                                company_name=company_name,
+                                portfolio_size=row.get("portfolio_size") or 0,
+                                total_units=row.get("total_units") or 0,
+                                boroughs=boros,
+                                building_types=building_types,
+                                owner_names=owner_names or ([row.get("owner_principal")] if row.get("owner_principal") else None),
+                            )
+                            if description:
+                                updates["business_summary"] = description
+                        except Exception as ai_err:
+                            logger.warning(f"AI summary failed for {lid}: {ai_err}")
+
+                    # === Compute enrichment status ===
                     has_contact = bool(updates.get("phone") or row.get("phone") or updates.get("email") or row.get("email"))
                     has_website = bool(updates.get("website") or row.get("website"))
-                    if has_contact and has_website:
+                    has_summary = bool(updates.get("business_summary") or row.get("business_summary"))
+                    if has_contact and has_website and has_summary:
                         updates["enrichment_status"] = "complete"
                     elif has_contact or has_website:
                         updates["enrichment_status"] = "partial"
                     else:
                         updates["enrichment_status"] = "failed"
+                    
+                    # Track sources
+                    all_sources = list(set(existing_sources + enrich_result.sources_succeeded))
+                    updates["enrichment_sources"] = json.dumps(all_sources)
+                    updates["last_enriched"] = _dt.now().isoformat()
+                    
+                    # Auto-advance pipeline
+                    current_stage = row.get("pipeline_stage") or "research"
+                    if current_stage == "research" and has_contact:
+                        updates["pipeline_stage"] = "first_contact"
 
+                    # === Persist: update leads table ===
                     if updates:
                         db.update_lead(lid, updates)
 
-                    # Also update cache
+                    # === Persist: dual-write to enrichment_cache ===
+                    db.save_enrichment(
+                        lead_id=lid,
+                        phone=updates.get("phone") or row.get("phone"),
+                        email=updates.get("email") or row.get("email"),
+                        website=updates.get("website") or row.get("website"),
+                        business_summary=updates.get("business_summary") or row.get("business_summary"),
+                        owner_principal=updates.get("owner_principal") or row.get("owner_principal"),
+                        enrichment_status=updates.get("enrichment_status", "none"),
+                        enrichment_sources=all_sources,
+                    )
+
+                    # Update in-memory cache
                     try:
                         import api as _api
                         with _api._leads_lock:
                             for i, lead in enumerate(_api._leads_cache):
                                 if lead.lead_id == lid:
                                     for k, v in updates.items():
-                                        setattr(lead, k, v)
+                                        if k == "enrichment_sources":
+                                            setattr(lead, k, all_sources)
+                                        elif k == "last_enriched":
+                                            setattr(lead, k, _dt.now())
+                                        else:
+                                            setattr(lead, k, v)
                                     _api._leads_cache[i] = lead
                                     break
                     except Exception:
@@ -345,8 +473,8 @@ def enrich_leads_batch(lead_ids: list[str]) -> dict:
 
     return {
         "started": len(valid_ids),
-        "message": f"Enrichment started for {len(valid_ids)} leads in background. Results will appear within a few minutes.",
-        "actions": [f"Started enrichment for {len(valid_ids)} leads"],
+        "message": f"Full enrichment started for {len(valid_ids)} leads in background (contacts + deep scrape + AI summary). Results will appear within a few minutes.",
+        "actions": [f"Started full enrichment for {len(valid_ids)} leads"],
     }
 
 

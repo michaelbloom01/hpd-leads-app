@@ -7,6 +7,7 @@ Exposes REST endpoints for the frontend to:
 - Get pipeline status
 """
 import gc
+import json
 import logging
 import threading
 from datetime import datetime
@@ -3051,30 +3052,46 @@ async def enrich_lead_all(lead_id: str):
     
     db = get_database()
     company_name = lead.agent_name or lead.owner_name
+    enrichment_sources = list(lead.enrichment_sources or [])
     
     # Step 1: Multi-source contact enrichment (Google Places, NY DOS, Web Crawl, Hunter)
     try:
         from src.enrich.contact_sources import MultiSourceEnricher
         enricher = MultiSourceEnricher()
+        
+        # Build location from borough info
+        boro_name = lead.boro or (lead.boros[0] if lead.boros else "")
+        location = f"{boro_name}, New York, NY" if boro_name else "New York, NY"
+        
         enrich_result = enricher.enrich(
             lead_id=lead_id,
             company_name=company_name,
             website=lead.website,
+            location=location,
+            address=lead.address,
+            contacts=lead.contacts,
         )
         
-        # EnrichmentResult is a dataclass with .phones, .emails, .website attributes
-        if enrich_result.phones and not lead.phone:
-            lead.phone = enrich_result.phones[0].value
-        if enrich_result.emails and not lead.email:
-            lead.email = enrich_result.emails[0].value
+        # Apply results — prefer newly found data but don't overwrite existing
+        if enrich_result.phones:
+            if not lead.phone:
+                lead.phone = enrich_result.phones[0].value
+        if enrich_result.emails:
+            if not lead.email:
+                lead.email = enrich_result.emails[0].value
         if enrich_result.website and not lead.website:
             lead.website = enrich_result.website
         if enrich_result.dos_registered_agent and not lead.owner_principal:
             lead.owner_principal = enrich_result.dos_registered_agent
         
+        # Track which sources found data
+        enrichment_sources = list(set(enrichment_sources + enrich_result.sources_succeeded))
+        
         results["contacts"]["phones_found"] = len(enrich_result.phones)
         results["contacts"]["emails_found"] = len(enrich_result.emails)
         results["contacts"]["website_found"] = bool(enrich_result.website)
+        results["contacts"]["sources_tried"] = enrich_result.sources_tried
+        results["contacts"]["sources_succeeded"] = enrich_result.sources_succeeded
         
         # Update enrichment status
         has_contact = bool(lead.phone or lead.email)
@@ -3163,27 +3180,56 @@ async def enrich_lead_all(lead_id: str):
     # Update enrichment status based on final state
     has_contact = bool(lead.phone or lead.email)
     has_website = bool(lead.website)
-    if has_contact and has_website:
+    has_summary = bool(lead.business_summary)
+    if has_contact and has_website and has_summary:
         lead.enrichment_status = 'complete'
     elif has_contact or has_website:
         lead.enrichment_status = 'partial'
     elif lead.enrichment_status == 'none':
         lead.enrichment_status = 'failed'
     
-    # Persist to cache and DB
+    # Update enrichment sources and timestamp on the lead object
+    lead.enrichment_sources = enrichment_sources
+    lead.last_enriched = datetime.now()
+    
+    # Auto-advance pipeline: if we just enriched and have contact info, move from research → first_contact
+    if lead.pipeline_stage == 'research' and has_contact:
+        lead.pipeline_stage = 'first_contact'
+    
+    # Persist to in-memory cache
     for i, l in enumerate(_leads_cache):
         if l.lead_id == lead_id:
             _leads_cache[i] = lead
             break
     
+    # Persist to leads table (authoritative)
     db.update_lead(lead_id, {
         "phone": lead.phone,
         "email": lead.email,
         "website": lead.website,
         "owner_principal": lead.owner_principal,
         "enrichment_status": lead.enrichment_status,
+        "enrichment_sources": json.dumps(enrichment_sources),
+        "last_enriched": lead.last_enriched.isoformat(),
         "business_summary": lead.business_summary,
+        "pipeline_stage": lead.pipeline_stage,
     })
+    
+    # Dual-write to enrichment_cache (backup for data restore)
+    db.save_enrichment(
+        lead_id=lead_id,
+        phone=lead.phone,
+        email=lead.email,
+        website=lead.website,
+        business_summary=lead.business_summary,
+        owner_principal=lead.owner_principal,
+        enrichment_status=lead.enrichment_status,
+        enrichment_sources=enrichment_sources,
+    )
+    
+    results["enrichment_status"] = lead.enrichment_status
+    results["pipeline_stage"] = lead.pipeline_stage
+    results["enrichment_sources"] = enrichment_sources
     
     return results
 
