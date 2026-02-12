@@ -293,6 +293,7 @@ export interface PipelineStats {
   by_enrichment_status: Record<string, number>;
   by_outreach_status: Record<string, number>;
   by_entity_type: Record<string, number>;
+  by_pipeline_stage: Record<string, number>;
   score_distribution: Record<string, number>;
   portfolio_distribution: Record<string, number>;
   with_phone: number;

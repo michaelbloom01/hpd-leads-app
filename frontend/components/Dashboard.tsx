@@ -204,9 +204,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
   // Pipeline stage counts from full database stats (not limited to 100 leads)
   const pipelineCounts: Record<string, number> = {};
   PIPELINE_STAGES.forEach(s => { pipelineCounts[s.key] = 0; });
-  const statsPipelineStages = (stats as Record<string, unknown>)?.by_pipeline_stage as Record<string, number> | undefined;
-  if (statsPipelineStages) {
-    Object.entries(statsPipelineStages).forEach(([stage, count]) => {
+  if (stats?.by_pipeline_stage) {
+    Object.entries(stats.by_pipeline_stage).forEach(([stage, count]) => {
       if (pipelineCounts[stage] !== undefined) pipelineCounts[stage] = count;
     });
   }
