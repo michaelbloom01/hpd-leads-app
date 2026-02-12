@@ -665,12 +665,13 @@ class OutreachAttemptResponse(BaseModel):
 
 
 class ScoreBreakdown(BaseModel):
-    """Score breakdown showing component scores."""
-    portfolio: float = 0.0
+    """Score breakdown showing V3 component scores."""
+    condo_coop: float = 0.0
+    density: float = 0.0
     units: float = 0.0
+    location: float = 0.0
     professional: float = 0.0
     contact: float = 0.0
-    concentration: float = 0.0
 
 
 class BuildingTypeBreakdownResponse(BaseModel):
@@ -3481,11 +3482,12 @@ def _lead_to_response(lead: Lead) -> LeadResponse:
     breakdown = None
     if lead.score_breakdown:
         breakdown = ScoreBreakdown(
-            portfolio=lead.score_breakdown.get("portfolio", 0.0),
+            condo_coop=lead.score_breakdown.get("condo_coop", 0.0),
+            density=lead.score_breakdown.get("density", 0.0),
             units=lead.score_breakdown.get("units", 0.0),
+            location=lead.score_breakdown.get("location", 0.0),
             professional=lead.score_breakdown.get("professional", 0.0),
             contact=lead.score_breakdown.get("contact", 0.0),
-            concentration=lead.score_breakdown.get("concentration", 0.0),
         )
     
     # Convert phones with sources

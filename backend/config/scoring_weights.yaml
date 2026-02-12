@@ -1,37 +1,50 @@
-# Scoring Configuration V2
-# When revenue/violations data is available, V2 weights are used.
-# Otherwise falls back to V1 weights (portfolio-heavy).
+# Scoring Configuration V3
+# Focused on: condo/co-op concentration, density, 50-300 unit sweet spot,
+# Manhattan preference, professional management, and contactability.
+# Single unified mode (no V1/V2 split).
 
-# V2 Weights (used when revenue data is available)
+# Weights (must sum to 1.0)
 weights:
-  portfolio: 0.25       # Portfolio size (number of buildings)
-  units: 0.10           # Total residential units
-  professional: 0.15    # Entity type, corporate indicators
-  contact: 0.10         # Phone/email/website completeness
-  concentration_bonus: 0.05  # Geographic focus bonus
-  revenue: 0.15         # Estimated management fee revenue
-  distress: 0.05        # HPD violations as opportunity/risk signal
-  deal_fit: 0.15        # Composite PE acquisition criteria match
+  condo_coop: 0.35        # % of portfolio that is condo or co-op (dominant factor)
+  density: 0.20           # Unit-to-building ratio, ideal > 15
+  units: 0.15             # Total units, sweet spot 50-300
+  location: 0.10          # Manhattan bonus
+  professional: 0.10      # Entity type, corporate indicators
+  contact: 0.10           # Phone/email/website completeness
 
-# V1 Fallback Weights (used when no revenue data)
-# portfolio: 0.50, units: 0.20, professional: 0.15, contact: 0.15
-# concentration_bonus: 0.10
+# Hard filter: leads with fewer than this many units get score = 0
+min_units_threshold: 10
 
-# Thresholds for portfolio size scoring
-portfolio_thresholds:
-  tier_100: 100  # 100+ buildings = 100 points
-  tier_80: 50    # 50-99 buildings = 80 points
-  tier_60: 25    # 25-49 buildings = 60 points
-  tier_40: 10    # 10-24 buildings = 40 points
-  tier_20: 5     # 5-9 buildings = 20 points
+# Condo/co-op scoring: % of buildings that are condo or co-op
+condo_coop_thresholds:
+  tier_100: 0.80   # >= 80% condo/co-op = 100 points
+  tier_85: 0.60    # >= 60% = 85 points
+  tier_65: 0.40    # >= 40% = 65 points
+  tier_40: 0.20    # >= 20% = 40 points
+  tier_20: 0.01    # > 0% = 20 points
+  # 0% = 0 points
 
-# Thresholds for unit count scoring
-unit_thresholds:
-  tier_100: 1000  # 1000+ units = 100 points
-  tier_80: 500
-  tier_60: 250
-  tier_40: 100
-  tier_20: 50
+# Density scoring: total_units / portfolio_size
+density_thresholds:
+  tier_100: 20     # >= 20 units/bldg = 100 points
+  tier_90: 15      # >= 15 = 90 points (ideal threshold)
+  tier_60: 10      # >= 10 = 60 points
+  tier_30: 5       # >= 5 = 30 points
+  # < 5 = 10 points
+
+# Unit count scoring: sweet spot 50-300
+unit_sweet_spot:
+  min: 50          # Lower bound of ideal range
+  max: 300         # Upper bound of ideal range
+  close_low: 30    # Close below ideal
+  close_high: 500  # Close above ideal
+  viable_low: 10   # Minimum viable (below = hard filter)
+  viable_high: 1000 # Upper viable
+
+# Location scoring
+location_scores:
+  manhattan: 100
+  default: 50      # All other boroughs
 
 # Keywords indicating professional management
 professional_keywords:
@@ -54,14 +67,5 @@ tier_labels:
   D: "Low Priority"  # 20-39
   F: "Minimal"       # 0-19
 
-# Revenue target range for deal_fit scoring
-# PE target: $500K-$1.5M EBITDA, revenue is rough proxy
-revenue_target:
-  min: 300000    # $300K annual management revenue
-  max: 2000000   # $2M annual management revenue
-
 # Minimum score to include in output (set to 0 for all)
 min_score_threshold: 0
-
-# Minimum portfolio size to include (default filter)
-min_portfolio_size: 10

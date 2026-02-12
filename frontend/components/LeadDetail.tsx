@@ -465,21 +465,16 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 <details className="bg-gray-50 rounded-xl">
                   <summary className="p-4 cursor-pointer text-xs font-bold text-gray-500 uppercase tracking-wider hover:text-gray-700">How is the score calculated?</summary>
                   <div className="px-4 pb-4">
-                    <p className="text-[10px] text-gray-400 mb-3">Score is weighted across several factors. Each component contributes points to the total (max 100).</p>
+                    <p className="text-[10px] text-gray-400 mb-3">Score is weighted across 6 factors: Condo/Co-op % (35%), Density (20%), Units (15%), Location (10%), Professional (10%), Contact (10%). Max 100.</p>
                     <div className="grid grid-cols-2 gap-3">
                       {Object.entries(enrichedLead.score_breakdown).map(([key, value]) => {
                         const SCORE_LABELS: Record<string, string> = {
-                          portfolio_size: 'Portfolio Size',
-                          total_units: 'Total Units',
-                          building_diversity: 'Building Mix',
-                          building_types: 'Building Types',
-                          registration_recency: 'Registration Recency',
-                          contact_completeness: 'Contact Info Available',
-                          data_quality: 'Data Completeness',
-                          violation_density: 'Violation Density',
-                          revenue_potential: 'Revenue Potential',
-                          borough_diversity: 'Borough Coverage',
-                          entity_type_bonus: 'Entity Type',
+                          condo_coop: 'Condo/Co-op %',
+                          density: 'Unit Density',
+                          units: 'Unit Count',
+                          location: 'Location',
+                          professional: 'Professional Mgmt',
+                          contact: 'Contact Info',
                         };
                         return (
                           <div key={key} className="flex items-center justify-between">

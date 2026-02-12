@@ -1,17 +1,15 @@
 """
-Lead scoring logic - V2 (Phase 5.6).
+Lead scoring logic - V3.
 
-Scoring dimensions:
-1. Portfolio (size of managed portfolio)
-2. Units (total residential units)
-3. Professional (entity type, corporate indicators)
-4. Contact (phone, email, website completeness)
-5. Concentration (geographic focus)
-6. Revenue (estimated management fee revenue) - NEW in V2
-7. Distress (HPD violations as signal) - NEW in V2
-8. Deal Fit (composite PE criteria match) - NEW in V2
+Scoring dimensions (6 total):
+1. Condo/Co-op concentration (35%) — % of portfolio buildings that are condo or co-op
+2. Density (20%) — unit-to-building ratio, ideal > 15
+3. Units (15%) — sweet spot 50-300 total units
+4. Location (10%) — Manhattan bonus
+5. Professional (10%) — entity type, corporate indicators
+6. Contact (10%) — phone, email, website completeness
 
-See docs/03-scoring-rules.md for details.
+Hard filter: leads with < 10 total units get score = 0.
 """
 import logging
 from pathlib import Path
@@ -25,16 +23,15 @@ logger = logging.getLogger(__name__)
 
 
 class Scorer:
-    """Score and tier leads based on configurable rules (V2)."""
-    
+    """Score and tier leads based on configurable rules (V3)."""
+
     def __init__(self, config_path: str = "config/scoring_weights.yaml"):
         self.config = self._load_config(config_path)
         self.weights = self.config.get("weights", {})
-        self.portfolio_thresholds = self.config.get("portfolio_thresholds", {})
-        self.unit_thresholds = self.config.get("unit_thresholds", {})
         self.professional_keywords = self.config.get("professional_keywords", [])
         self.tier_labels = self.config.get("tier_labels", {})
-    
+        self.min_units = self.config.get("min_units_threshold", 10)
+
     def _load_config(self, path: str) -> dict:
         config_path = Path(path)
         if not config_path.exists():
@@ -42,139 +39,175 @@ class Scorer:
             return {}
         with open(config_path) as f:
             return yaml.safe_load(f)
-    
+
+    # ------------------------------------------------------------------
+    # Main entry point
+    # ------------------------------------------------------------------
+
     def score_lead(self, lead: Lead) -> Lead:
         """
-        Calculate V2 score with all dimensions.
-        
-        V2 weights (when all data available):
-        - portfolio:      0.25
-        - units:          0.10
-        - professional:   0.15
-        - contact:        0.10
-        - concentration:  0.05 (bonus)
-        - revenue:        0.15
-        - distress:       0.05
-        - deal_fit:       0.15
-        
-        Falls back to V1 weights when revenue/violations data isn't available.
+        Score a single lead using V3 dimensions.
+
+        Weights:
+        - condo_coop:    0.35
+        - density:       0.20
+        - units:         0.15
+        - location:      0.10
+        - professional:  0.10
+        - contact:       0.10
         """
-        # Core V1 scores
-        portfolio_score = self._score_portfolio(lead.portfolio_size)
+        # Hard filter: leads below minimum unit threshold score 0
+        if lead.total_units < self.min_units:
+            lead.score = 0.0
+            lead.score_breakdown = {
+                "condo_coop": 0, "density": 0, "units": 0,
+                "location": 0, "professional": 0, "contact": 0,
+            }
+            lead.tags = self._generate_tags(lead)
+            return lead
+
+        # Calculate each dimension (0-100)
+        condo_coop_score = self._score_condo_coop(lead)
+        density_score = self._score_density(lead)
         units_score = self._score_units(lead.total_units)
+        location_score = self._score_location(lead)
         professional_score = self._score_professional(lead)
         contact_score = self._score_contact(lead)
-        concentration_score = self._score_concentration(lead)
-        
-        # V2 scores
-        revenue_score = self._score_revenue(lead)
-        distress_score = self._score_distress(lead)
-        deal_fit_score = self._score_deal_fit(lead)
-        
-        # Determine if V2 data is available
-        has_revenue = getattr(lead, 'estimated_annual_revenue', 0) > 0
-        has_violations = getattr(lead, 'violation_count', 0) > 0 or getattr(lead, 'violation_count', None) is not None
-        
-        if has_revenue:
-            # V2 weights (balanced across all dimensions)
-            total_score = (
-                self.weights.get("portfolio", 0.25) * portfolio_score +
-                self.weights.get("units", 0.10) * units_score +
-                self.weights.get("professional", 0.15) * professional_score +
-                self.weights.get("contact", 0.10) * contact_score +
-                self.weights.get("revenue", 0.15) * revenue_score +
-                self.weights.get("distress", 0.05) * distress_score +
-                self.weights.get("deal_fit", 0.15) * deal_fit_score
-            )
-            # Concentration bonus
-            concentration_bonus = self.weights.get("concentration_bonus", 0.05) * concentration_score
-            total_score = min(total_score + concentration_bonus, 100)
-        else:
-            # V1 fallback weights (for leads without revenue estimation)
-            total_score = (
-                0.5 * portfolio_score +
-                0.2 * units_score +
-                0.15 * professional_score +
-                0.15 * contact_score
-            )
-            concentration_bonus = 0.1 * concentration_score
-            total_score = min(total_score + concentration_bonus, 100)
-        
-        # Store breakdown (all dimensions)
+
+        # Weighted sum
+        total_score = (
+            self.weights.get("condo_coop", 0.35) * condo_coop_score
+            + self.weights.get("density", 0.20) * density_score
+            + self.weights.get("units", 0.15) * units_score
+            + self.weights.get("location", 0.10) * location_score
+            + self.weights.get("professional", 0.10) * professional_score
+            + self.weights.get("contact", 0.10) * contact_score
+        )
+        total_score = min(total_score, 100)
+
         lead.score = round(total_score, 1)
         lead.score_breakdown = {
-            "portfolio": round(portfolio_score, 1),
+            "condo_coop": round(condo_coop_score, 1),
+            "density": round(density_score, 1),
             "units": round(units_score, 1),
+            "location": round(location_score, 1),
             "professional": round(professional_score, 1),
             "contact": round(contact_score, 1),
-            "concentration": round(concentration_score, 1),
-            "revenue": round(revenue_score, 1),
-            "distress": round(distress_score, 1),
-            "deal_fit": round(deal_fit_score, 1),
         }
-        
         lead.tags = self._generate_tags(lead)
         return lead
-    
-    # === V1 Scoring Components ===
-    
-    def _score_portfolio(self, size: int) -> float:
-        thresholds = self.portfolio_thresholds
-        if size >= thresholds.get("tier_100", 100):
+
+    # ------------------------------------------------------------------
+    # Scoring components
+    # ------------------------------------------------------------------
+
+    def _score_condo_coop(self, lead: Lead) -> float:
+        """
+        Score based on what percentage of the portfolio's buildings are
+        condos or co-ops.  Uses building_types.condo + building_types.coop
+        divided by portfolio_size.
+        """
+        bt = getattr(lead, "building_types", None)
+        if not bt or lead.portfolio_size <= 0:
+            return 0
+
+        condo_coop_count = (getattr(bt, "condo", 0) or 0) + (getattr(bt, "coop", 0) or 0)
+        ratio = condo_coop_count / lead.portfolio_size
+
+        thresholds = self.config.get("condo_coop_thresholds", {})
+        if ratio >= thresholds.get("tier_100", 0.80):
             return 100
-        elif size >= thresholds.get("tier_80", 50):
-            return 80
-        elif size >= thresholds.get("tier_60", 25):
-            return 60
-        elif size >= thresholds.get("tier_40", 10):
+        elif ratio >= thresholds.get("tier_85", 0.60):
+            return 85
+        elif ratio >= thresholds.get("tier_65", 0.40):
+            return 65
+        elif ratio >= thresholds.get("tier_40", 0.20):
             return 40
-        elif size >= thresholds.get("tier_20", 5):
+        elif ratio > 0:
             return 20
-        else:
-            return 10
-    
+        return 0
+
+    def _score_density(self, lead: Lead) -> float:
+        """
+        Score based on unit-to-building ratio (total_units / portfolio_size).
+        Ideal profile: ratio > 15.
+        """
+        if lead.portfolio_size <= 0:
+            return 0
+
+        ratio = lead.total_units / lead.portfolio_size
+
+        thresholds = self.config.get("density_thresholds", {})
+        if ratio >= thresholds.get("tier_100", 20):
+            return 100
+        elif ratio >= thresholds.get("tier_90", 15):
+            return 90
+        elif ratio >= thresholds.get("tier_60", 10):
+            return 60
+        elif ratio >= thresholds.get("tier_30", 5):
+            return 30
+        return 10
+
     def _score_units(self, units: int) -> float:
-        thresholds = self.unit_thresholds
-        if units >= thresholds.get("tier_100", 1000):
-            return 100
-        elif units >= thresholds.get("tier_80", 500):
-            return 80
-        elif units >= thresholds.get("tier_60", 250):
-            return 60
-        elif units >= thresholds.get("tier_40", 100):
-            return 40
-        elif units >= thresholds.get("tier_20", 50):
-            return 20
-        else:
-            return 10
-    
+        """
+        Score based on total unit count.  Sweet spot is 50-300.
+        """
+        spot = self.config.get("unit_sweet_spot", {})
+        sweet_min = spot.get("min", 50)
+        sweet_max = spot.get("max", 300)
+        close_low = spot.get("close_low", 30)
+        close_high = spot.get("close_high", 500)
+        viable_high = spot.get("viable_high", 1000)
+
+        if sweet_min <= units <= sweet_max:
+            return 100  # Sweet spot
+        elif close_low <= units < sweet_min or sweet_max < units <= close_high:
+            return 60  # Close to ideal
+        elif units <= viable_high:
+            return 30  # Viable but not ideal
+        return 15  # Very large (> 1000)
+
+    def _score_location(self, lead: Lead) -> float:
+        """
+        Manhattan gets full points; all other boroughs get a baseline score.
+        """
+        loc = self.config.get("location_scores", {})
+        manhattan_score = loc.get("manhattan", 100)
+        default_score = loc.get("default", 50)
+
+        boro = (lead.boro or "").upper().strip()
+        if boro == "MANHATTAN":
+            return manhattan_score
+        return default_score
+
     def _score_professional(self, lead: Lead) -> float:
+        """Score based on entity type and corporate indicators (unchanged from V2)."""
         score = 0
-        
+
         if lead.owner_type and lead.owner_type.upper() in ("AGENT", "MANAGEMENT"):
             score += 40
-        
+
         name = (lead.agent_name or "").upper()
         if any(suffix in name for suffix in ["LLC", "INC", "CORP", "LP"]):
             score += 30
-        
+
         for keyword in self.professional_keywords:
             if keyword.upper() in name:
                 score += 20
                 break
-        
-        # Entity classification bonus/penalty
-        entity_type = getattr(lead, 'entity_type', 'unknown')
+
+        entity_type = getattr(lead, "entity_type", "unknown")
         if entity_type == "company":
             score += 15
         elif entity_type == "individual_agent" and lead.portfolio_size >= 30:
             score += 5
         elif entity_type == "owner_operator":
             score -= 10
-        
+
         return min(max(score, 0), 100)
-    
+
     def _score_contact(self, lead: Lead) -> float:
+        """Score based on contactability (unchanged from V2)."""
         score = 0
         if lead.phone:
             score += 30
@@ -187,174 +220,56 @@ class Scorer:
         if lead.owner_principal:
             score += 10
         return min(score, 100)
-    
-    def _score_concentration(self, lead: Lead) -> float:
-        if not lead.boros or len(lead.boros) == 0:
-            return 50
-        num_boroughs = len(lead.boros)
-        if num_boroughs == 1:
-            return 100
-        elif num_boroughs == 2:
-            return 80
-        elif num_boroughs == 3:
-            return 60
-        elif num_boroughs == 4:
-            return 40
-        else:
-            return 20
-    
-    # === V2 Scoring Components ===
-    
-    def _score_revenue(self, lead: Lead) -> float:
-        """
-        Score based on estimated annual management fee revenue.
-        
-        PE target range: $500K-$1.5M EBITDA (revenue is rough proxy).
-        Sweet spot is $300K-$2M annual management revenue.
-        """
-        revenue = getattr(lead, 'estimated_annual_revenue', 0) or 0
-        
-        if revenue <= 0:
-            return 0  # No data
-        
-        # Sweet spot scoring
-        if 300_000 <= revenue <= 2_000_000:
-            return 100  # In target range
-        elif 100_000 <= revenue < 300_000:
-            return 70  # Close to range
-        elif 2_000_000 < revenue <= 5_000_000:
-            return 80  # Larger than target but still attractive
-        elif revenue > 5_000_000:
-            return 60  # Too large for typical PE acquisition
-        elif 50_000 <= revenue < 100_000:
-            return 40  # Small but viable
-        else:
-            return 20  # Very small
-    
-    def _score_distress(self, lead: Lead) -> float:
-        """
-        Score based on HPD violations (distress signal).
-        
-        Moderate violations = motivated seller (positive for acquisition).
-        Extreme violations = operational risk (negative).
-        Uses violations_per_unit for normalized comparison.
-        """
-        vpu = getattr(lead, 'violations_per_unit', 0) or 0
-        total_v = getattr(lead, 'violation_count', 0) or 0
-        class_c = getattr(lead, 'violation_class_c', 0) or 0
-        
-        if total_v == 0:
-            return 50  # Neutral (no data or clean record)
-        
-        # Moderate violations = opportunity signal
-        if 0.5 <= vpu <= 3.0 and class_c < total_v * 0.3:
-            return 80  # Moderate distress, likely motivated to sell
-        elif vpu < 0.5:
-            return 60  # Low violations, well-managed (less motivated to sell)
-        elif vpu <= 5.0:
-            return 50  # Higher violations, some risk
-        elif vpu <= 10.0:
-            return 30  # High violations, significant risk
-        else:
-            return 10  # Extreme violations, avoid
-    
-    def _score_deal_fit(self, lead: Lead) -> float:
-        """
-        Composite score for PE deal fit criteria:
-        - Recurring revenue business (property management = yes)
-        - NYC focused (yes by definition)
-        - Professional management (entity_type = company)
-        - Has contactable decision-maker
-        - In revenue target range
-        - Manageable operational complexity
-        """
-        score = 0
-        max_possible = 0
-        
-        # Entity quality (20 pts)
-        max_possible += 20
-        entity_type = getattr(lead, 'entity_type', 'unknown')
-        if entity_type == "company":
-            score += 20
-        elif entity_type == "individual_agent":
-            score += 12
-        elif entity_type == "owner_operator":
-            score += 5
-        
-        # Contactability (20 pts)
-        max_possible += 20
-        if lead.phone and lead.email:
-            score += 20
-        elif lead.phone or lead.email:
-            score += 12
-        elif lead.website:
-            score += 5
-        
-        # Revenue in target range (25 pts)
-        max_possible += 25
-        revenue = getattr(lead, 'estimated_annual_revenue', 0) or 0
-        if 300_000 <= revenue <= 2_000_000:
-            score += 25
-        elif 100_000 <= revenue < 300_000 or 2_000_000 < revenue <= 5_000_000:
-            score += 15
-        elif revenue > 0:
-            score += 5
-        
-        # Portfolio size (15 pts) - medium portfolios are easier to integrate
-        max_possible += 15
-        ps = lead.portfolio_size
-        if 10 <= ps <= 100:
-            score += 15  # Sweet spot
-        elif 5 <= ps < 10:
-            score += 8
-        elif 100 < ps <= 300:
-            score += 12
-        elif ps > 300:
-            score += 8  # Very large, complex integration
-        
-        # Geographic concentration (10 pts)
-        max_possible += 10
-        if lead.boros and len(lead.boros) <= 2:
-            score += 10
-        elif lead.boros and len(lead.boros) <= 3:
-            score += 6
-        else:
-            score += 3
-        
-        # Manageable violations (10 pts)
-        max_possible += 10
-        vpu = getattr(lead, 'violations_per_unit', 0) or 0
-        if vpu <= 2.0:
-            score += 10
-        elif vpu <= 5.0:
-            score += 5
-        # else: 0 (high risk)
-        
-        # Normalize to 0-100
-        return round((score / max_possible) * 100, 1) if max_possible > 0 else 50
-    
+
+    # ------------------------------------------------------------------
+    # Tags & tiers
+    # ------------------------------------------------------------------
+
     def _generate_tags(self, lead: Lead) -> List[str]:
         tags = []
-        
-        # Portfolio size
-        if lead.portfolio_size >= 50:
-            tags.append("large_portfolio")
-        elif lead.portfolio_size >= 10:
-            tags.append("medium_portfolio")
-        else:
-            tags.append("small_portfolio")
-        
+
+        # Condo/co-op concentration
+        bt = getattr(lead, "building_types", None)
+        if bt and lead.portfolio_size > 0:
+            condo_coop_count = (getattr(bt, "condo", 0) or 0) + (getattr(bt, "coop", 0) or 0)
+            ratio = condo_coop_count / lead.portfolio_size
+            if ratio >= 0.80:
+                tags.append("condo_coop_heavy")
+            elif ratio >= 0.40:
+                tags.append("condo_coop_mixed")
+            elif ratio > 0:
+                tags.append("condo_coop_some")
+
+        # Density (unit-to-building ratio)
+        if lead.portfolio_size > 0:
+            density = lead.total_units / lead.portfolio_size
+            if density >= 15:
+                tags.append("high_density")
+            elif density >= 10:
+                tags.append("medium_density")
+
+        # Unit sweet spot
+        if 50 <= lead.total_units <= 300:
+            tags.append("sweet_spot_units")
+
+        # Location
+        boro = (lead.boro or "").upper().strip()
+        if boro:
+            tags.append(boro.lower().replace(" ", "_"))
+        if boro == "MANHATTAN":
+            tags.append("manhattan_target")
+
         # Professional
         if lead.owner_type and lead.owner_type.upper() in ("AGENT", "MANAGEMENT"):
             tags.append("professional_mgmt")
         else:
             tags.append("owner_operator")
-        
+
         # Entity type
-        entity_type = getattr(lead, 'entity_type', 'unknown')
-        if entity_type and entity_type != 'unknown':
+        entity_type = getattr(lead, "entity_type", "unknown")
+        if entity_type and entity_type != "unknown":
             tags.append(f"entity_{entity_type}")
-        
+
         # Contact
         if lead.website:
             tags.append("has_website")
@@ -362,46 +277,19 @@ class Scorer:
             tags.append("has_email")
         if lead.phone:
             tags.append("has_phone")
-        
-        # Borough
-        if lead.boro:
-            tags.append(lead.boro.lower().replace(" ", "_"))
-        
-        # Concentration
+
+        # Geographic focus
         if lead.boros and len(lead.boros) == 1:
             tags.append("single_borough_focus")
         elif lead.boros and len(lead.boros) <= 2:
             tags.append("concentrated")
-        
-        # Revenue tags (V2)
-        revenue = getattr(lead, 'estimated_annual_revenue', 0) or 0
-        if revenue >= 1_000_000:
-            tags.append("revenue_1m_plus")
-        elif revenue >= 500_000:
-            tags.append("revenue_500k_plus")
-        elif revenue >= 100_000:
-            tags.append("revenue_100k_plus")
-        
-        # Distress tags (V2)
-        vpu = getattr(lead, 'violations_per_unit', 0) or 0
-        if vpu > 5:
-            tags.append("high_violations")
-        elif vpu > 2:
-            tags.append("moderate_violations")
-        
-        # Deal fit tag (V2)
-        deal_fit = self._score_deal_fit(lead)
-        if deal_fit >= 80:
-            tags.append("strong_deal_fit")
-        elif deal_fit >= 60:
-            tags.append("good_deal_fit")
-        
+
         # Tier
         tier = self._get_tier(lead.score)
         tags.append(f"tier_{tier.lower()}")
-        
+
         return tags
-    
+
     def _get_tier(self, score: float) -> str:
         if score >= 80:
             return "A"
@@ -411,11 +299,10 @@ class Scorer:
             return "C"
         elif score >= 20:
             return "D"
-        else:
-            return "F"
+        return "F"
 
 
 def score_leads(leads: List[Lead]) -> List[Lead]:
-    """Score a list of leads using V2 scorer."""
+    """Score a list of leads using V3 scorer."""
     scorer = Scorer()
     return [scorer.score_lead(lead) for lead in leads]

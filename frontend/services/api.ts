@@ -103,14 +103,15 @@ async function fetchWithRetry(
 }
 
 /**
- * Score breakdown showing component scores (V2)
+ * Score breakdown showing component scores (V3)
  */
 export interface ScoreBreakdown {
-  portfolio: number;
+  condo_coop: number;
+  density: number;
   units: number;
+  location: number;
   professional: number;
   contact: number;
-  concentration: number;
   revenue: number;     // V2
   distress: number;    // V2
   deal_fit: number;    // V2
