@@ -596,7 +596,7 @@ async def health_detailed():
             "total_leads": lead_count,
         },
         "cache": {
-            "leads_in_cache": cache_size,
+            "leads_in_cache": len(_leads_cache) if _leads_cache else 0,
         },
         "enrichment": {
             "running": _enrichment_state.get("running", False),
