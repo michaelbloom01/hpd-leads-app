@@ -4,10 +4,13 @@ Aggregate buildings into leads.
 See docs/02-data-model.md for grouping logic.
 """
 import hashlib
+import logging
 from collections import defaultdict, Counter
 from dataclasses import dataclass, field
 from datetime import datetime, date
 from typing import List, Optional, Dict
+
+logger = logging.getLogger(__name__)
 
 from .normalize import Building, Contact, normalize_name, normalize_name_for_grouping
 
