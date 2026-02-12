@@ -335,18 +335,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     setFilterMinUnitsPerBldg('');
     setFilterMaxUnitsPerBldg('');
     setFilterBuildingTypes([]);
-    // Reload with no filters (direct API call since state is async)
+    // Reload with no filters (use ref to get latest loadLeads after state resets)
     setPage(0);
-    setLoading(true);
-    try {
-      const response = await fetchLeads({ limit: pageSize, offset: 0, sort_by: sortField === 'agent_name' ? 'company_name' : sortField, sort_dir: sortDir });
-      setLeads(response.leads);
-      setTotalLeads(response.total);
-    } catch (err) {
-      console.error('Failed to fetch leads:', err);
-    } finally {
-      setLoading(false);
-    }
+    setTimeout(() => loadLeadsRef.current?.(0), 0);
   };
 
   const exportToCsv = async () => {
@@ -1082,7 +1073,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
               <span className="text-xs text-gray-400">Per page:</span>
               <select
                 value={pageSize}
-                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }}
+                onChange={(e) => { const newSize = Number(e.target.value); setPageSize(newSize); setPage(0); setTimeout(() => loadLeadsRef.current?.(0), 0); }}
                 className="px-2 py-1 bg-white border border-gray-200 rounded text-xs text-gray-700 focus:outline-none"
               >
                 <option value={25}>25</option>

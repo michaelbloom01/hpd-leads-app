@@ -1,5 +1,6 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { toast } from 'react-hot-toast';
+import DOMPurify from 'dompurify';
 import { ApiLead, updateLead, addOutreachAttempt, enrichLeadAll, getDueDiligence, OutreachAttempt } from '../services/api';
 
 // Lazy-load map to avoid large initial bundle
@@ -77,10 +78,11 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
 
   // === Handlers ===
   const handleSaveStatus = async (newStatus: string) => {
+    const prev = outreachStatus;
     setOutreachStatus(newStatus);
     setIsSaving(true);
     try { await updateLead(lead.lead_id, { outreach_status: newStatus }); } 
-    catch (err) { console.error('Failed to update status:', err); toast.error('Failed to update status'); } 
+    catch (err) { setOutreachStatus(prev); console.error('Failed to update status:', err); toast.error('Failed to update status'); } 
     finally { setIsSaving(false); }
   };
 
@@ -92,26 +94,29 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   };
 
   const handlePipelineChange = async (stage: string) => {
+    const prev = pipelineStage;
     setPipelineStage(stage);
     try {
       await updateLead(lead.lead_id, { pipeline_stage: stage });
       toast.success(`Pipeline: ${PIPELINE_STAGES.find(s => s.value === stage)?.label}`);
-    } catch (err) { console.error('Failed to update pipeline:', err); toast.error('Failed to update pipeline'); }
+    } catch (err) { setPipelineStage(prev); console.error('Failed to update pipeline:', err); toast.error('Failed to update pipeline'); }
   };
 
   const handlePriorityChange = async (rank: number) => {
     const newRank = rank === priorityRank ? 0 : rank;
+    const prev = priorityRank;
     setPriorityRank(newRank);
     try { await updateLead(lead.lead_id, { priority_rank: newRank }); } 
-    catch (err) { console.error('Failed to update priority:', err); toast.error('Failed to update priority'); }
+    catch (err) { setPriorityRank(prev); console.error('Failed to update priority:', err); toast.error('Failed to update priority'); }
   };
 
   const handleFollowUpChange = async (date: string) => {
+    const prev = nextFollowUp;
     setNextFollowUp(date);
     try {
       await updateLead(lead.lead_id, { next_follow_up: date || null });
       toast.success(date ? `Follow-up: ${date}` : 'Follow-up cleared');
-    } catch (err) { console.error('Failed to update follow-up:', err); toast.error('Failed to update'); }
+    } catch (err) { setNextFollowUp(prev); console.error('Failed to update follow-up:', err); toast.error('Failed to update'); }
   };
 
   const handleGenerateDD = async () => {
@@ -800,20 +805,21 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                           th,td{border:1px solid #e2e8f0;padding:6px 10px;text-align:left;font-size:13px}
                           th{background:#f8fafc;font-weight:600}
                           @media print{body{margin:20px}}</style></head><body>`);
-                        printWindow.document.write(ddReport.report_markdown
+                        let reportHtml = ddReport.report_markdown
                           .replace(/^# (.*)/gm, '<h1>$1</h1>')
                           .replace(/^## (.*)/gm, '<h2>$1</h2>')
                           .replace(/^### (.*)/gm, '<h3>$1</h3>')
                           .replace(/^- (.*)/gm, '<li>$1</li>')
                           .replace(/\n\n/g, '<p></p>')
-                          .replace(/\n/g, '<br>'));
+                          .replace(/\n/g, '<br>');
                         if (ddReport.comparables?.length > 0) {
-                          printWindow.document.write('<h2>Comparables</h2><table><tr><th>Name</th><th>Score</th><th>Buildings</th><th>Revenue</th></tr>');
+                          reportHtml += '<h2>Comparables</h2><table><tr><th>Name</th><th>Score</th><th>Buildings</th><th>Revenue</th></tr>';
                           ddReport.comparables.forEach((c: any) => {
-                            printWindow.document.write(`<tr><td>${c.name || c.lead_name || ''}</td><td>${c.score?.toFixed(1) || ''}</td><td>${c.portfolio_size || c.buildings || ''}</td><td>${c.estimated_annual_revenue ? formatCurrency(c.estimated_annual_revenue) : '—'}</td></tr>`);
+                            reportHtml += `<tr><td>${c.name || c.lead_name || ''}</td><td>${c.score?.toFixed(1) || ''}</td><td>${c.portfolio_size || c.buildings || ''}</td><td>${c.estimated_annual_revenue ? formatCurrency(c.estimated_annual_revenue) : '—'}</td></tr>`;
                           });
-                          printWindow.document.write('</table>');
+                          reportHtml += '</table>';
                         }
+                        printWindow.document.write(DOMPurify.sanitize(reportHtml));
                         printWindow.document.write('</body></html>');
                         printWindow.document.close();
                         printWindow.print();

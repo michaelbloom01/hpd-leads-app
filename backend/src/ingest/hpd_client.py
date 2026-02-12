@@ -165,8 +165,12 @@ class HPDClient:
                 remaining = limit - len(all_records)
                 page_size = min(PAGE_SIZE, remaining)
             
-            # Fetch page
-            page = self._fetch_page(endpoint, offset=offset, limit=page_size, where=where)
+            # Fetch page (may raise RuntimeError if all retries exhausted)
+            try:
+                page = self._fetch_page(endpoint, offset=offset, limit=page_size, where=where)
+            except RuntimeError as e:
+                logger.error(f"Pagination halted: {e}. Returning {len(all_records)} records collected so far.")
+                break
             
             if not page:
                 consecutive_empty += 1
@@ -188,7 +192,11 @@ class HPDClient:
                 # Partial page — likely the last page, but verify with one more request
                 logger.debug(f"Partial page ({len(page)}/{page_size}) at offset {offset}, verifying end...")
                 offset += len(page)
-                verify_page = self._fetch_page(endpoint, offset=offset, limit=page_size, where=where)
+                try:
+                    verify_page = self._fetch_page(endpoint, offset=offset, limit=page_size, where=where)
+                except RuntimeError as e:
+                    logger.warning(f"Verify page failed: {e}. Treating partial page as end of data.")
+                    verify_page = None
                 if verify_page:
                     # Not actually the end — keep going
                     all_records.extend(verify_page)
@@ -261,7 +269,10 @@ class HPDClient:
                     logger.error(f"Request failed after {settings.api_retry_attempts} attempts: {e}")
                     raise
         
-        return []
+        raise RuntimeError(
+            f"HPD API: all {settings.api_retry_attempts} retries exhausted for page at offset={offset}. "
+            "This likely means persistent rate-limiting. Data may be incomplete."
+        )
     
     def get_combined_data(self, building_limit: Optional[int] = None) -> List[Dict]:
         """

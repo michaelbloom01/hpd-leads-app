@@ -97,7 +97,7 @@ _allowed_origins.extend(["http://localhost:5173", "http://localhost:3000", "http
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",  # R9: matches all Vercel preview/production deploys
+    allow_origin_regex=r"https://frontend-nine-psi-58[a-z0-9-]*\.vercel\.app",  # Scoped to this project's Vercel deploys
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -374,20 +374,21 @@ def _compute_violations_sync():
             db.update_lead(lead_id, agg)
             updated += 1
     
-    # Update cache
+    # Update cache (under lock to prevent concurrent read of half-updated data)
     global _leads_cache
-    for lead in _leads_cache:
-        if lead.lead_id in lead_buildings:
-            agg = aggregate_violations_for_lead(
-                lead_buildings[lead.lead_id],
-                violations_data,
-                lead_units.get(lead.lead_id, 0)
-            )
-            lead.violation_count = agg["violation_count"]
-            lead.violation_class_a = agg["violation_class_a"]
-            lead.violation_class_b = agg["violation_class_b"]
-            lead.violation_class_c = agg["violation_class_c"]
-            lead.violations_per_unit = agg["violations_per_unit"]
+    with _leads_lock:
+        for lead in _leads_cache:
+            if lead.lead_id in lead_buildings:
+                agg = aggregate_violations_for_lead(
+                    lead_buildings[lead.lead_id],
+                    violations_data,
+                    lead_units.get(lead.lead_id, 0)
+                )
+                lead.violation_count = agg["violation_count"]
+                lead.violation_class_a = agg["violation_class_a"]
+                lead.violation_class_b = agg["violation_class_b"]
+                lead.violation_class_c = agg["violation_class_c"]
+                lead.violations_per_unit = agg["violations_per_unit"]
     
     db.set_setting('violations_computed_at', datetime.now().isoformat())
     logger.info(f"Background: Violations computed for {updated}/{len(rows)} leads")
@@ -1589,8 +1590,9 @@ async def refresh_pipeline(
             db.save_leads(leads)
             logger.info(f"Persisted {len(leads)} leads to database")
             
-            # Update cache
-            _leads_cache = leads
+            # Update cache (under lock to prevent concurrent read of partial state)
+            with _leads_lock:
+                _leads_cache = leads
             _last_refresh = datetime.now()
             
             return {
@@ -1626,7 +1628,8 @@ async def get_refresh_status():
 
 
 @app.post("/api/enrich")
-async def enrich_leads(request: EnrichmentRequest):
+@limiter.limit("5/minute")
+async def enrich_leads(request: Request, body: EnrichmentRequest):
     """
     Enrich specific leads by ID.
     
@@ -1634,14 +1637,14 @@ async def enrich_leads(request: EnrichmentRequest):
     """
     global _leads_cache
     
-    if not request.lead_ids:
+    if not body.lead_ids:
         raise HTTPException(status_code=400, detail="No lead IDs provided")
     
     # Find leads to enrich
     to_enrich = []
     lead_index = {l.lead_id: i for i, l in enumerate(_leads_cache)}
     
-    for lid in request.lead_ids:
+    for lid in body.lead_ids:
         if lid in lead_index:
             to_enrich.append(_leads_cache[lead_index[lid]])
     
@@ -1975,7 +1978,9 @@ def _run_batch_enrichment(
 
 
 @app.post("/api/enrich/batch-full")
+@limiter.limit("5/minute")
 async def enrich_batch_full(
+    request: Request,
     background_tasks: BackgroundTasks,
     limit: int = Query(100, le=2000, description="Max leads to enrich"),
     min_units: int = Query(40, description="Only enrich leads with total_units >= this"),
@@ -2049,7 +2054,8 @@ def _run_full_enrichment_batch(lead_ids: list):
         crawler = WebCrawler()
         db = get_database()
         
-        lead_index = {l.lead_id: i for i, l in enumerate(_leads_cache)}
+        with _leads_lock:
+            lead_index = {l.lead_id: i for i, l in enumerate(_leads_cache)}
         
         for idx, lead_id in enumerate(lead_ids):
             if _enrichment_stop_requested:
@@ -2059,7 +2065,8 @@ def _run_full_enrichment_batch(lead_ids: list):
             cache_idx = lead_index.get(lead_id)
             if cache_idx is None:
                 continue
-            lead = _leads_cache[cache_idx]
+            with _leads_lock:
+                lead = _leads_cache[cache_idx]
             company_name = lead.agent_name or lead.owner_name
             
             with _enrichment_lock:
@@ -2143,7 +2150,8 @@ def _run_full_enrichment_batch(lead_ids: list):
                 else:
                     lead.enrichment_status = 'failed'
                 
-                _leads_cache[cache_idx] = lead
+                with _leads_lock:
+                    _leads_cache[cache_idx] = lead
                 
                 # Persist to DB
                 db.update_lead(lead_id, {
@@ -2182,7 +2190,9 @@ def _run_full_enrichment_batch(lead_ids: list):
 
 
 @app.post("/api/enrich/batch")
+@limiter.limit("5/minute")
 async def enrich_batch(
+    request: Request,
     background_tasks: BackgroundTasks,
     limit: int = Query(50, le=500, description="Max leads to enrich"),
     min_score: Optional[float] = Query(None, description="Only enrich leads with score >= this"),
@@ -2250,7 +2260,9 @@ async def enrich_batch(
 
 
 @app.post("/api/enrich/all")
+@limiter.limit("3/minute")
 async def enrich_all_leads(
+    request: Request,
     background_tasks: BackgroundTasks,
     dos_enabled: bool = Query(True, description="Run NY DOS lookups (fast, parallel)"),
     web_enabled: bool = Query(True, description="Run web crawling (rate-limited)"),
@@ -2723,7 +2735,9 @@ def _run_api_enrichment(limit: int, min_portfolio: int = 5, boro: Optional[str] 
 
 
 @app.post("/api/enrich/api-only")
+@limiter.limit("5/minute")
 async def enrich_api_only(
+    request: Request,
     background_tasks: BackgroundTasks,
     limit: int = Query(500, le=2000, description="Max leads to enrich"),
     min_portfolio: int = Query(5, description="Minimum portfolio size"),

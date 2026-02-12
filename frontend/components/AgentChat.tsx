@@ -84,10 +84,16 @@ const AgentChat: React.FC<AgentChatProps> = ({
     inputRef.current?.focus();
   }, []);
 
+  // Abort SSE stream on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => { abortRef.current?.abort(); };
+  }, []);
+
   // Reset messages when conversation changes
   useEffect(() => {
     if (!conversationId) {
       setMessages([]);
+      setLastFailedMsg(null);
     }
   }, [conversationId]);
 
@@ -236,18 +242,24 @@ const AgentChat: React.FC<AgentChatProps> = ({
       }
     };
 
-    // Safety timeout: if nothing received after 90 seconds, surface an error
-    const safetyTimeout = setTimeout(() => {
-      if (!receivedAnyData && abortRef.current) {
-        abortRef.current.abort();
-        abortRef.current = null;
-        setIsStreaming(false);
-        setStatus(null);
-        setLastFailedMsg(text.trim());
-        accumulatedError = 'No response received after 90 seconds. The server may be starting up — try again.';
-        updateAssistant();
-      }
-    }, 90_000);
+    // Safety timeout: if no events received for 90 seconds, surface an error.
+    // Re-armed on every event so a mid-stream hang is also caught.
+    let safetyTimer: ReturnType<typeof setTimeout>;
+    const armSafetyTimeout = () => {
+      clearTimeout(safetyTimer);
+      safetyTimer = setTimeout(() => {
+        if (abortRef.current) {
+          abortRef.current.abort();
+          abortRef.current = null;
+          setIsStreaming(false);
+          setStatus(null);
+          setLastFailedMsg(text.trim());
+          accumulatedError = 'No response received after 90 seconds. The server may be starting up — try again.';
+          updateAssistant();
+        }
+      }, 90_000);
+    };
+    armSafetyTimeout();
 
     abortRef.current = agentChat(
       {
@@ -256,11 +268,11 @@ const AgentChat: React.FC<AgentChatProps> = ({
         confirmation,
       },
       (event) => {
-        clearTimeout(safetyTimeout);
+        armSafetyTimeout(); // Re-arm on each event
         handleEvent(event);
       },
       (err) => {
-        clearTimeout(safetyTimeout);
+        clearTimeout(safetyTimer);
         setIsStreaming(false);
         setStatus(null);
         setLastFailedMsg(text.trim());

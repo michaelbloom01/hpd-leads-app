@@ -833,6 +833,12 @@ export function agentChat(
         signal: controller.signal,
       });
 
+      if (response.status === 401) {
+        clearToken();
+        window.dispatchEvent(new Event('auth:logout'));
+        throw new Error('Session expired — please log in again');
+      }
+
       if (!response.ok) {
         throw new Error(`Agent chat failed: ${response.status} ${response.statusText}`);
       }

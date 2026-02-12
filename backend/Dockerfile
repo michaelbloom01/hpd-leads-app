@@ -1,4 +1,4 @@
-# HPD Leads API - Railway Deployment v2 - Cache bust
+# HPD Leads API - Railway Deployment v2
 FROM python:3.12-slim
 
 # Force cache invalidation
@@ -12,6 +12,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
+
+# Run as non-root user for security
+RUN adduser --disabled-password --gecos '' --no-create-home appuser && \
+    chown -R appuser:appuser /app
+USER appuser
 
 # Start using Python script that reads PORT env var
 ENTRYPOINT ["python", "start.py"]

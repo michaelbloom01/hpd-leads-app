@@ -98,14 +98,16 @@ class LeadsDatabase:
             try:
                 conn.execute("ALTER TABLE leads ADD COLUMN building_types TEXT")
                 logger.info("Added building_types column to leads table")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
+            except sqlite3.OperationalError as e:
+                if 'duplicate column' not in str(e).lower():
+                    raise
             
             try:
                 conn.execute("ALTER TABLE leads ADD COLUMN building_classes TEXT")
                 logger.info("Added building_classes column to leads table")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
+            except sqlite3.OperationalError as e:
+                if 'duplicate column' not in str(e).lower():
+                    raise
             
             # Migration: Add entity classification columns (Phase 0)
             for col, col_type in [
@@ -117,15 +119,17 @@ class LeadsDatabase:
                 try:
                     conn.execute(f"ALTER TABLE leads ADD COLUMN {col} {col_type}")
                     logger.info(f"Added {col} column to leads table")
-                except sqlite3.OperationalError:
-                    pass  # Column already exists
+                except sqlite3.OperationalError as e:
+                    if 'duplicate column' not in str(e).lower():
+                        raise
             
             # Migration: Add enrichment retry column (Phase 2.7)
             try:
                 conn.execute("ALTER TABLE leads ADD COLUMN enrichment_retries INTEGER DEFAULT 0")
                 logger.info("Added enrichment_retries column to leads table")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
+            except sqlite3.OperationalError as e:
+                if 'duplicate column' not in str(e).lower():
+                    raise
             
             # Migration: Add revenue estimation columns (Phase 5.1)
             for col, col_type in [
@@ -135,8 +139,9 @@ class LeadsDatabase:
                 try:
                     conn.execute(f"ALTER TABLE leads ADD COLUMN {col} {col_type}")
                     logger.info(f"Added {col} column to leads table")
-                except sqlite3.OperationalError:
-                    pass  # Column already exists
+                except sqlite3.OperationalError as e:
+                    if 'duplicate column' not in str(e).lower():
+                        raise
             
             # Migration: Add violations columns (Phase 5.2)
             for col, col_type in [
@@ -149,8 +154,9 @@ class LeadsDatabase:
                 try:
                     conn.execute(f"ALTER TABLE leads ADD COLUMN {col} {col_type}")
                     logger.info(f"Added {col} column to leads table")
-                except sqlite3.OperationalError:
-                    pass  # Column already exists
+                except sqlite3.OperationalError as e:
+                    if 'duplicate column' not in str(e).lower():
+                        raise
             
             # Migration: Add pipeline columns (Phase 5.3)
             for col, col_type in [
@@ -161,8 +167,9 @@ class LeadsDatabase:
                 try:
                     conn.execute(f"ALTER TABLE leads ADD COLUMN {col} {col_type}")
                     logger.info(f"Added {col} column to leads table")
-                except sqlite3.OperationalError:
-                    pass  # Column already exists
+                except sqlite3.OperationalError as e:
+                    if 'duplicate column' not in str(e).lower():
+                        raise
             
             conn.executescript("""
                 
@@ -418,8 +425,9 @@ class LeadsDatabase:
             try:
                 conn.execute("ALTER TABLE leads ADD COLUMN data_staleness TEXT DEFAULT 'current'")
                 logger.info("Added data_staleness column to leads table")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
+            except sqlite3.OperationalError as e:
+                if 'duplicate column' not in str(e).lower():
+                    raise
             
             # Record initial schema version if not present
             existing_version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
@@ -2043,6 +2051,14 @@ class LeadsDatabase:
             conn.commit()
             return cursor.lastrowid
     
+    _AUDIT_LOG_ALLOWED_FIELDS = {
+        "hpd_total_available", "buildings_fetched", "buildings_normalized",
+        "leads_created", "leads_before_refresh", "leads_after_refresh",
+        "leads_net_change", "buildings_dropped_no_name", "contacts_deduplicated",
+        "status", "error_message", "config_json", "finished_at",
+        "duration_seconds", "warnings_json",
+    }
+
     def update_audit_log(self, audit_id: int, updates: Dict):
         """Update an audit log entry with pipeline stage counts."""
         if not updates:
@@ -2051,8 +2067,14 @@ class LeadsDatabase:
         set_clauses = []
         params = []
         for key, val in updates.items():
+            if key not in self._AUDIT_LOG_ALLOWED_FIELDS:
+                logger.warning(f"update_audit_log: ignoring disallowed field '{key}'")
+                continue
             set_clauses.append(f"{key} = ?")
             params.append(val)
+        
+        if not set_clauses:
+            return
         params.append(audit_id)
         
         with self._get_connection() as conn:
@@ -2152,13 +2174,17 @@ class LeadsDatabase:
         return str(dest)
 
 
-# Singleton instance
+# Singleton instance (thread-safe)
+import threading as _threading
 _db_instance: Optional[LeadsDatabase] = None
+_db_lock = _threading.Lock()
 
 
 def get_database() -> LeadsDatabase:
-    """Get the database singleton."""
+    """Get the database singleton (thread-safe)."""
     global _db_instance
     if _db_instance is None:
-        _db_instance = LeadsDatabase()
+        with _db_lock:
+            if _db_instance is None:  # Double-checked locking
+                _db_instance = LeadsDatabase()
     return _db_instance

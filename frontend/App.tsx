@@ -201,9 +201,9 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         isOpen={isAgentOpen}
         onClose={() => setIsAgentOpen(false)}
         onSelectLead={(leadId) => {
-          fetchLead(leadId).then(lead => {
-            if (lead) setSelectedLead(lead);
-          });
+          fetchLead(leadId)
+            .then(lead => { if (lead) setSelectedLead(lead); })
+            .catch(err => { console.error('Failed to fetch lead:', err); toast.error('Could not load lead details'); });
         }}
       />
 

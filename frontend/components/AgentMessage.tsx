@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import DOMPurify from 'dompurify';
 import {
   AgentLeadRow,
   AgentScriptRow,
@@ -201,7 +202,7 @@ const BriefingPreview: React.FC<{ briefing: AgentBriefingPreview }> = ({ briefin
       </div>
       <div
         className="p-3 text-xs max-h-40 overflow-y-auto"
-        dangerouslySetInnerHTML={{ __html: briefing.html.slice(0, 2000) }}
+        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(briefing.html.slice(0, 2000)) }}
       />
     </div>
   );

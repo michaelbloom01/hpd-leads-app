@@ -23,7 +23,13 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "CHANGE-ME-IN-PRODUCTION-use-a-64-char-random-string")
+_jwt_secret_raw = os.environ.get("JWT_SECRET")
+if not _jwt_secret_raw:
+    raise RuntimeError(
+        "JWT_SECRET environment variable is not set. "
+        "Set a strong random string (64+ chars) before starting the server."
+    )
+JWT_SECRET = _jwt_secret_raw
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES", "1440"))  # 24 hours default
 

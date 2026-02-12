@@ -117,6 +117,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
   const [dataStatus, setDataStatus] = useState<DataStatus | null>(null);
   const [enrichmentGaps, setEnrichmentGaps] = useState<EnrichmentGaps | null>(null);
   const [backendStarting, setBackendStarting] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [dataHealth, setDataHealth] = useState<DataHealthResponse | null>(null);
 
   // Pipeline drawer state
@@ -191,6 +192,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
       }
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
+      setLoadError('Failed to load dashboard data. Check your connection and try again.');
     } finally {
       setLoading(false);
     }
@@ -299,7 +301,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
 
   // Contact rate
   const contactRate = stats && stats.total_leads > 0
-    ? ((stats.with_phone + stats.with_email) / stats.total_leads * 100)
+    ? Math.min(100, (stats.with_phone + stats.with_email) / stats.total_leads * 100)
     : 0;
 
   // Follow-ups breakdown
@@ -376,6 +378,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
+
+      {/* Error banner */}
+      {loadError && (
+        <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-3 flex items-center justify-between">
+          <span className="text-sm text-red-700">{loadError}</span>
+          <button onClick={() => { setLoadError(null); setLoading(true); loadData(); }} className="text-xs font-medium text-red-600 hover:text-red-800 px-3 py-1 bg-red-100 rounded-lg">Retry</button>
+        </div>
+      )}
 
       {/* ── Section 1: Today's Actions ─────────────────────────── */}
       <div className="bg-white shadow-sm border border-gray-200 rounded-2xl px-5 py-3">
