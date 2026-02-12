@@ -965,8 +965,14 @@ class LeadsDatabase:
         elif has_website is False:
             where_clauses.append("(website IS NULL OR website = '')")
         if entity_type is not None:
-            where_clauses.append("entity_type = ?")
-            params.append(entity_type)
+            types = [t.strip() for t in entity_type.split(',') if t.strip()]
+            if len(types) == 1:
+                where_clauses.append("entity_type = ?")
+                params.append(types[0])
+            elif len(types) > 1:
+                placeholders = ','.join('?' * len(types))
+                where_clauses.append(f"entity_type IN ({placeholders})")
+                params.extend(types)
         if min_units is not None:
             where_clauses.append("total_units >= ?")
             params.append(min_units)
@@ -987,14 +993,38 @@ class LeadsDatabase:
                 type_clauses = [f"CAST(json_extract(building_types, '$.{t}') AS INTEGER) > 0" for t in types]
                 where_clauses.append(f"({' OR '.join(type_clauses)})")
         if enrichment_status is not None:
-            where_clauses.append("enrichment_status = ?")
-            params.append(enrichment_status)
+            # Support comma-separated multi-select (e.g., "complete,partial")
+            statuses = [s.strip() for s in enrichment_status.split(',') if s.strip()]
+            if len(statuses) == 1:
+                where_clauses.append("enrichment_status = ?")
+                params.append(statuses[0])
+            elif len(statuses) > 1:
+                placeholders = ','.join('?' * len(statuses))
+                where_clauses.append(f"enrichment_status IN ({placeholders})")
+                params.extend(statuses)
         if outreach_status is not None:
-            where_clauses.append("outreach_status = ?")
-            params.append(outreach_status)
+            statuses = [s.strip() for s in outreach_status.split(',') if s.strip()]
+            if len(statuses) == 1:
+                where_clauses.append("outreach_status = ?")
+                params.append(statuses[0])
+            elif len(statuses) > 1:
+                placeholders = ','.join('?' * len(statuses))
+                where_clauses.append(f"outreach_status IN ({placeholders})")
+                params.extend(statuses)
         if pipeline_stage is not None:
-            where_clauses.append("(pipeline_stage = ? OR (? = 'research' AND (pipeline_stage IS NULL OR pipeline_stage = '')))")
-            params.extend([pipeline_stage, pipeline_stage])
+            stages = [s.strip() for s in pipeline_stage.split(',') if s.strip()]
+            if len(stages) == 1:
+                where_clauses.append("(pipeline_stage = ? OR (? = 'research' AND (pipeline_stage IS NULL OR pipeline_stage = '')))")
+                params.extend([stages[0], stages[0]])
+            elif len(stages) > 1:
+                stage_clauses = []
+                for s in stages:
+                    if s == 'research':
+                        stage_clauses.append("(pipeline_stage = 'research' OR pipeline_stage IS NULL OR pipeline_stage = '')")
+                    else:
+                        stage_clauses.append(f"pipeline_stage = ?")
+                        params.append(s)
+                where_clauses.append(f"({' OR '.join(stage_clauses)})")
         
         # Agent-specific filters
         if min_violations_per_unit is not None:

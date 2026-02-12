@@ -45,10 +45,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
   const [filterHasPhone, setFilterHasPhone] = useState<boolean | null>(null);
   const [filterHasEmail, setFilterHasEmail] = useState<boolean | null>(null);
   const [filterHasWebsite, setFilterHasWebsite] = useState<boolean | null>(null);
-  const [filterEntityType, setFilterEntityType] = useState<string>('');
-  const [filterOutreachStatus, setFilterOutreachStatus] = useState<string>('');
-  const [filterPipelineStage, setFilterPipelineStage] = useState<string>('');
-  const [filterEnrichmentStatus, setFilterEnrichmentStatus] = useState<string>('');
+  const [filterEntityTypes, setFilterEntityTypes] = useState<string[]>([]);
+  const [filterOutreachStatuses, setFilterOutreachStatuses] = useState<string[]>([]);
+  const [filterPipelineStages, setFilterPipelineStages] = useState<string[]>([]);
+  const [filterEnrichmentStatuses, setFilterEnrichmentStatuses] = useState<string[]>([]);
   const [filterMinUnits, setFilterMinUnits] = useState<string>('');
   const [filterMaxUnits, setFilterMaxUnits] = useState<string>('');
   const [filterMinUnitsPerBldg, setFilterMinUnitsPerBldg] = useState<string>('');
@@ -80,11 +80,39 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     );
   };
 
+  const toggleEntityType = (type: string) => {
+    setFilterEntityTypes(prev =>
+      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+    );
+  };
+
+  const toggleOutreachStatus = (status: string) => {
+    setFilterOutreachStatuses(prev =>
+      prev.includes(status) ? prev.filter(s => s !== status) : [...prev, status]
+    );
+  };
+
+  const togglePipelineStage = (stage: string) => {
+    setFilterPipelineStages(prev =>
+      prev.includes(stage) ? prev.filter(s => s !== stage) : [...prev, stage]
+    );
+  };
+
+  const toggleEnrichmentStatus = (status: string) => {
+    setFilterEnrichmentStatuses(prev =>
+      prev.includes(status) ? prev.filter(s => s !== status) : [...prev, status]
+    );
+  };
+
   // Count of secondary filters active (for badge)
   const activeSecondaryFilterCount = [
-    filterEntityType, filterOutreachStatus, filterEnrichmentStatus,
+    filterEntityTypes.length > 0 ? 'yes' : '',
+    filterOutreachStatuses.length > 0 ? 'yes' : '',
+    filterEnrichmentStatuses.length > 0 ? 'yes' : '',
+    filterPipelineStages.length > 0 ? 'yes' : '',
     filterMinScore, filterMaxScore,
     filterMinUnits, filterMaxUnits,
+    filterMinPortfolio, filterMaxPortfolio,
     filterMinUnitsPerBldg, filterMaxUnitsPerBldg,
     filterHasWebsite === true ? 'yes' : '',
     filterBuildingTypes.length > 0 ? 'yes' : '',
@@ -120,10 +148,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       if (filterHasPhone !== null) params.has_phone = filterHasPhone;
       if (filterHasEmail !== null) params.has_email = filterHasEmail;
       if (filterHasWebsite !== null) params.has_website = filterHasWebsite;
-      if (filterEntityType) params.entity_type = filterEntityType;
-      if (filterOutreachStatus) params.outreach_status = filterOutreachStatus;
-      if (filterPipelineStage) params.pipeline_stage = filterPipelineStage;
-      if (filterEnrichmentStatus) params.enrichment_status = filterEnrichmentStatus;
+      if (filterEntityTypes.length > 0) params.entity_type = filterEntityTypes.join(',');
+      if (filterOutreachStatuses.length > 0) params.outreach_status = filterOutreachStatuses.join(',');
+      if (filterPipelineStages.length > 0) params.pipeline_stage = filterPipelineStages.join(',');
+      if (filterEnrichmentStatuses.length > 0) params.enrichment_status = filterEnrichmentStatuses.join(',');
       if (searchTerm.trim()) params.search = searchTerm.trim();
       
       const minUnits = parseInt(filterMinUnits);
@@ -148,7 +176,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
       setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterMinScore, filterMaxScore, filterMinPortfolio, filterMaxPortfolio, filterBoroughs, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityType, filterOutreachStatus, filterPipelineStage, filterEnrichmentStatus, filterMinUnits, filterMaxUnits, filterMinUnitsPerBldg, filterMaxUnitsPerBldg, filterBuildingTypes, pageSize, sortField, sortDir, searchTerm]);
+  }, [filterMinScore, filterMaxScore, filterMinPortfolio, filterMaxPortfolio, filterBoroughs, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityTypes, filterOutreachStatuses, filterPipelineStages, filterEnrichmentStatuses, filterMinUnits, filterMaxUnits, filterMinUnitsPerBldg, filterMaxUnitsPerBldg, filterBuildingTypes, pageSize, sortField, sortDir, searchTerm]);
 
   // Keep ref in sync so callbacks can call latest version
   loadLeadsRef.current = loadLeads;
@@ -261,10 +289,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     setFilterHasPhone(null);
     setFilterHasEmail(null);
     setFilterHasWebsite(null);
-    setFilterEntityType('');
-    setFilterOutreachStatus('');
-    setFilterPipelineStage('');
-    setFilterEnrichmentStatus('');
+    setFilterEntityTypes([]);
+    setFilterOutreachStatuses([]);
+    setFilterPipelineStages([]);
+    setFilterEnrichmentStatuses([]);
     setFilterMinUnits('');
     setFilterMaxUnits('');
     setFilterMinUnitsPerBldg('');
@@ -302,7 +330,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     if (filterBoroughs.length > 0) params.set('boro', filterBoroughs.join(','));
     if (filterHasPhone === true) params.set('has_phone', 'true');
     if (filterHasEmail === true) params.set('has_email', 'true');
-    if (filterEntityType) params.set('entity_type', filterEntityType);
+    if (filterEntityTypes.length > 0) params.set('entity_type', filterEntityTypes.join(','));
     
     const minUnits = parseInt(filterMinUnits);
     if (!isNaN(minUnits) && minUnits > 0) params.set('min_units', minUnits.toString());
@@ -313,9 +341,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     const maxUpb = parseFloat(filterMaxUnitsPerBldg);
     if (!isNaN(maxUpb) && maxUpb > 0) params.set('max_units_per_bldg', maxUpb.toString());
     if (filterBuildingTypes.length > 0) params.set('building_type_has', filterBuildingTypes.join(','));
-    if (filterOutreachStatus) params.set('outreach_status', filterOutreachStatus);
-    if (filterPipelineStage) params.set('pipeline_stage', filterPipelineStage);
-    if (filterEnrichmentStatus) params.set('enrichment_status', filterEnrichmentStatus);
+    if (filterOutreachStatuses.length > 0) params.set('outreach_status', filterOutreachStatuses.join(','));
+    if (filterPipelineStages.length > 0) params.set('pipeline_stage', filterPipelineStages.join(','));
+    if (filterEnrichmentStatuses.length > 0) params.set('enrichment_status', filterEnrichmentStatuses.join(','));
     if (searchTerm.trim()) params.set('search', searchTerm.trim());
 
     try {
@@ -431,24 +459,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
               </button>
             ))}
           </div>
-          <select className="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-900" value={filterPipelineStage} onChange={(e) => setFilterPipelineStage(e.target.value)}>
-            <option value="">All Stages</option>
-            <option value="research">Research</option>
-            <option value="first_contact">First Contact</option>
-            <option value="follow_up">Follow-Up</option>
-            <option value="meeting_scheduled">Meeting Set</option>
-            <option value="meeting_done">Meeting Done</option>
-            <option value="loi">LOI</option>
-            <option value="due_diligence">Due Diligence</option>
-            <option value="closed">Closed</option>
-          </select>
-          {/* Buildings range */}
-          <div className="flex items-center gap-1" title="Filter by number of buildings in portfolio">
-            <span className="text-[10px] text-gray-400 uppercase font-bold">Bldgs</span>
-            <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMinPortfolio} onChange={(e) => setFilterMinPortfolio(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
-            <span className="text-gray-400 text-xs">—</span>
-            <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMaxPortfolio} onChange={(e) => setFilterMaxPortfolio(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
-          </div>
           <div className="flex gap-1.5">
             <button onClick={() => setFilterHasPhone(filterHasPhone === true ? null : true)}
               className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasPhone === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
@@ -480,31 +490,37 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
           <div className="mt-3 pt-3 border-t border-gray-200 space-y-3">
             {/* Row 1: Range filters */}
             <div className="flex flex-wrap gap-4 items-center">
-              {/* Score range */}
               <div className="flex items-center gap-1" title="Filter by lead quality score (0-100)">
                 <span className="text-[10px] text-gray-400 uppercase font-bold w-12">Score</span>
                 <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMinScore} onChange={(e) => setFilterMinScore(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
                 <span className="text-gray-400 text-xs">—</span>
                 <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMaxScore} onChange={(e) => setFilterMaxScore(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
               </div>
-              {/* Units range */}
               <div className="flex items-center gap-1" title="Filter by total residential units">
                 <span className="text-[10px] text-gray-400 uppercase font-bold w-12">Units</span>
                 <input type="number" placeholder="Min" className="w-16 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMinUnits} onChange={(e) => setFilterMinUnits(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
                 <span className="text-gray-400 text-xs">—</span>
                 <input type="number" placeholder="Max" className="w-16 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMaxUnits} onChange={(e) => setFilterMaxUnits(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
               </div>
-              {/* Units per Building range */}
+              <div className="flex items-center gap-1" title="Filter by number of buildings in portfolio">
+                <span className="text-[10px] text-gray-400 uppercase font-bold w-12">Bldgs</span>
+                <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMinPortfolio} onChange={(e) => setFilterMinPortfolio(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
+                <span className="text-gray-400 text-xs">—</span>
+                <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMaxPortfolio} onChange={(e) => setFilterMaxPortfolio(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
+              </div>
               <div className="flex items-center gap-1" title="Filter by average units per building">
                 <span className="text-[10px] text-gray-400 uppercase font-bold w-12">U/Bldg</span>
                 <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMinUnitsPerBldg} onChange={(e) => setFilterMinUnitsPerBldg(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
                 <span className="text-gray-400 text-xs">—</span>
                 <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMaxUnitsPerBldg} onChange={(e) => setFilterMaxUnitsPerBldg(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
               </div>
+              <button onClick={() => setFilterHasWebsite(filterHasWebsite === true ? null : true)}
+                className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasWebsite === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
+                {filterHasWebsite === true && <span className="text-emerald-600">✓</span>}Website
+              </button>
             </div>
-            {/* Row 2: Building types, entity type, outreach, website */}
+            {/* Row 2: Building types */}
             <div className="flex flex-wrap gap-3 items-center">
-              {/* Building type toggles */}
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] text-gray-400 uppercase font-bold">Type</span>
                 {([
@@ -524,42 +540,87 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
                   </button>
                 ))}
               </div>
-              <select className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900" value={filterEntityType} onChange={(e) => setFilterEntityType(e.target.value)}>
-                <option value="">All Entity Types</option>
-                <option value="company">Company</option>
-                <option value="individual_agent">Individual Agent</option>
-                <option value="owner_operator">Owner-Operator</option>
-              </select>
-              <select className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900" value={filterOutreachStatus} onChange={(e) => setFilterOutreachStatus(e.target.value)}>
-                <option value="">All Outreach</option>
-                <option value="new">New</option>
-                <option value="contacted">Contacted</option>
-                <option value="interested">Interested</option>
-                <option value="not_interested">Not Interested</option>
-                <option value="closed">Closed</option>
-              </select>
-              <select className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900" value={filterEnrichmentStatus} onChange={(e) => setFilterEnrichmentStatus(e.target.value)}>
-                <option value="">All Enrichment</option>
-                <option value="complete">Enriched</option>
-                <option value="partial">Partial</option>
-                <option value="failed">No Data</option>
-                <option value="none">Not Enriched</option>
-              </select>
-              <select className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900" value={filterPipelineStage} onChange={(e) => setFilterPipelineStage(e.target.value)}>
-                <option value="">All Stages</option>
-                <option value="research">Research</option>
-                <option value="first_contact">First Contact</option>
-                <option value="follow_up">Follow Up</option>
-                <option value="meeting_scheduled">Meeting Scheduled</option>
-                <option value="meeting_done">Meeting Done</option>
-                <option value="loi">LOI</option>
-                <option value="due_diligence">Due Diligence</option>
-                <option value="closed">Closed</option>
-              </select>
-              <button onClick={() => setFilterHasWebsite(filterHasWebsite === true ? null : true)}
-                className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasWebsite === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
-                {filterHasWebsite === true && <span className="text-emerald-600">✓</span>}Website
-              </button>
+            </div>
+            {/* Row 3: Pipeline stages (multi-select) */}
+            <div className="flex flex-wrap gap-1.5 items-center">
+              <span className="text-[10px] text-gray-400 uppercase font-bold mr-1">Stage</span>
+              {([
+                ['research', 'Research'],
+                ['first_contact', 'First Contact'],
+                ['follow_up', 'Follow-Up'],
+                ['meeting_scheduled', 'Meeting Set'],
+                ['meeting_done', 'Meeting Done'],
+                ['loi', 'LOI'],
+                ['due_diligence', 'Due Diligence'],
+                ['closed', 'Closed'],
+              ] as [string, string][]).map(([val, label]) => (
+                <button key={val} onClick={() => togglePipelineStage(val)}
+                  className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
+                    filterPipelineStages.includes(val)
+                      ? 'bg-blue-50 text-blue-700 border border-blue-300'
+                      : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'
+                  }`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {/* Row 4: Outreach status (multi-select) */}
+            <div className="flex flex-wrap gap-1.5 items-center">
+              <span className="text-[10px] text-gray-400 uppercase font-bold mr-1">Outreach</span>
+              {([
+                ['new', 'New'],
+                ['contacted', 'Contacted'],
+                ['interested', 'Interested'],
+                ['not_interested', 'Not Interested'],
+                ['closed', 'Closed'],
+              ] as [string, string][]).map(([val, label]) => (
+                <button key={val} onClick={() => toggleOutreachStatus(val)}
+                  className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
+                    filterOutreachStatuses.includes(val)
+                      ? 'bg-amber-50 text-amber-700 border border-amber-300'
+                      : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'
+                  }`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {/* Row 5: Enrichment + Entity type (multi-select) */}
+            <div className="flex flex-wrap gap-3 items-center">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-gray-400 uppercase font-bold">Enrichment</span>
+                {([
+                  ['complete', 'Enriched'],
+                  ['partial', 'Partial'],
+                  ['failed', 'No Data'],
+                  ['none', 'Not Enriched'],
+                ] as [string, string][]).map(([val, label]) => (
+                  <button key={val} onClick={() => toggleEnrichmentStatus(val)}
+                    className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
+                      filterEnrichmentStatuses.includes(val)
+                        ? 'bg-teal-50 text-teal-700 border border-teal-300'
+                        : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'
+                    }`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-gray-400 uppercase font-bold">Entity</span>
+                {([
+                  ['company', 'Company'],
+                  ['individual_agent', 'Individual'],
+                  ['owner_operator', 'Owner-Op'],
+                ] as [string, string][]).map(([val, label]) => (
+                  <button key={val} onClick={() => toggleEntityType(val)}
+                    className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
+                      filterEntityTypes.includes(val)
+                        ? 'bg-indigo-50 text-indigo-700 border border-indigo-300'
+                        : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'
+                    }`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}
