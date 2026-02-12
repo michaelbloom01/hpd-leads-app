@@ -4,7 +4,7 @@ import { Toaster, toast } from 'react-hot-toast';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Dashboard from './components/Dashboard';
-import LeadTable from './components/LeadTable';
+import LeadTable, { LeadFilterPreset } from './components/LeadTable';
 import LeadDetail from './components/LeadDetail';
 import ErrorBoundary from './components/ErrorBoundary';
 import AgentPanel from './components/AgentPanel';
@@ -46,6 +46,7 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const [refreshKey, setRefreshKey] = useState(0);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isAgentOpen, setIsAgentOpen] = useState(false);
+  const [leadFilterPreset, setLeadFilterPreset] = useState<LeadFilterPreset | null>(null);
 
   // Called when LeadDetail enriches or updates a lead — refreshes both the detail and the table
   const handleLeadUpdated = useCallback((updatedLead: ApiLead) => {
@@ -176,9 +177,19 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
             <div className="transition-all duration-500 ease-out" key={refreshKey}>
               {activeTab === 'dashboard' ? (
-                <Dashboard onSelectLead={setSelectedLead} onNavigateToLeads={() => setActiveTab('leads')} />
+                <Dashboard
+                  onSelectLead={setSelectedLead}
+                  onNavigateToLeads={(filters) => {
+                    if (filters) setLeadFilterPreset(filters);
+                    setActiveTab('leads');
+                  }}
+                />
               ) : (
-                <LeadTable onSelectLead={setSelectedLead} />
+                <LeadTable
+                  onSelectLead={setSelectedLead}
+                  filterPreset={leadFilterPreset}
+                  onFilterPresetConsumed={() => setLeadFilterPreset(null)}
+                />
               )}
             </div>
           </div>

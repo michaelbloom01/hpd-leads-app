@@ -22,9 +22,19 @@ import {
   checkHealth,
 } from '../services/api';
 
+interface LeadFilterPreset {
+  outreachStatuses?: string[];
+  pipelineStages?: string[];
+  enrichmentStatuses?: string[];
+  entityTypes?: string[];
+  minPortfolio?: string;
+  hasPhone?: boolean;
+  hasEmail?: boolean;
+}
+
 interface DashboardProps {
   onSelectLead?: (lead: ApiLead) => void;
-  onNavigateToLeads?: () => void;
+  onNavigateToLeads?: (filters?: LeadFilterPreset) => void;
 }
 
 const PIPELINE_STAGES = [
@@ -420,7 +430,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Top Ready Leads</h4>
               <button
-                onClick={() => { setShowReadyDrawer(false); onNavigateToLeads?.(); }}
+                onClick={() => { setShowReadyDrawer(false); onNavigateToLeads?.({ outreachStatuses: ['new'], minPortfolio: '10' }); }}
                 className="text-xs text-blue-600 hover:text-blue-500 font-medium flex items-center gap-1 transition-colors"
               >
                 View all {readyToContactLeads.length} in Leads
@@ -448,7 +458,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
             {readyToContactLeads.length > 10 && (
               <div className="mt-2 pt-2 border-t border-gray-100 text-center">
                 <button
-                  onClick={() => { setShowReadyDrawer(false); onNavigateToLeads?.(); }}
+                  onClick={() => { setShowReadyDrawer(false); onNavigateToLeads?.({ outreachStatuses: ['new'], minPortfolio: '10' }); }}
                   className="text-xs text-blue-600 hover:text-blue-500 font-medium transition-colors"
                 >
                   + {readyToContactLeads.length - 10} more leads &rarr;

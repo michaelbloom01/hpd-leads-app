@@ -2,8 +2,20 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { fetchLeads, ApiLead, enrichLeads, API_BASE_URL, checkHealth } from '../services/api';
 
+export interface LeadFilterPreset {
+  outreachStatuses?: string[];
+  pipelineStages?: string[];
+  enrichmentStatuses?: string[];
+  entityTypes?: string[];
+  minPortfolio?: string;
+  hasPhone?: boolean;
+  hasEmail?: boolean;
+}
+
 interface Props {
   onSelectLead: (lead: ApiLead) => void;
+  filterPreset?: LeadFilterPreset | null;
+  onFilterPresetConsumed?: () => void;
 }
 
 // R4: Cold-start polling interval (ms)
@@ -28,7 +40,7 @@ const scoreColor = (score: number): string => {
   return 'text-gray-400';
 };
 
-const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
+const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPresetConsumed }) => {
   const [leads, setLeads] = useState<ApiLead[]>([]);
   const [totalLeads, setTotalLeads] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -231,6 +243,26 @@ const LeadTable: React.FC<Props> = ({ onSelectLead }) => {
     setPage(0);
     loadLeads(0);
   };
+
+  // Apply filter preset from Dashboard navigation
+  useEffect(() => {
+    if (!filterPreset) return;
+    // Set all filter state from preset
+    if (filterPreset.outreachStatuses) setFilterOutreachStatuses(filterPreset.outreachStatuses);
+    if (filterPreset.pipelineStages) setFilterPipelineStages(filterPreset.pipelineStages);
+    if (filterPreset.enrichmentStatuses) setFilterEnrichmentStatuses(filterPreset.enrichmentStatuses);
+    if (filterPreset.entityTypes) setFilterEntityTypes(filterPreset.entityTypes);
+    if (filterPreset.minPortfolio) setFilterMinPortfolio(filterPreset.minPortfolio);
+    if (filterPreset.hasPhone !== undefined) setFilterHasPhone(filterPreset.hasPhone ? true : null);
+    if (filterPreset.hasEmail !== undefined) setFilterHasEmail(filterPreset.hasEmail ? true : null);
+    // Expand "More Filters" so user can see what's active
+    setShowMoreFilters(true);
+    // Signal consumed so App.tsx can clear it
+    onFilterPresetConsumed?.();
+    // Trigger load on next tick (after state updates)
+    setTimeout(() => { loadLeadsRef.current?.(0); }, 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterPreset]);
 
   const totalPages = Math.ceil(totalLeads / pageSize);
 
