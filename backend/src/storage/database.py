@@ -1128,6 +1128,13 @@ class LeadsDatabase:
             """):
                 portfolio_dist[row['bucket']] = row['cnt']
             
+            # Pipeline stage distribution
+            by_pipeline_stage = {}
+            for row in conn.execute(
+                "SELECT COALESCE(pipeline_stage, 'research') as stage, COUNT(*) as cnt FROM leads GROUP BY stage"
+            ):
+                by_pipeline_stage[row['stage']] = row['cnt']
+            
             return {
                 "total_leads": core['total_leads'] or 0,
                 "total_buildings": core['total_buildings'] or 0,
@@ -1143,6 +1150,7 @@ class LeadsDatabase:
                 "by_entity_type": by_entity,
                 "score_distribution": score_dist,
                 "portfolio_distribution": portfolio_dist,
+                "by_pipeline_stage": by_pipeline_stage,
             }
     
     def get_leads_count(self) -> int:

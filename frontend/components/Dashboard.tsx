@@ -201,14 +201,18 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
     }
   };
 
-  // Compute pipeline stage counts from top leads
+  // Pipeline stage counts from full database stats (not limited to 100 leads)
   const pipelineCounts: Record<string, number> = {};
   PIPELINE_STAGES.forEach(s => { pipelineCounts[s.key] = 0; });
-  topLeads.forEach(lead => {
-    const stage = lead.pipeline_stage || 'research';
-    if (pipelineCounts[stage] !== undefined) pipelineCounts[stage]++;
-  });
-  const leadsInPipeline = topLeads.filter(l => l.pipeline_stage && l.pipeline_stage !== 'research').length;
+  const statsPipelineStages = (stats as Record<string, unknown>)?.by_pipeline_stage as Record<string, number> | undefined;
+  if (statsPipelineStages) {
+    Object.entries(statsPipelineStages).forEach(([stage, count]) => {
+      if (pipelineCounts[stage] !== undefined) pipelineCounts[stage] = count;
+    });
+  }
+  const leadsInPipeline = Object.entries(pipelineCounts)
+    .filter(([key]) => key !== 'research')
+    .reduce((sum, [, count]) => sum + count, 0);
 
   // Compute estimated pipeline revenue (leads past research stage)
   const pipelineRevenue = topLeads
