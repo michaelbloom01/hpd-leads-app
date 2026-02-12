@@ -24,6 +24,7 @@ import {
 
 interface DashboardProps {
   onSelectLead?: (lead: ApiLead) => void;
+  onNavigateToLeads?: () => void;
 }
 
 const PIPELINE_STAGES = [
@@ -91,9 +92,10 @@ const scoreColor = (score: number): string => {
 };
 
 
-const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
+const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }) => {
   const [topLeads, setTopLeads] = useState<ApiLead[]>([]);
-  const [readyToContactCount, setReadyToContactCount] = useState(0);
+  const [readyToContactLeads, setReadyToContactLeads] = useState<ApiLead[]>([]);
+  const [showReadyDrawer, setShowReadyDrawer] = useState(false);
   const [status, setStatus] = useState<PipelineStatus | null>(null);
   const [stats, setStats] = useState<PipelineStats | null>(null);
   const [enrichmentStatus, setEnrichmentStatus] = useState<EnrichmentProgress | null>(null);
@@ -131,12 +133,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
         const sortedByScore = [...leadsResult.value.leads].sort((a, b) => b.score - a.score);
         setTopLeads(sortedByScore);
         
-        const contactableCount = sortedByScore.filter(l => 
+        const contactable = sortedByScore.filter(l => 
           (l.phone || l.email) && 
           l.outreach_status === 'new' &&
           l.portfolio_size >= 10
-        ).length;
-        setReadyToContactCount(contactableCount);
+        );
+        setReadyToContactLeads(contactable);
       } else {
         console.error('Failed to load leads:', leadsResult.reason);
       }
@@ -390,11 +392,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
 
           <div className="h-5 w-px bg-gray-200 hidden md:block" />
 
-          {/* Ready to contact */}
-          <div className="flex items-center gap-2">
-            <span className="flex items-center justify-center w-7 h-7 rounded-full bg-blue-100 text-blue-700 text-sm font-bold">{readyToContactCount}</span>
+          {/* Ready to contact -- clickable */}
+          <button
+            onClick={() => setShowReadyDrawer(!showReadyDrawer)}
+            className="flex items-center gap-2 hover:bg-blue-50 rounded-lg px-2 py-1 -mx-2 -my-1 transition-colors"
+          >
+            <span className="flex items-center justify-center w-7 h-7 rounded-full bg-blue-100 text-blue-700 text-sm font-bold">{readyToContactLeads.length}</span>
             <span className="text-sm text-gray-600">ready to contact</span>
-          </div>
+            <svg className={`w-3.5 h-3.5 text-gray-400 transition-transform ${showReadyDrawer ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
+          </button>
 
           {/* Enrichment running indicator */}
           {enrichmentStatus?.running && (
@@ -407,6 +413,50 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
             </>
           )}
         </div>
+
+        {/* Ready to Contact Preview Drawer */}
+        {showReadyDrawer && readyToContactLeads.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-gray-200 animate-in slide-in-from-top duration-200">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Top Ready Leads</h4>
+              <button
+                onClick={() => { setShowReadyDrawer(false); onNavigateToLeads?.(); }}
+                className="text-xs text-blue-600 hover:text-blue-500 font-medium flex items-center gap-1 transition-colors"
+              >
+                View all {readyToContactLeads.length} in Leads
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+              </button>
+            </div>
+            <div className="space-y-1.5 max-h-72 overflow-y-auto">
+              {readyToContactLeads.slice(0, 10).map((lead) => (
+                <div
+                  key={lead.lead_id}
+                  onClick={() => onSelectLead?.(lead)}
+                  className="flex items-center justify-between p-2.5 rounded-lg hover:bg-blue-50/60 cursor-pointer transition-colors group"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate group-hover:text-blue-700 transition-colors">{lead.company_name || lead.agent_name || lead.owner_name}</p>
+                    <p className="text-[10px] text-gray-400">{lead.portfolio_size} bldgs &middot; {(lead.total_units || 0).toLocaleString()} units &middot; Score {lead.score.toFixed(0)}</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 ml-3 flex-shrink-0">
+                    {lead.phone && <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-600 text-[9px] rounded font-medium">Phone</span>}
+                    {lead.email && <span className="px-1.5 py-0.5 bg-blue-50 text-blue-600 text-[9px] rounded font-medium">Email</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {readyToContactLeads.length > 10 && (
+              <div className="mt-2 pt-2 border-t border-gray-100 text-center">
+                <button
+                  onClick={() => { setShowReadyDrawer(false); onNavigateToLeads?.(); }}
+                  className="text-xs text-blue-600 hover:text-blue-500 font-medium transition-colors"
+                >
+                  + {readyToContactLeads.length - 10} more leads &rarr;
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Section 2: Deal Pipeline ───────────────────────────── */}

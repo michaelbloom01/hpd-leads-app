@@ -176,7 +176,7 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
             <div className="transition-all duration-500 ease-out" key={refreshKey}>
               {activeTab === 'dashboard' ? (
-                <Dashboard onSelectLead={setSelectedLead} />
+                <Dashboard onSelectLead={setSelectedLead} onNavigateToLeads={() => setActiveTab('leads')} />
               ) : (
                 <LeadTable onSelectLead={setSelectedLead} />
               )}
