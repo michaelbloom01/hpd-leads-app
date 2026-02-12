@@ -26,10 +26,10 @@ limiter = Limiter(key_func=get_remote_address)
 
 @router.post("/chat")
 @limiter.limit("20/minute")
-async def agent_chat(request_obj: Request, request: AgentChatRequest):
+async def agent_chat(request: Request, body: AgentChatRequest):
     """SSE streaming endpoint for agent chat."""
-    has_msg = bool(request.message and request.message.strip())
-    has_conf = request.confirmation is not None
+    has_msg = bool(body.message and body.message.strip())
+    has_conf = body.confirmation is not None
     if not has_msg and not has_conf:
         raise HTTPException(400, "Provide either a message or a confirmation")
     if has_msg and has_conf:
@@ -37,9 +37,9 @@ async def agent_chat(request_obj: Request, request: AgentChatRequest):
 
     async def event_generator():
         async for event in run_agent(
-            message=request.message,
-            conversation_id=request.conversation_id,
-            confirmation=request.confirmation,
+            message=body.message,
+            conversation_id=body.conversation_id,
+            confirmation=body.confirmation,
         ):
             yield event
 
