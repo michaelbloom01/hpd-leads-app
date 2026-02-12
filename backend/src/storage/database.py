@@ -343,7 +343,84 @@ class LeadsDatabase:
                     applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     description TEXT
                 );
+                
+                -- === Data Robustness Tables (v2) ===
+                
+                -- Building registry: one row per physical building for address-level lookup
+                CREATE TABLE IF NOT EXISTS building_registry (
+                    building_id TEXT PRIMARY KEY,
+                    registration_id TEXT,
+                    lead_id TEXT,
+                    address TEXT NOT NULL DEFAULT '',
+                    house_number TEXT,
+                    street_name TEXT,
+                    boro TEXT,
+                    zip_code TEXT,
+                    block TEXT,
+                    lot TEXT,
+                    bbl TEXT,
+                    units_res INTEGER DEFAULT 0,
+                    building_class TEXT,
+                    building_type TEXT,
+                    last_registration TEXT,
+                    status TEXT DEFAULT 'active',
+                    last_seen_in_hpd TIMESTAMP,
+                    source_refresh_id TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_building_address ON building_registry(street_name, house_number);
+                CREATE INDEX IF NOT EXISTS idx_building_lead ON building_registry(lead_id);
+                CREATE INDEX IF NOT EXISTS idx_building_bbl ON building_registry(bbl);
+                CREATE INDEX IF NOT EXISTS idx_building_full_address ON building_registry(address);
+                CREATE INDEX IF NOT EXISTS idx_building_boro ON building_registry(boro);
+                
+                -- Refresh audit log: one row per pipeline run with counts at every stage
+                CREATE TABLE IF NOT EXISTS refresh_audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    refresh_id TEXT NOT NULL,
+                    started_at TIMESTAMP,
+                    finished_at TIMESTAMP,
+                    status TEXT DEFAULT 'running',
+                    hpd_total_available INTEGER,
+                    hpd_buildings_fetched INTEGER,
+                    hpd_contacts_fetched INTEGER,
+                    buildings_normalized INTEGER,
+                    buildings_dropped INTEGER,
+                    leads_aggregated INTEGER,
+                    leads_saved INTEGER,
+                    leads_before_refresh INTEGER,
+                    leads_after_refresh INTEGER,
+                    leads_net_change INTEGER,
+                    buildings_registered INTEGER,
+                    pluto_lookups_success INTEGER,
+                    pluto_lookups_failed INTEGER,
+                    coverage_percent REAL,
+                    error_message TEXT,
+                    config_json TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_refresh_audit_started ON refresh_audit_log(started_at DESC);
+                
+                -- Stats cache: pre-computed counts to avoid GROUP BY on every request
+                CREATE TABLE IF NOT EXISTS stats_cache (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                -- Composite indexes for common filter+sort queries (performance)
+                CREATE INDEX IF NOT EXISTS idx_leads_score_pipeline ON leads(pipeline_stage, score DESC);
+                CREATE INDEX IF NOT EXISTS idx_leads_score_outreach ON leads(outreach_status, score DESC);
+                CREATE INDEX IF NOT EXISTS idx_leads_boro_score ON leads(boro, score DESC);
             """)
+            
+            # Migration: Add data_staleness column to leads (v2)
+            try:
+                conn.execute("ALTER TABLE leads ADD COLUMN data_staleness TEXT DEFAULT 'current'")
+                logger.info("Added data_staleness column to leads table")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            
             # Record initial schema version if not present
             existing_version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
             if existing_version is None:
@@ -351,6 +428,15 @@ class LeadsDatabase:
                     "INSERT INTO schema_version (version, description) VALUES (?, ?)",
                     (1, "Initial schema with leads, enrichment, agent, users tables"),
                 )
+            
+            # Record v2 schema if not present
+            v2_exists = conn.execute("SELECT 1 FROM schema_version WHERE version = 2").fetchone()
+            if not v2_exists:
+                conn.execute(
+                    "INSERT INTO schema_version (version, description) VALUES (?, ?)",
+                    (2, "Data robustness: building_registry, refresh_audit_log, stats_cache, data_staleness"),
+                )
+            
             conn.commit()
             logger.info(f"Database initialized at {self.db_path} (schema v{existing_version or 1})")
     
@@ -532,6 +618,8 @@ class LeadsDatabase:
         leads_enrichment = self.get_all_enrichment_from_leads()
         
         # Merge: leads table takes priority, enrichment_cache fills gaps
+        # IMPORTANT: Use `is not None` checks, NOT truthiness checks.
+        # Falsy values like "", 0, False are valid data and must not be overwritten.
         merged_enrichment: Dict[str, Dict] = {}
         all_ids = set(enrichment_cache.keys()) | set(leads_enrichment.keys())
         for lid in all_ids:
@@ -541,9 +629,9 @@ class LeadsDatabase:
             for field in ["phone", "email", "website", "business_summary",
                           "owner_principal", "enrichment_status", "enrichment_sources",
                           "pipeline_stage", "next_follow_up", "priority_rank"]:
-                # Prefer leads table, fall back to enrichment_cache
-                val = le.get(field) or ec.get(field)
-                if val:
+                # Prefer leads table value if it exists (even if falsy), fall back to enrichment_cache
+                val = le.get(field) if le.get(field) is not None else ec.get(field)
+                if val is not None:
                     merged[field] = val
             merged_enrichment[lid] = merged
         
@@ -657,93 +745,175 @@ class LeadsDatabase:
     
     def save_leads(self, leads: List["Lead"]) -> int:
         """
-        Save all leads to the database (bulk upsert).
+        Save leads to the database using a non-destructive merge upsert.
         
-        This persists the complete lead data so it survives server restarts.
-        IMPORTANT: Includes ALL columns (enrichment, pipeline, revenue, violations)
-        so that INSERT OR REPLACE doesn't clobber any data.
+        Uses INSERT ... ON CONFLICT(lead_id) DO UPDATE SET with field-level rules:
+        - HPD source fields: always overwrite from source
+        - User fields (notes, outreach, pipeline): NEVER overwrite if already set by user
+        - Enrichment fields: keep whichever is richer (COALESCE)
         
+        Uses batch executemany for performance.
         Returns the number of leads saved.
         """
         if not leads:
             return 0
         
+        UPSERT_SQL = """INSERT INTO leads (
+                lead_id, agent_name, owner_name, owner_type,
+                portfolio_size, total_units, buildings, building_ids,
+                contacts, address, boro, boros, reg_status,
+                last_registration, dos_id, dos_status, phone, email,
+                website, business_summary, owner_principal, enrichment_status,
+                enrichment_sources, last_enriched, score, score_breakdown,
+                tags, opportunity_note, outreach_status, notes,
+                building_types, building_classes,
+                entity_type, company_name, primary_contact, primary_contact_title,
+                estimated_monthly_revenue, estimated_annual_revenue,
+                violation_count, violation_class_a, violation_class_b, violation_class_c,
+                violations_per_unit,
+                pipeline_stage, next_follow_up, priority_rank,
+                enrichment_retries,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(lead_id) DO UPDATE SET
+                -- HPD source fields: always update from source
+                agent_name = excluded.agent_name,
+                owner_name = excluded.owner_name,
+                owner_type = excluded.owner_type,
+                portfolio_size = excluded.portfolio_size,
+                total_units = excluded.total_units,
+                buildings = excluded.buildings,
+                building_ids = excluded.building_ids,
+                contacts = excluded.contacts,
+                address = excluded.address,
+                boro = excluded.boro,
+                boros = excluded.boros,
+                reg_status = excluded.reg_status,
+                last_registration = excluded.last_registration,
+                score = excluded.score,
+                score_breakdown = excluded.score_breakdown,
+                tags = excluded.tags,
+                building_types = excluded.building_types,
+                building_classes = excluded.building_classes,
+                entity_type = excluded.entity_type,
+                -- Enrichment fields: keep existing if richer (COALESCE)
+                phone = COALESCE(leads.phone, excluded.phone),
+                email = COALESCE(leads.email, excluded.email),
+                website = COALESCE(leads.website, excluded.website),
+                business_summary = COALESCE(leads.business_summary, excluded.business_summary),
+                owner_principal = COALESCE(leads.owner_principal, excluded.owner_principal),
+                dos_id = COALESCE(leads.dos_id, excluded.dos_id),
+                dos_status = COALESCE(leads.dos_status, excluded.dos_status),
+                company_name = COALESCE(leads.company_name, excluded.company_name),
+                primary_contact = COALESCE(leads.primary_contact, excluded.primary_contact),
+                primary_contact_title = COALESCE(leads.primary_contact_title, excluded.primary_contact_title),
+                enrichment_status = CASE
+                    WHEN leads.enrichment_status IN ('complete', 'partial') THEN leads.enrichment_status
+                    ELSE COALESCE(excluded.enrichment_status, leads.enrichment_status)
+                END,
+                enrichment_sources = COALESCE(leads.enrichment_sources, excluded.enrichment_sources),
+                last_enriched = COALESCE(leads.last_enriched, excluded.last_enriched),
+                enrichment_retries = COALESCE(leads.enrichment_retries, excluded.enrichment_retries),
+                -- User fields: NEVER overwrite if already set by user
+                outreach_status = CASE
+                    WHEN leads.outreach_status IS NOT NULL AND leads.outreach_status != 'new'
+                    THEN leads.outreach_status
+                    ELSE excluded.outreach_status
+                END,
+                notes = COALESCE(leads.notes, excluded.notes),
+                opportunity_note = COALESCE(leads.opportunity_note, excluded.opportunity_note),
+                pipeline_stage = CASE
+                    WHEN leads.pipeline_stage IS NOT NULL AND leads.pipeline_stage != 'research'
+                    THEN leads.pipeline_stage
+                    ELSE excluded.pipeline_stage
+                END,
+                next_follow_up = COALESCE(leads.next_follow_up, excluded.next_follow_up),
+                priority_rank = CASE
+                    WHEN leads.priority_rank IS NOT NULL AND leads.priority_rank > 0
+                    THEN leads.priority_rank
+                    ELSE excluded.priority_rank
+                END,
+                -- Revenue/violation fields: keep existing if non-zero
+                estimated_monthly_revenue = CASE
+                    WHEN leads.estimated_monthly_revenue > 0 THEN leads.estimated_monthly_revenue
+                    ELSE excluded.estimated_monthly_revenue
+                END,
+                estimated_annual_revenue = CASE
+                    WHEN leads.estimated_annual_revenue > 0 THEN leads.estimated_annual_revenue
+                    ELSE excluded.estimated_annual_revenue
+                END,
+                violation_count = CASE
+                    WHEN leads.violation_count > 0 THEN leads.violation_count
+                    ELSE excluded.violation_count
+                END,
+                violation_class_a = CASE WHEN leads.violation_class_a > 0 THEN leads.violation_class_a ELSE excluded.violation_class_a END,
+                violation_class_b = CASE WHEN leads.violation_class_b > 0 THEN leads.violation_class_b ELSE excluded.violation_class_b END,
+                violation_class_c = CASE WHEN leads.violation_class_c > 0 THEN leads.violation_class_c ELSE excluded.violation_class_c END,
+                violations_per_unit = CASE WHEN leads.violations_per_unit > 0 THEN leads.violations_per_unit ELSE excluded.violations_per_unit END,
+                -- Always update timestamp
+                updated_at = excluded.updated_at
+        """
+        
+        def _lead_to_tuple(lead):
+            building_types_json = None
+            if lead.building_types:
+                building_types_json = json.dumps(lead.building_types.to_dict())
+            return (
+                lead.lead_id,
+                lead.agent_name,
+                lead.owner_name,
+                lead.owner_type,
+                lead.portfolio_size,
+                lead.total_units,
+                json.dumps(lead.buildings),
+                json.dumps(lead.building_ids),
+                json.dumps(lead.contacts),
+                lead.address,
+                lead.boro,
+                json.dumps(lead.boros),
+                lead.reg_status,
+                lead.last_registration.isoformat() if lead.last_registration else None,
+                lead.dos_id,
+                lead.dos_status,
+                lead.phone,
+                lead.email,
+                lead.website,
+                lead.business_summary,
+                lead.owner_principal,
+                lead.enrichment_status,
+                json.dumps(lead.enrichment_sources),
+                lead.last_enriched.isoformat() if lead.last_enriched else None,
+                lead.score,
+                json.dumps(lead.score_breakdown),
+                json.dumps(lead.tags),
+                lead.opportunity_note,
+                lead.outreach_status,
+                lead.notes,
+                building_types_json,
+                json.dumps(lead.building_classes) if lead.building_classes else None,
+                getattr(lead, 'entity_type', 'unknown'),
+                getattr(lead, 'company_name', None),
+                getattr(lead, 'primary_contact', None),
+                getattr(lead, 'primary_contact_title', None),
+                getattr(lead, 'estimated_monthly_revenue', 0.0),
+                getattr(lead, 'estimated_annual_revenue', 0.0),
+                getattr(lead, 'violation_count', 0),
+                getattr(lead, 'violation_class_a', 0),
+                getattr(lead, 'violation_class_b', 0),
+                getattr(lead, 'violation_class_c', 0),
+                getattr(lead, 'violations_per_unit', 0.0),
+                getattr(lead, 'pipeline_stage', 'research'),
+                getattr(lead, 'next_follow_up', None),
+                getattr(lead, 'priority_rank', 0),
+                getattr(lead, 'enrichment_retries', 0),
+                datetime.now().isoformat(),
+            )
+        
+        BATCH_SIZE = 500
         with self._get_connection() as conn:
-            for lead in leads:
-                # Serialize building_types to JSON
-                building_types_json = None
-                if lead.building_types:
-                    building_types_json = json.dumps(lead.building_types.to_dict())
-                
-                conn.execute(
-                    """INSERT OR REPLACE INTO leads (
-                        lead_id, agent_name, owner_name, owner_type,
-                        portfolio_size, total_units, buildings, building_ids,
-                        contacts, address, boro, boros, reg_status,
-                        last_registration, dos_id, dos_status, phone, email,
-                        website, business_summary, owner_principal, enrichment_status,
-                        enrichment_sources, last_enriched, score, score_breakdown,
-                        tags, opportunity_note, outreach_status, notes,
-                        building_types, building_classes,
-                        entity_type, company_name, primary_contact, primary_contact_title,
-                        estimated_monthly_revenue, estimated_annual_revenue,
-                        violation_count, violation_class_a, violation_class_b, violation_class_c,
-                        violations_per_unit,
-                        pipeline_stage, next_follow_up, priority_rank,
-                        enrichment_retries,
-                        updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        lead.lead_id,
-                        lead.agent_name,
-                        lead.owner_name,
-                        lead.owner_type,
-                        lead.portfolio_size,
-                        lead.total_units,
-                        json.dumps(lead.buildings),
-                        json.dumps(lead.building_ids),
-                        json.dumps(lead.contacts),
-                        lead.address,
-                        lead.boro,
-                        json.dumps(lead.boros),
-                        lead.reg_status,
-                        lead.last_registration.isoformat() if lead.last_registration else None,
-                        lead.dos_id,
-                        lead.dos_status,
-                        lead.phone,
-                        lead.email,
-                        lead.website,
-                        lead.business_summary,
-                        lead.owner_principal,
-                        lead.enrichment_status,
-                        json.dumps(lead.enrichment_sources),
-                        lead.last_enriched.isoformat() if lead.last_enriched else None,
-                        lead.score,
-                        json.dumps(lead.score_breakdown),
-                        json.dumps(lead.tags),
-                        lead.opportunity_note,
-                        lead.outreach_status,
-                        lead.notes,
-                        building_types_json,
-                        json.dumps(lead.building_classes) if lead.building_classes else None,
-                        getattr(lead, 'entity_type', 'unknown'),
-                        getattr(lead, 'company_name', None),
-                        getattr(lead, 'primary_contact', None),
-                        getattr(lead, 'primary_contact_title', None),
-                        getattr(lead, 'estimated_monthly_revenue', 0.0),
-                        getattr(lead, 'estimated_annual_revenue', 0.0),
-                        getattr(lead, 'violation_count', 0),
-                        getattr(lead, 'violation_class_a', 0),
-                        getattr(lead, 'violation_class_b', 0),
-                        getattr(lead, 'violation_class_c', 0),
-                        getattr(lead, 'violations_per_unit', 0.0),
-                        getattr(lead, 'pipeline_stage', 'research'),
-                        getattr(lead, 'next_follow_up', None),
-                        getattr(lead, 'priority_rank', 0),
-                        getattr(lead, 'enrichment_retries', 0),
-                        datetime.now().isoformat(),
-                    )
-                )
+            for i in range(0, len(leads), BATCH_SIZE):
+                batch = leads[i:i + BATCH_SIZE]
+                conn.executemany(UPSERT_SQL, [_lead_to_tuple(l) for l in batch])
             conn.commit()
             logger.info(f"Saved {len(leads)} leads to database")
             return len(leads)
@@ -1202,22 +1372,7 @@ class LeadsDatabase:
                     pass
             return None
     
-    def get_stats(self) -> Dict:
-        """Get database statistics."""
-        with self._get_connection() as conn:
-            user_count = conn.execute("SELECT COUNT(*) FROM lead_user_data").fetchone()[0]
-            enriched_count = conn.execute("SELECT COUNT(*) FROM enrichment_cache").fetchone()[0]
-            status_counts = {}
-            for row in conn.execute(
-                "SELECT outreach_status, COUNT(*) as count FROM lead_user_data GROUP BY outreach_status"
-            ):
-                status_counts[row['outreach_status']] = row['count']
-            
-            return {
-                "total_user_records": user_count,
-                "total_enriched": enriched_count,
-                "by_status": status_counts,
-            }
+    # get_stats() removed — superseded by get_stats_sql() which queries the leads table directly
     
     # === Outreach Attempts ===
     
@@ -1244,27 +1399,7 @@ class LeadsDatabase:
             ).fetchall()
             return [dict(row) for row in rows]
     
-    def get_all_outreach_attempts(self) -> Dict[str, List[Dict]]:
-        """Get all outreach attempts grouped by lead_id."""
-        with self._get_connection() as conn:
-            rows = conn.execute(
-                """SELECT lead_id, id, method, outcome, notes, timestamp 
-                   FROM outreach_attempts 
-                   ORDER BY timestamp DESC"""
-            ).fetchall()
-            result = {}
-            for row in rows:
-                lead_id = row['lead_id']
-                if lead_id not in result:
-                    result[lead_id] = []
-                result[lead_id].append({
-                    'id': row['id'],
-                    'method': row['method'],
-                    'outcome': row['outcome'],
-                    'notes': row['notes'],
-                    'timestamp': row['timestamp'],
-                })
-            return result
+    # get_all_outreach_attempts() removed — never called from any endpoint or internal code
 
 
     # === Enrichment Job Management ===
@@ -1666,6 +1801,342 @@ class LeadsDatabase:
                 "SELECT user_id, email, role, created_at, last_login FROM users ORDER BY created_at"
             ).fetchall()
             return [dict(r) for r in rows]
+    
+    # === Building Registry (Data Robustness v2) ===
+    
+    def save_buildings(self, buildings: List[Dict], refresh_id: str = None) -> int:
+        """
+        Bulk upsert buildings into the building_registry table.
+        
+        Args:
+            buildings: List of dicts with building_id, lead_id, address, etc.
+            refresh_id: Optional refresh ID for provenance tracking
+            
+        Returns:
+            Number of buildings saved
+        """
+        if not buildings:
+            return 0
+        
+        now = datetime.now().isoformat()
+        BATCH_SIZE = 500
+        total = 0
+        
+        with self._get_connection() as conn:
+            for i in range(0, len(buildings), BATCH_SIZE):
+                batch = buildings[i:i + BATCH_SIZE]
+                conn.executemany(
+                    """INSERT INTO building_registry (
+                        building_id, registration_id, lead_id, address,
+                        house_number, street_name, boro, zip_code,
+                        block, lot, bbl, units_res,
+                        building_class, building_type, last_registration,
+                        status, last_seen_in_hpd, source_refresh_id, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+                    ON CONFLICT(building_id) DO UPDATE SET
+                        registration_id = excluded.registration_id,
+                        lead_id = excluded.lead_id,
+                        address = excluded.address,
+                        house_number = excluded.house_number,
+                        street_name = excluded.street_name,
+                        boro = excluded.boro,
+                        zip_code = excluded.zip_code,
+                        block = excluded.block,
+                        lot = excluded.lot,
+                        bbl = excluded.bbl,
+                        units_res = excluded.units_res,
+                        building_class = excluded.building_class,
+                        building_type = excluded.building_type,
+                        last_registration = excluded.last_registration,
+                        status = 'active',
+                        last_seen_in_hpd = excluded.last_seen_in_hpd,
+                        source_refresh_id = excluded.source_refresh_id,
+                        updated_at = excluded.updated_at
+                    """,
+                    [
+                        (
+                            b.get('building_id', ''),
+                            b.get('registration_id', ''),
+                            b.get('lead_id', ''),
+                            b.get('address', ''),
+                            b.get('house_number', ''),
+                            b.get('street_name', ''),
+                            b.get('boro', ''),
+                            b.get('zip_code', ''),
+                            b.get('block', ''),
+                            b.get('lot', ''),
+                            b.get('bbl', ''),
+                            b.get('units_res', 0),
+                            b.get('building_class', ''),
+                            b.get('building_type', ''),
+                            b.get('last_registration', ''),
+                            now,
+                            refresh_id or '',
+                            now,
+                        )
+                        for b in batch
+                    ]
+                )
+                total += len(batch)
+            conn.commit()
+        
+        logger.info(f"Saved {total} buildings to building_registry")
+        return total
+    
+    def search_buildings_by_address(self, address: str, limit: int = 20) -> List[Dict]:
+        """
+        Search building_registry by address with fuzzy matching.
+        
+        Parses input into house_number + street_name components.
+        Returns buildings with their linked lead info.
+        """
+        if not address or not address.strip():
+            return []
+        
+        address = address.strip().upper()
+        
+        # Try to split into house number and street name
+        parts = address.split(None, 1)
+        house_number = None
+        street_name = address
+        
+        if len(parts) >= 2 and parts[0].isdigit():
+            house_number = parts[0]
+            street_name = parts[1]
+        
+        with self._get_connection() as conn:
+            if house_number:
+                # Exact house number + fuzzy street name
+                rows = conn.execute(
+                    """SELECT br.*, l.agent_name, l.owner_name, l.score, l.portfolio_size, l.total_units
+                       FROM building_registry br
+                       LEFT JOIN leads l ON br.lead_id = l.lead_id
+                       WHERE br.house_number = ? AND br.street_name LIKE ?
+                       ORDER BY l.score DESC
+                       LIMIT ?""",
+                    (house_number, f"%{street_name}%", limit)
+                ).fetchall()
+            else:
+                # Just street name search
+                rows = conn.execute(
+                    """SELECT br.*, l.agent_name, l.owner_name, l.score, l.portfolio_size, l.total_units
+                       FROM building_registry br
+                       LEFT JOIN leads l ON br.lead_id = l.lead_id
+                       WHERE br.street_name LIKE ? OR br.address LIKE ?
+                       ORDER BY l.score DESC
+                       LIMIT ?""",
+                    (f"%{street_name}%", f"%{address}%", limit)
+                ).fetchall()
+            
+            return [dict(row) for row in rows]
+    
+    def mark_stale_buildings(self, active_building_ids: set, refresh_id: str = None) -> int:
+        """
+        Mark buildings not in the active set as 'stale'.
+        Called after a full refresh to detect buildings that disappeared from HPD.
+        
+        Returns number of buildings marked stale.
+        """
+        if not active_building_ids:
+            return 0
+        
+        with self._get_connection() as conn:
+            # Mark all buildings NOT in the active set as stale
+            placeholders = ','.join('?' * min(len(active_building_ids), 999))
+            # Process in chunks due to SQLite variable limit
+            stale_count = 0
+            active_list = list(active_building_ids)
+            
+            # First, mark everything stale
+            conn.execute("UPDATE building_registry SET status = 'stale' WHERE status = 'active'")
+            
+            # Then mark active ones back
+            CHUNK = 999
+            for i in range(0, len(active_list), CHUNK):
+                chunk = active_list[i:i + CHUNK]
+                placeholders = ','.join('?' * len(chunk))
+                conn.execute(
+                    f"UPDATE building_registry SET status = 'active' WHERE building_id IN ({placeholders})",
+                    chunk
+                )
+            
+            stale_count = conn.execute("SELECT COUNT(*) FROM building_registry WHERE status = 'stale'").fetchone()[0]
+            conn.commit()
+            
+            if stale_count > 0:
+                logger.warning(f"Marked {stale_count} buildings as stale (not found in latest HPD pull)")
+            
+            return stale_count
+    
+    def update_lead_staleness(self) -> Dict[str, int]:
+        """
+        Update data_staleness on leads based on their buildings' status in building_registry.
+        Returns counts by staleness category.
+        """
+        with self._get_connection() as conn:
+            # Leads where ALL buildings are stale = 'expired'
+            conn.execute("""
+                UPDATE leads SET data_staleness = 'expired'
+                WHERE lead_id IN (
+                    SELECT br.lead_id FROM building_registry br
+                    GROUP BY br.lead_id
+                    HAVING COUNT(*) = SUM(CASE WHEN br.status = 'stale' THEN 1 ELSE 0 END)
+                    AND COUNT(*) > 0
+                )
+            """)
+            
+            # Leads where SOME buildings are stale = 'partially_stale'
+            conn.execute("""
+                UPDATE leads SET data_staleness = 'partially_stale'
+                WHERE lead_id IN (
+                    SELECT br.lead_id FROM building_registry br
+                    GROUP BY br.lead_id
+                    HAVING SUM(CASE WHEN br.status = 'stale' THEN 1 ELSE 0 END) > 0
+                    AND SUM(CASE WHEN br.status = 'stale' THEN 1 ELSE 0 END) < COUNT(*)
+                )
+            """)
+            
+            # All others = 'current'
+            conn.execute("""
+                UPDATE leads SET data_staleness = 'current'
+                WHERE data_staleness IS NULL OR data_staleness NOT IN ('expired', 'partially_stale')
+                OR lead_id IN (
+                    SELECT br.lead_id FROM building_registry br
+                    GROUP BY br.lead_id
+                    HAVING SUM(CASE WHEN br.status = 'stale' THEN 1 ELSE 0 END) = 0
+                )
+            """)
+            
+            conn.commit()
+            
+            counts = {}
+            for row in conn.execute("SELECT data_staleness, COUNT(*) FROM leads GROUP BY data_staleness"):
+                counts[row[0] or 'current'] = row[1]
+            
+            return counts
+    
+    def count_buildings_in_registry(self) -> int:
+        """Count total buildings in the registry."""
+        with self._get_connection() as conn:
+            return conn.execute("SELECT COUNT(*) FROM building_registry").fetchone()[0]
+    
+    def count_stale_buildings(self) -> int:
+        """Count stale buildings in the registry."""
+        with self._get_connection() as conn:
+            return conn.execute("SELECT COUNT(*) FROM building_registry WHERE status = 'stale'").fetchone()[0]
+    
+    # === Refresh Audit Log (Data Robustness v2) ===
+    
+    def create_audit_log(self, refresh_id: str, config: dict = None) -> int:
+        """Start a new audit log entry. Returns the row ID."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """INSERT INTO refresh_audit_log (refresh_id, started_at, status, config_json, leads_before_refresh)
+                   VALUES (?, ?, 'running', ?, ?)""",
+                (
+                    refresh_id,
+                    datetime.now().isoformat(),
+                    json.dumps(config) if config else None,
+                    conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0],
+                )
+            )
+            conn.commit()
+            return cursor.lastrowid
+    
+    def update_audit_log(self, audit_id: int, updates: Dict):
+        """Update an audit log entry with pipeline stage counts."""
+        if not updates:
+            return
+        
+        set_clauses = []
+        params = []
+        for key, val in updates.items():
+            set_clauses.append(f"{key} = ?")
+            params.append(val)
+        params.append(audit_id)
+        
+        with self._get_connection() as conn:
+            conn.execute(
+                f"UPDATE refresh_audit_log SET {', '.join(set_clauses)} WHERE id = ?",
+                params
+            )
+            conn.commit()
+    
+    def finish_audit_log(self, audit_id: int, status: str = 'success', error: str = None):
+        """Finalize an audit log entry with post-refresh counts."""
+        with self._get_connection() as conn:
+            leads_after = conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
+            leads_before = conn.execute(
+                "SELECT leads_before_refresh FROM refresh_audit_log WHERE id = ?", (audit_id,)
+            ).fetchone()[0] or 0
+            
+            conn.execute(
+                """UPDATE refresh_audit_log SET
+                    finished_at = ?,
+                    status = ?,
+                    leads_after_refresh = ?,
+                    leads_net_change = ?,
+                    error_message = ?
+                   WHERE id = ?""",
+                (
+                    datetime.now().isoformat(),
+                    status,
+                    leads_after,
+                    leads_after - leads_before,
+                    error,
+                    audit_id,
+                )
+            )
+            conn.commit()
+            
+            net_change = leads_after - leads_before
+            if net_change < 0 and abs(net_change) > leads_before * 0.05:
+                logger.warning(
+                    f"DATA REGRESSION: Refresh caused net loss of {abs(net_change)} leads "
+                    f"({leads_before} -> {leads_after}). This may indicate a problem."
+                )
+    
+    def get_last_audit_log(self) -> Optional[Dict]:
+        """Get the most recent audit log entry."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM refresh_audit_log ORDER BY started_at DESC LIMIT 1"
+            ).fetchone()
+            return dict(row) if row else None
+    
+    # === Stats Cache (Data Robustness v2) ===
+    
+    def get_cached_stats(self, key: str, max_age_seconds: int = 300) -> Optional[Dict]:
+        """Get cached stats if fresh enough."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT value, updated_at FROM stats_cache WHERE key = ?", (key,)
+            ).fetchone()
+            if row:
+                try:
+                    updated_at = datetime.fromisoformat(row['updated_at'])
+                    age = (datetime.now() - updated_at).total_seconds()
+                    if age < max_age_seconds:
+                        return json.loads(row['value'])
+                except (ValueError, TypeError):
+                    pass
+            return None
+    
+    def set_cached_stats(self, key: str, value: Dict):
+        """Set/update cached stats."""
+        with self._get_connection() as conn:
+            conn.execute(
+                """INSERT INTO stats_cache (key, value, updated_at) VALUES (?, ?, ?)
+                   ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at""",
+                (key, json.dumps(value), datetime.now().isoformat())
+            )
+            conn.commit()
+    
+    def invalidate_stats_cache(self):
+        """Invalidate all cached stats (call after data changes)."""
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM stats_cache")
+            conn.commit()
     
     # === Database Backup ===
     

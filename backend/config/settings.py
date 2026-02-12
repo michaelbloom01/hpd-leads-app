@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     
     # Pipeline settings
-    min_portfolio_size: int = 10
+    min_portfolio_size: int = 1  # Changed from 10 — no longer discard small portfolios before DB storage
     enrichment_batch_size: int = 50
     
     # Paths

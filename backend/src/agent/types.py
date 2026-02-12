@@ -388,5 +388,30 @@ TOOL_SCHEMAS = [
             "properties": {},
             "required": []
         }
+    },
+    {
+        "name": "search_by_address",
+        "description": (
+            "Search the building registry by street address. Use this when a user asks "
+            "'who manages [address]?' or 'who owns [address]?'. Returns building records "
+            "with their managing lead (agent/owner) information. Also used as a fallback "
+            "when query_leads returns no name-based results for what looks like an address."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string",
+                    "description": "Street address to search for (e.g. '245 Bleecker Street', 'Bleecker', '100 W 42nd')"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results to return (default 10)",
+                    "default": 10,
+                    "maximum": 50
+                }
+            },
+            "required": ["address"]
+        }
     }
 ]

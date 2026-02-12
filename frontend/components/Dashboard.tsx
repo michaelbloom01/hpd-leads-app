@@ -20,6 +20,8 @@ import {
   EnrichmentGaps,
   getEnrichmentGaps,
   checkHealth,
+  fetchDataHealth,
+  DataHealthResponse,
 } from '../services/api';
 
 interface LeadFilterPreset {
@@ -115,6 +117,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
   const [dataStatus, setDataStatus] = useState<DataStatus | null>(null);
   const [enrichmentGaps, setEnrichmentGaps] = useState<EnrichmentGaps | null>(null);
   const [backendStarting, setBackendStarting] = useState(false);
+  const [dataHealth, setDataHealth] = useState<DataHealthResponse | null>(null);
 
   // Pipeline drawer state
   const [selectedStage, setSelectedStage] = useState<string | null>(null);
@@ -130,13 +133,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
         ]);
       };
 
-      const [leadsResult, statsResult, enrichResult, followUpsResult, dataStatusResult, gapsResult] = await Promise.allSettled([
+      const [leadsResult, statsResult, enrichResult, followUpsResult, dataStatusResult, gapsResult, healthResult] = await Promise.allSettled([
         withTimeout(fetchLeads({ limit: 100, min_portfolio: 10 }), 15000),
         withTimeout(fetchStats(), 15000),
         withTimeout(getEnrichmentProgress(), 10000),
         withTimeout(getFollowUpsDue(), 10000),
         withTimeout(fetchDataStatus(), 10000),
         withTimeout(getEnrichmentGaps(), 10000),
+        withTimeout(fetchDataHealth(), 10000),
       ]);
       
       if (leadsResult.status === 'fulfilled') {
@@ -180,6 +184,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
 
       if (gapsResult.status === 'fulfilled') {
         setEnrichmentGaps(gapsResult.value);
+      }
+
+      if (healthResult.status === 'fulfilled') {
+        setDataHealth(healthResult.value);
       }
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
@@ -741,13 +749,37 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
         </div>
       </div>
 
-      {/* ── Footer ─────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-2 py-2 text-[10px] text-gray-400">
-        <span>
-          Data refreshed: {status?.last_refresh ? new Date(status.last_refresh).toLocaleDateString() : 'Never'}
-          {enrichmentStatus?.running && ` \u2022 Enrichment ${enrichmentStatus.percent_complete}% complete`}
-        </span>
-        <span>{(stats?.total_leads || 0).toLocaleString()} total leads in database</span>
+      {/* ── Data Health Badge ──────────────────────────────────── */}
+      <div className="flex items-center justify-between px-3 py-2 text-[11px] rounded-lg bg-gray-50 border border-gray-100">
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${
+            !dataHealth ? 'bg-gray-300' :
+            dataHealth.warnings.length === 0 ? 'bg-emerald-400' :
+            dataHealth.warnings.length <= 2 ? 'bg-amber-400' : 'bg-red-400'
+          }`} />
+          <span className="text-gray-600">
+            {dataHealth ? (
+              <>
+                {dataHealth.total_leads.toLocaleString()} leads
+                {dataHealth.coverage_percent != null && ` · ${dataHealth.coverage_percent}% HPD coverage`}
+                {dataHealth.total_buildings_registered > 0 && ` · ${dataHealth.total_buildings_registered.toLocaleString()} buildings`}
+                {dataHealth.last_refresh?.finished_at && ` · refreshed ${new Date(dataHealth.last_refresh.finished_at).toLocaleDateString()}`}
+              </>
+            ) : (
+              <>{(stats?.total_leads || 0).toLocaleString()} leads · Data health loading...</>
+            )}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 text-gray-400">
+          {enrichmentStatus?.running && (
+            <span className="text-blue-500">Enrichment {enrichmentStatus.percent_complete}%</span>
+          )}
+          {dataHealth?.warnings.length ? (
+            <span className="text-amber-500 cursor-help" title={dataHealth.warnings.join('\n')}>
+              {dataHealth.warnings.length} warning{dataHealth.warnings.length > 1 ? 's' : ''}
+            </span>
+          ) : null}
+        </div>
       </div>
     </div>
   );

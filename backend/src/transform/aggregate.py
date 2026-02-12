@@ -119,6 +119,8 @@ class Lead:
     priority_rank: int = 0  # 1-5 stars, 0 = unranked
     # Enrichment retry tracking (Phase 2.7)
     enrichment_retries: int = 0
+    # Data robustness (v2)
+    data_staleness: str = "current"  # current, partially_stale, expired
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
 
@@ -567,6 +569,9 @@ class StreamingLeadAggregator:
         # Store partial lead data keyed by grouping_key
         # Each value is a dict with aggregated info (not full Building objects)
         self._lead_data: Dict[str, Dict] = {}
+        # Track buildings dropped during aggregation for audit logging
+        self.buildings_dropped_no_name = 0
+        self.buildings_processed = 0
     
     def process_chunk(self, buildings: List[Building]) -> int:
         """
@@ -579,12 +584,16 @@ class StreamingLeadAggregator:
             Number of unique leads after this chunk
         """
         for building in buildings:
+            self.buildings_processed += 1
+            
             # Determine grouping key
             key = building.agent_name
             if not key or len(key) < 3:
                 key = building.owner_name
             
             if not key or len(key) < 3:
+                self.buildings_dropped_no_name += 1
+                logger.debug(f"Dropped building {building.building_id} (address: {building.address}): no valid agent/owner name (agent='{building.agent_name}', owner='{building.owner_name}')")
                 continue
             
             grouping_key = normalize_name_for_grouping(key)
@@ -637,9 +646,12 @@ class StreamingLeadAggregator:
                         data["business_address"] = ", ".join(p for p in addr_parts if p)
             
             # Accumulate unique contacts
+            # Use contact_id if available, otherwise generate a synthetic key to avoid
+            # all None-id contacts collapsing into a single entry
             for c in building.contacts:
-                if c.contact_id not in data["contacts"]:
-                    data["contacts"][c.contact_id] = {
+                contact_key = c.contact_id or f"{c.full_name}_{c.contact_type}_{c.business_address or ''}"
+                if contact_key not in data["contacts"]:
+                    data["contacts"][contact_key] = {
                         "type": c.contact_type,
                         "name": c.full_name,
                         "title": c.title,
@@ -673,13 +685,14 @@ class StreamingLeadAggregator:
         
         for grouping_key, data in self._lead_data.items():
             # Determine best names from counters
-            agent_name = data["agent_names"].most_common(1)[0][0] if data["agent_names"] else ""
-            owner_name = data["owner_names"].most_common(1)[0][0] if data["owner_names"] else ""
-            owner_type = data["owner_types"].most_common(1)[0][0] if data["owner_types"] else ""
+            # NOTE: bool(Counter()) is True in Python, so use .total() or len() to check emptiness
+            agent_name = data["agent_names"].most_common(1)[0][0] if data["agent_names"].total() > 0 else ""
+            owner_name = data["owner_names"].most_common(1)[0][0] if data["owner_names"].total() > 0 else ""
+            owner_type = data["owner_types"].most_common(1)[0][0] if data["owner_types"].total() > 0 else ""
             
             # Determine primary borough
             boro_counts = Counter(data["boros"])
-            primary_boro = boro_counts.most_common(1)[0][0] if boro_counts else ""
+            primary_boro = boro_counts.most_common(1)[0][0] if boro_counts.total() > 0 else ""
             unique_boros = list(boro_counts.keys())
             
             # Build building type breakdown
@@ -726,11 +739,13 @@ class StreamingLeadAggregator:
         return leads
     
     def get_stats(self) -> Dict:
-        """Get current aggregation statistics."""
+        """Get current aggregation statistics including drop counts for audit logging."""
         total_buildings = sum(len(d["building_addresses"]) for d in self._lead_data.values())
         return {
             "unique_leads": len(self._lead_data),
             "total_buildings": total_buildings,
+            "buildings_processed": self.buildings_processed,
+            "buildings_dropped_no_name": self.buildings_dropped_no_name,
         }
 
 

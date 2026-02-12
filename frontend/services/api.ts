@@ -207,6 +207,8 @@ export interface ApiLead {
   pipeline_stage: string;
   next_follow_up: string | null;
   priority_rank: number;
+  // Data robustness (v2)
+  data_staleness?: string;  // 'current' | 'partially_stale' | 'expired'
 }
 
 /**
@@ -939,4 +941,67 @@ export async function logOutreachFromCallMode(
     }),
   });
   if (!response.ok) throw new Error('Failed to log outreach');
+}
+
+
+// === Data Robustness APIs (v2) ===
+
+export interface BuildingSearchResult {
+  building_id: string;
+  address: string;
+  house_number: string;
+  street_name: string;
+  boro: string;
+  units_res: number;
+  building_class: string;
+  building_type: string;
+  lead_id: string;
+  agent_name: string;
+  owner_name: string;
+  score: number;
+  portfolio_size: number;
+  total_units: number;
+  status: string;
+}
+
+export interface DataHealthResponse {
+  total_leads: number;
+  total_buildings_registered: number;
+  hpd_source_count: number | null;
+  coverage_percent: number | null;
+  last_refresh: {
+    started_at: string;
+    finished_at: string;
+    status: string;
+    leads_net_change: number;
+    buildings_fetched: number;
+  } | null;
+  stale_buildings_count: number;
+  lead_staleness: Record<string, number>;
+  data_age_days: number | null;
+  enrichment_coverage: Record<string, number>;
+  warnings: string[];
+}
+
+/**
+ * Search buildings by address. Returns buildings with their managing lead.
+ */
+export async function searchBuildings(address: string, limit: number = 20): Promise<{
+  query: string;
+  buildings: BuildingSearchResult[];
+  total: number;
+}> {
+  const params = new URLSearchParams({ address, limit: limit.toString() });
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/buildings/search?${params}`);
+  if (!response.ok) throw new Error(`Failed to search buildings: ${response.statusText}`);
+  return response.json();
+}
+
+/**
+ * Get data health metrics for the dashboard badge.
+ */
+export async function fetchDataHealth(): Promise<DataHealthResponse> {
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/data-health`);
+  if (!response.ok) throw new Error(`Failed to fetch data health: ${response.statusText}`);
+  return response.json();
 }

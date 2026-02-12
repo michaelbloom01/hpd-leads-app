@@ -45,6 +45,30 @@ class HPDClient:
         if self.app_token:
             self.session.headers["X-App-Token"] = self.app_token
     
+    def get_total_count(self, dataset: str = 'buildings') -> int:
+        """
+        Query Socrata for the total record count in a dataset.
+        Used for pre-flight completeness checks before a refresh.
+        
+        Args:
+            dataset: 'buildings' or 'contacts'
+            
+        Returns:
+            Total record count, or 0 if the query fails
+        """
+        endpoint = BUILDINGS_ENDPOINT if dataset == 'buildings' else CONTACTS_ENDPOINT
+        try:
+            params = {"$select": "COUNT(*) as cnt"}
+            response = self.session.get(endpoint, params=params, timeout=15)
+            response.raise_for_status()
+            rows = response.json()
+            count = int(rows[0]["cnt"]) if rows else 0
+            logger.info(f"HPD {dataset} total count from Socrata: {count}")
+            return count
+        except Exception as e:
+            logger.warning(f"Failed to get {dataset} count from Socrata: {e}")
+            return 0
+    
     def fetch_all_buildings(self, limit: Optional[int] = None) -> List[dict]:
         """
         Fetch all building registrations from HPD, handling pagination.
@@ -129,6 +153,7 @@ class HPDClient:
         all_records = []
         offset = 0
         page_size = min(PAGE_SIZE, limit) if limit else PAGE_SIZE
+        consecutive_empty = 0  # Track consecutive empty pages to detect real end vs transient errors
         
         while True:
             # Check if we've hit the limit
@@ -144,15 +169,35 @@ class HPDClient:
             page = self._fetch_page(endpoint, offset=offset, limit=page_size, where=where)
             
             if not page:
-                # No more records
-                break
+                consecutive_empty += 1
+                if consecutive_empty >= 2:
+                    # Two consecutive empty pages = real end of data
+                    logger.info(f"Confirmed end of data after {consecutive_empty} consecutive empty pages at offset {offset}")
+                    break
+                else:
+                    # Could be transient — retry same offset once after a brief pause
+                    logger.warning(f"Empty page at offset {offset}, retrying once...")
+                    time.sleep(1.0)
+                    continue
             
+            consecutive_empty = 0  # Reset on successful page
             all_records.extend(page)
             logger.debug(f"Fetched {len(all_records)} records so far...")
             
             if len(page) < page_size:
-                # Last page (partial)
-                break
+                # Partial page — likely the last page, but verify with one more request
+                logger.debug(f"Partial page ({len(page)}/{page_size}) at offset {offset}, verifying end...")
+                offset += len(page)
+                verify_page = self._fetch_page(endpoint, offset=offset, limit=page_size, where=where)
+                if verify_page:
+                    # Not actually the end — keep going
+                    all_records.extend(verify_page)
+                    offset += len(verify_page)
+                    logger.info(f"Partial page was not end of data, continuing from offset {offset}")
+                    time.sleep(0.1)
+                    continue
+                else:
+                    break
             
             offset += len(page)
             
@@ -193,12 +238,24 @@ class HPDClient:
         for attempt in range(settings.api_retry_attempts):
             try:
                 response = self.session.get(endpoint, params=params, timeout=30)
+                
+                # Handle rate limiting (HTTP 429) explicitly
+                if response.status_code == 429:
+                    retry_after = response.headers.get('Retry-After')
+                    if retry_after:
+                        wait_time = int(retry_after)
+                    else:
+                        wait_time = settings.api_retry_delay_seconds * (2 ** attempt)
+                    logger.warning(f"Rate limited (429), waiting {wait_time}s before retry (attempt {attempt + 1})")
+                    time.sleep(wait_time)
+                    continue
+                
                 response.raise_for_status()
                 return response.json()
             except requests.RequestException as e:
                 if attempt < settings.api_retry_attempts - 1:
                     wait_time = settings.api_retry_delay_seconds * (2 ** attempt)
-                    logger.warning(f"Request failed, retrying in {wait_time}s: {e}")
+                    logger.warning(f"Request failed (attempt {attempt + 1}/{settings.api_retry_attempts}), retrying in {wait_time}s: {e}")
                     time.sleep(wait_time)
                 else:
                     logger.error(f"Request failed after {settings.api_retry_attempts} attempts: {e}")

@@ -93,6 +93,9 @@ class PLUTOClient:
         
         # Cache to avoid repeated lookups
         self._cache: Dict[str, BuildingClassification] = {}
+        # Error tracking for audit logging
+        self._batch_errors = 0
+        self._single_errors = 0
     
     def make_bbl(self, boro_id: str, block: str, lot: str) -> str:
         """
@@ -151,6 +154,7 @@ class PLUTOClient:
             return classification
             
         except Exception as e:
+            self._single_errors += 1
             logger.warning(f"PLUTO lookup failed for BBL {bbl}: {e}")
             return None
     
@@ -251,14 +255,16 @@ class PLUTOClient:
                     time.sleep(0.2)
                     
                 except Exception as e:
-                    logger.warning(f"PLUTO batch fetch failed for boro={boro}: {e}")
+                    logger.warning(f"PLUTO batch fetch failed for boro={boro}, blocks {batch_blocks[0]}-{batch_blocks[-1]}: {e}")
+                    self._batch_errors += 1
             
             # Mark BBLs not found as None in cache
             for bbl in bbls_needed:
                 if bbl not in self._cache:
                     self._cache[bbl] = None
         
-        logger.info(f"PLUTO batch fetch: {total_fetched} classifications found for {len(buildings)} buildings")
+        total_needed = sum(len(bbls) for bbls in needed_bbls.values())
+        logger.info(f"PLUTO batch fetch: {total_fetched}/{total_needed} classifications found for {len(buildings)} buildings ({self._batch_errors} batch errors)")
         return results
     
     def _parse_record(self, record: Dict) -> BuildingClassification:

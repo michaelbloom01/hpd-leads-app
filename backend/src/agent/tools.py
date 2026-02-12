@@ -152,11 +152,70 @@ def query_leads(
     if sort_dir != "desc":
         filters_applied["sort_dir"] = sort_dir
 
+    # If search was used but no results, try building address fallback
+    if search and total_count == 0:
+        building_results = search_by_address(search)
+        if building_results.get("buildings"):
+            return {
+                "leads": [],
+                "total_count": 0,
+                "showing": 0,
+                "filters_applied": filters_applied,
+                "building_address_matches": building_results["buildings"],
+                "note": f"No leads matched the name '{search}', but {len(building_results['buildings'])} building(s) found at that address. See building_address_matches for the managing lead.",
+            }
+
     return {
         "leads": leads,
         "total_count": total_count,
         "showing": len(leads),
         "filters_applied": filters_applied,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tool: search_by_address (building registry lookup)
+# ---------------------------------------------------------------------------
+
+def search_by_address(address: str, limit: int = 10) -> dict:
+    """
+    Search the building registry by street address.
+    Returns buildings with their managing lead info.
+    
+    Use this when a user asks "who manages [address]?" or when
+    query_leads returns no results for what looks like an address.
+    """
+    db = get_database()
+    results = db.search_buildings_by_address(address, limit=limit)
+    
+    if not results:
+        return {
+            "buildings": [],
+            "message": f"No buildings found matching '{address}' in the HPD Multiple Dwelling Registration database. This could mean: (1) the building has fewer than 3 units and is not required to register, (2) it is a condo/coop not captured in HPD registrations, or (3) the address format differs from HPD records."
+        }
+    
+    # Format results for the agent
+    formatted = []
+    for r in results:
+        formatted.append({
+            "building_id": r.get("building_id"),
+            "address": r.get("address"),
+            "boro": r.get("boro"),
+            "units": r.get("units_res", 0),
+            "building_type": r.get("building_type", "unknown"),
+            "managing_lead": {
+                "lead_id": r.get("lead_id"),
+                "agent_name": r.get("agent_name"),
+                "owner_name": r.get("owner_name"),
+                "score": r.get("score"),
+                "portfolio_size": r.get("portfolio_size"),
+                "total_units": r.get("total_units"),
+            }
+        })
+    
+    return {
+        "buildings": formatted,
+        "total": len(formatted),
     }
 
 
@@ -718,6 +777,7 @@ TOOL_FUNCTIONS = {
     "compile_email_briefing": compile_email_briefing,
     "refine_rent_estimates": refine_rent_estimates,
     "get_stats": get_stats,
+    "search_by_address": search_by_address,
 }
 
 

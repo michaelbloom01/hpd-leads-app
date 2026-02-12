@@ -66,10 +66,9 @@ def main(limit: int = None, csv_only: bool = False, no_enrich: bool = False):
     leads = aggregate_to_leads(buildings)
     logger.info(f"Created {len(leads)} leads")
     
-    # 4. Filter by portfolio size
-    min_size = settings.min_portfolio_size
-    leads = [l for l in leads if l.portfolio_size >= min_size]
-    logger.info(f"Filtered to {len(leads)} leads with {min_size}+ buildings")
+    # NOTE: No portfolio_size filter — all leads are kept in the database.
+    # Low-value leads are ranked low by scoring, not deleted.
+    logger.info(f"Proceeding with all {len(leads)} leads (no portfolio filter)")
     
     # 5. Enrich (optional)
     if not no_enrich:

@@ -68,7 +68,8 @@ def main():
     logger.info("Processing...")
     buildings = [normalize_building(b) for b in raw_buildings]
     leads = aggregate_to_leads(buildings)
-    leads = [l for l in leads if l.portfolio_size >= settings.min_portfolio_size]
+    # NOTE: No portfolio_size filter — all leads are kept in the database.
+    # Low-value leads are ranked low by scoring, not deleted.
     
     enricher = Enricher()
     leads = enricher.enrich_batch(leads, limit=settings.enrichment_batch_size)

@@ -227,7 +227,8 @@ def normalize_name_for_grouping(name: str) -> str:
     Normalize a name for grouping/deduplication.
     
     Additional rules beyond normalize_name:
-    - Remove common suffixes (LLC, INC, CORP, etc.)
+    - Iteratively remove common suffixes (LLC, INC, CORP, etc.) until stable
+    - Strip leading noise words (THE, A)
     
     Args:
         name: Already normalized name
@@ -241,15 +242,27 @@ def normalize_name_for_grouping(name: str) -> str:
     # Already normalized, but ensure uppercase
     name = name.upper()
     
-    # Remove common suffixes for grouping
+    # Remove common suffixes for grouping — ITERATIVE until stable
+    # This fixes the bug where "ABC LLC INC" only stripped "INC" in a single pass
     suffixes = [
         " LLC", " L L C", " INC", " INCORPORATED", " CORP", " CORPORATION",
         " CO", " COMPANY", " LP", " LLP", " PLLC", " PC", " PA",
         " ASSOCIATES", " ASSOC", " GROUP", " HOLDINGS", " PARTNERS",
+        " MANAGEMENT", " MGMT", " MGT", " PROPERTIES", " PROPERTY",
+        " REALTY", " REAL ESTATE", " ENTERPRISES", " SERVICES",
     ]
-    for suffix in suffixes:
-        if name.endswith(suffix):
-            name = name[:-len(suffix)]
+    changed = True
+    while changed:
+        changed = False
+        for suffix in suffixes:
+            if name.endswith(suffix):
+                name = name[:-len(suffix)].strip()
+                changed = True
+    
+    # Strip leading noise words
+    for prefix in ["THE ", "A "]:
+        if name.startswith(prefix):
+            name = name[len(prefix):]
     
     return name.strip()
 

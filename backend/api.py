@@ -620,6 +620,73 @@ async def health_detailed():
     }
 
 
+@app.get("/api/data-health")
+async def data_health():
+    """
+    Data quality dashboard endpoint.
+    Returns at-a-glance metrics about dataset completeness, freshness, and integrity.
+    All data is read from local DB (no external API calls).
+    """
+    db = get_database()
+    
+    total_leads = db.get_leads_count()
+    total_buildings = db.count_buildings_in_registry()
+    stale_buildings = db.count_stale_buildings()
+    last_audit = db.get_last_audit_log()
+    last_refresh_time = db.get_last_refresh_time()
+    
+    # Enrichment coverage
+    enrichment_stats = db.get_enrichment_stats()
+    
+    # Staleness
+    with db._get_connection() as conn:
+        staleness = {}
+        for row in conn.execute("SELECT data_staleness, COUNT(*) as cnt FROM leads GROUP BY data_staleness"):
+            staleness[row[0] or 'current'] = row[1]
+    
+    # Calculate data age
+    data_age_days = None
+    if last_refresh_time:
+        from datetime import datetime
+        data_age_days = (datetime.now() - last_refresh_time).days
+    
+    # Build warnings
+    warnings = []
+    if last_audit:
+        coverage = last_audit.get('coverage_percent')
+        if coverage and coverage < 95:
+            warnings.append(f"HPD coverage is {coverage:.1f}% — recommend a full refresh")
+        net_change = last_audit.get('leads_net_change')
+        if net_change and net_change < 0:
+            warnings.append(f"Last refresh lost {abs(net_change)} leads — possible data regression")
+    if data_age_days and data_age_days > 30:
+        warnings.append(f"Data is {data_age_days} days old — consider refreshing")
+    if stale_buildings > 0:
+        warnings.append(f"{stale_buildings} buildings have stale registrations")
+    expired_count = staleness.get('expired', 0)
+    if expired_count > 0:
+        warnings.append(f"{expired_count} leads have expired registrations")
+    
+    return {
+        "total_leads": total_leads,
+        "total_buildings_registered": total_buildings,
+        "hpd_source_count": last_audit.get('hpd_total_available') if last_audit else None,
+        "coverage_percent": last_audit.get('coverage_percent') if last_audit else None,
+        "last_refresh": {
+            "started_at": last_audit.get('started_at'),
+            "finished_at": last_audit.get('finished_at'),
+            "status": last_audit.get('status'),
+            "leads_net_change": last_audit.get('leads_net_change'),
+            "buildings_fetched": last_audit.get('hpd_buildings_fetched'),
+        } if last_audit else None,
+        "stale_buildings_count": stale_buildings,
+        "lead_staleness": staleness,
+        "data_age_days": data_age_days,
+        "enrichment_coverage": enrichment_stats.get('by_status', {}),
+        "warnings": warnings,
+    }
+
+
 @app.get("/api/enrichment/queue")
 async def get_enrichment_queue():
     """Get info about leads waiting for enrichment."""
@@ -748,6 +815,8 @@ class LeadResponse(BaseModel):
     pipeline_stage: str = "research"
     next_follow_up: Optional[str] = None
     priority_rank: int = 0
+    # Data robustness (v2)
+    data_staleness: str = "current"  # 'current', 'partially_stale', 'expired'
 
 
 class PipelineStatus(BaseModel):
@@ -873,6 +942,8 @@ def _row_to_lead(row_dict: Dict) -> Lead:
         priority_rank=row_dict.get('priority_rank') or 0,
         # Retry tracking (Phase 2.7)
         enrichment_retries=row_dict.get('enrichment_retries') or 0,
+        # Data robustness (v2)
+        data_staleness=row_dict.get('data_staleness') or 'current',
     )
 
 
@@ -929,6 +1000,27 @@ async def get_leads(
         offset=offset,
         limit=limit,
     )
+
+
+@app.get("/api/buildings/search")
+async def search_buildings(
+    address: str = Query(..., description="Address to search for (e.g., '245 Bleecker Street')"),
+    limit: int = Query(20, ge=1, le=100, description="Max results"),
+):
+    """
+    Search the building registry by address.
+    Returns buildings with their managing lead info.
+    
+    This enables direct address-to-lead lookup, solving cases like
+    "who manages 245 Bleecker Street?" without needing to know the lead name.
+    """
+    db = get_database()
+    results = db.search_buildings_by_address(address, limit=limit)
+    return {
+        "query": address,
+        "buildings": results,
+        "total": len(results),
+    }
 
 
 @app.get("/api/enrichment-gaps")
@@ -1179,10 +1271,25 @@ def _run_background_refresh(limit: Optional[int], include_pluto: bool = True):
         _refresh_state["error"] = None
     
     try:
-        logger.info(f"Background refresh started with limit={limit or 'ALL'}, pluto={include_pluto}")
+        import uuid
+        refresh_id = str(uuid.uuid4())[:8]
+        logger.info(f"Background refresh [{refresh_id}] started with limit={limit or 'ALL'}, pluto={include_pluto}")
         
         client = HPDClient()
         db = get_database()
+        
+        # === Pre-flight: get HPD total count for coverage validation ===
+        hpd_total = client.get_total_count('buildings')
+        if limit and hpd_total > 0 and limit < hpd_total * 0.9:
+            logger.warning(f"[{refresh_id}] Refresh limit ({limit}) is <90% of HPD total ({hpd_total}). Recommend full=true for complete coverage.")
+        
+        # === Create audit log entry ===
+        audit_id = db.create_audit_log(refresh_id, config={
+            "limit": limit,
+            "include_pluto": include_pluto,
+            "hpd_total_available": hpd_total,
+        })
+        db.update_audit_log(audit_id, {"hpd_total_available": hpd_total})
         
         # Initialize PLUTO client if enabled
         pluto_client = None
@@ -1274,13 +1381,25 @@ def _run_background_refresh(limit: Optional[int], include_pluto: bool = True):
             with _refresh_lock:
                 _refresh_state["leads_created"] = stats["unique_leads"]
         
-        # Finalize: get all leads from aggregator
+        # === Finalize: get all leads from aggregator ===
         with _refresh_lock:
             _refresh_state["phase"] = "finalizing"
         
-        logger.info("Finalizing leads from streaming aggregator...")
+        agg_stats = aggregator.get_stats()
+        logger.info(f"Finalizing leads from streaming aggregator...")
+        logger.info(f"Aggregation stats: {agg_stats['buildings_processed']} processed, {agg_stats['buildings_dropped_no_name']} dropped (no name)")
         leads = aggregator.get_leads()
         logger.info(f"Created {len(leads)} leads from streaming aggregation")
+        
+        # Update audit log with aggregation stats
+        db.update_audit_log(audit_id, {
+            "hpd_buildings_fetched": _refresh_state.get("buildings_fetched", 0),
+            "buildings_normalized": agg_stats.get("buildings_processed", 0),
+            "buildings_dropped": agg_stats.get("buildings_dropped_no_name", 0),
+            "leads_aggregated": len(leads),
+            "pluto_lookups_success": total_pluto_lookups,
+            "pluto_lookups_failed": pluto_client._batch_errors if pluto_client else 0,
+        })
         
         # Score leads
         with _refresh_lock:
@@ -1295,9 +1414,65 @@ def _run_background_refresh(limit: Optional[int], include_pluto: bool = True):
         
         leads = db.apply_persisted_data_to_leads(leads)
         
-        # Save to database
+        # Save leads to database (merge upsert — protects user data)
         db.save_leads(leads)
         logger.info(f"Persisted {len(leads)} leads to database")
+        
+        # === Populate building registry ===
+        with _refresh_lock:
+            _refresh_state["phase"] = "building registry"
+        
+        building_records = []
+        all_building_ids = set()
+        for lead in leads:
+            for i, addr in enumerate(lead.buildings):
+                bid = lead.building_ids[i] if i < len(lead.building_ids) else None
+                if bid:
+                    all_building_ids.add(bid)
+                    # Parse address into components
+                    parts = addr.split(None, 1) if addr else ['', '']
+                    house_num = parts[0] if len(parts) >= 2 and parts[0][:1].isdigit() else ''
+                    street = parts[1] if len(parts) >= 2 and parts[0][:1].isdigit() else addr
+                    
+                    building_records.append({
+                        'building_id': bid,
+                        'lead_id': lead.lead_id,
+                        'address': addr or '',
+                        'house_number': house_num,
+                        'street_name': (street or '').upper(),
+                        'boro': lead.boro or '',
+                    })
+        
+        buildings_saved = db.save_buildings(building_records, refresh_id=refresh_id)
+        logger.info(f"Saved {buildings_saved} buildings to building_registry")
+        
+        # === Staleness detection ===
+        with _refresh_lock:
+            _refresh_state["phase"] = "staleness check"
+        
+        if all_building_ids:
+            stale_count = db.mark_stale_buildings(all_building_ids, refresh_id=refresh_id)
+            staleness_counts = db.update_lead_staleness()
+            logger.info(f"Staleness: {stale_count} stale buildings, lead staleness: {staleness_counts}")
+        
+        # === Finalize audit log ===
+        buildings_fetched = _refresh_state.get("buildings_fetched", 0)
+        coverage = (buildings_fetched / hpd_total * 100) if hpd_total > 0 else 0
+        
+        db.update_audit_log(audit_id, {
+            "leads_saved": len(leads),
+            "buildings_registered": buildings_saved,
+            "coverage_percent": round(coverage, 1),
+        })
+        
+        if coverage < 95 and hpd_total > 0:
+            logger.warning(f"[{refresh_id}] COVERAGE ALERT: Only {coverage:.1f}% of HPD records fetched ({buildings_fetched}/{hpd_total})")
+            db.finish_audit_log(audit_id, status='partial')
+        else:
+            db.finish_audit_log(audit_id, status='success')
+        
+        # Invalidate stats cache
+        db.invalidate_stats_cache()
         
         # Update cache
         with _leads_lock:
@@ -1308,7 +1483,7 @@ def _run_background_refresh(limit: Optional[int], include_pluto: bool = True):
         with _refresh_lock:
             _refresh_state["leads_created"] = len(leads)
         
-        logger.info(f"Background refresh complete: {_refresh_state['buildings_fetched']} buildings -> {len(leads)} leads, {total_pluto_lookups} PLUTO lookups")
+        logger.info(f"Background refresh [{refresh_id}] complete: {buildings_fetched} buildings -> {len(leads)} leads, {total_pluto_lookups} PLUTO lookups, {coverage:.1f}% coverage")
         
     except Exception as e:
         logger.error(f"Background refresh failed: {e}")
@@ -1316,6 +1491,11 @@ def _run_background_refresh(limit: Optional[int], include_pluto: bool = True):
         logger.error(traceback.format_exc())
         with _refresh_lock:
             _refresh_state["error"] = str(e)
+        # Record failure in audit log
+        try:
+            db.finish_audit_log(audit_id, status='failed', error=str(e))
+        except Exception:
+            pass  # Don't let audit logging failure mask the real error
     finally:
         with _refresh_lock:
             _refresh_state["running"] = False
@@ -1347,11 +1527,12 @@ async def refresh_pipeline(
     """
     global _leads_cache, _last_refresh, _refresh_state
     
-    # If full=true, remove limit to get everything
+    # Default to full pull — never silently truncate the dataset.
+    # The old default of 10,000 caused missing buildings (e.g., 245 Bleecker / Kano).
     if full:
         limit = None
     elif limit is None:
-        limit = 10000  # Default for quick refresh
+        limit = None  # Full pull by default — use explicit limit param to restrict
     
     # Check if already running
     with _refresh_lock:
@@ -3581,6 +3762,8 @@ def _lead_to_response(lead: Lead) -> LeadResponse:
         pipeline_stage=getattr(lead, 'pipeline_stage', 'research') or 'research',
         next_follow_up=getattr(lead, 'next_follow_up', None),
         priority_rank=getattr(lead, 'priority_rank', 0) or 0,
+        # Data robustness (v2)
+        data_staleness=getattr(lead, 'data_staleness', 'current') or 'current',
     )
 
 

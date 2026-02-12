@@ -1,6 +1,6 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { toast } from 'react-hot-toast';
-import { ApiLead, updateLead, researchLead, addOutreachAttempt, enrichLeadContacts, generateAiSummary, enrichLeadAll, getDueDiligence, CompanyResearch, OutreachAttempt, DOSInfo } from '../services/api';
+import { ApiLead, updateLead, addOutreachAttempt, enrichLeadAll, getDueDiligence, OutreachAttempt } from '../services/api';
 
 // Lazy-load map to avoid large initial bundle
 const PortfolioMap = lazy(() => import('./PortfolioMap'));
@@ -50,8 +50,6 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   const [enrichedLead, setEnrichedLead] = useState(lead);
   const [notes, setNotes] = useState(lead.notes || '');
   const [outreachStatus, setOutreachStatus] = useState(lead.outreach_status || 'new');
-  const [companyResearch, setCompanyResearch] = useState<CompanyResearch | null>(null);
-  const [dosInfo, setDosInfo] = useState<DOSInfo | null>(null);
   const [aiDescription, setAiDescription] = useState<string | null>(lead.business_summary || null);
   const [outreachAttempts, setOutreachAttempts] = useState<OutreachAttempt[]>(lead.outreach_attempts || []);
   const [showAddOutreach, setShowAddOutreach] = useState(false);
@@ -73,8 +71,6 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     setPipelineStage(lead.pipeline_stage || 'research');
     setPriorityRank(lead.priority_rank || 0);
     setNextFollowUp(lead.next_follow_up || '');
-    setDosInfo(null);
-    setCompanyResearch(null);
     setActiveTab('overview');
     setShowEmailMenu(false);
   }, [lead]);
@@ -164,11 +160,6 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     } catch (err) { console.error('Enrichment failed:', err); toast.error('Enrichment failed — check server logs'); } 
     finally { setIsEnriching(false); }
   };
-
-  // Keep individual handlers for backward compatibility but mark as legacy
-  const handleResearch = handleEnrichAll;
-  const handleGenerateAI = handleEnrichAll;
-  const handleEnrichContacts = handleEnrichAll;
 
   const handleAddOutreachAttempt = async () => {
     if (!newOutreach.method || !newOutreach.outcome) return;
@@ -588,31 +579,6 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                   <p className="text-gray-400 text-sm italic">No contact info yet. Click "Find Contacts" above.</p>
                 )}
               </div>
-
-              {/* Company Research Results */}
-              {companyResearch && (
-                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-2">
-                  <h3 className="text-xs font-bold text-emerald-600 uppercase tracking-wider">Company Research</h3>
-                  {companyResearch.owner_names?.length > 0 && <div><span className="text-xs text-gray-500">Owners: </span><span className="text-sm text-gray-700">{companyResearch.owner_names.join(', ')}</span></div>}
-                  {companyResearch.year_established && <div><span className="text-xs text-gray-500">Est: </span><span className="text-sm text-gray-700">{companyResearch.year_established}</span></div>}
-                  {companyResearch.service_areas?.length > 0 && <div><span className="text-xs text-gray-500">Areas: </span><span className="text-sm text-gray-700">{companyResearch.service_areas.join(', ')}</span></div>}
-                  {companyResearch.description && <p className="text-sm text-gray-500 leading-relaxed">{companyResearch.description}</p>}
-                </div>
-              )}
-
-              {/* NY DOS Info */}
-              {dosInfo && (
-                <div className="bg-gray-50 rounded-xl p-4 space-y-2">
-                  <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider">NY DOS Corporation</h3>
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    {dosInfo.entity_name && <div><span className="text-xs text-gray-400 block">Entity</span><span className="text-gray-700">{dosInfo.entity_name}</span></div>}
-                    {dosInfo.entity_type && <div><span className="text-xs text-gray-400 block">Type</span><span className="text-gray-700">{dosInfo.entity_type}</span></div>}
-                    {dosInfo.formation_date && <div><span className="text-xs text-gray-400 block">Formed</span><span className="text-gray-700">{dosInfo.formation_date}</span></div>}
-                    {dosInfo.dos_id && <div><span className="text-xs text-gray-400 block">DOS ID</span><span className="text-gray-700">{dosInfo.dos_id}</span></div>}
-                    {dosInfo.registered_agent && <div className="col-span-2"><span className="text-xs text-gray-400 block">Agent</span><span className="text-emerald-600">{dosInfo.registered_agent}</span></div>}
-                  </div>
-                </div>
-              )}
 
               {/* HPD Registered Contacts */}
               {uniqueContacts.length > 0 && (
