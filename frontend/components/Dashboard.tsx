@@ -395,8 +395,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                 {readyToContact.length} leads
               </span>
             </div>
-            <div className="space-y-2 max-h-52 overflow-y-auto">
-              {readyToContact.slice(0, 5).map(lead => (
+            <div className="space-y-2 max-h-[28rem] overflow-y-auto">
+              {readyToContact.map(lead => (
                 <div 
                   key={lead.lead_id}
                   onClick={() => onSelectLead?.(lead)}
@@ -416,7 +416,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
           </div>
         )}
 
-        {/* Ready to Contact (when follow-ups exist) OR Ready to Contact always shows */}
+        {/* Ready to Contact (when follow-ups exist) */}
         {followUpsDue && followUpsDue.count > 0 && readyToContact.length > 0 && (
           <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-6">
             <div className="flex items-center justify-between mb-4">
@@ -425,8 +425,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead }) => {
                 {readyToContact.length} leads
               </span>
             </div>
-            <div className="space-y-2 max-h-52 overflow-y-auto">
-              {readyToContact.slice(0, 5).map(lead => (
+            <div className="space-y-2 max-h-[28rem] overflow-y-auto">
+              {readyToContact.map(lead => (
                 <div 
                   key={lead.lead_id}
                   onClick={() => onSelectLead?.(lead)}
