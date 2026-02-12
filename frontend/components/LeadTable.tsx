@@ -61,17 +61,18 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
   const [filterOutreachStatuses, setFilterOutreachStatuses] = useState<string[]>([]);
   const [filterPipelineStages, setFilterPipelineStages] = useState<string[]>([]);
   const [filterEnrichmentStatuses, setFilterEnrichmentStatuses] = useState<string[]>([]);
+  const [filterEnrichmentStatus, setFilterEnrichmentStatus] = useState<string>('');
   const [filterMinUnits, setFilterMinUnits] = useState<string>('');
   const [filterMaxUnits, setFilterMaxUnits] = useState<string>('');
   const [filterMinUnitsPerBldg, setFilterMinUnitsPerBldg] = useState<string>('');
   const [filterMaxUnitsPerBldg, setFilterMaxUnitsPerBldg] = useState<string>('');
   const [filterBuildingTypes, setFilterBuildingTypes] = useState<string[]>([]);
   const [showMoreFilters, setShowMoreFilters] = useState(false);
-  
   // Address search mode
   const [searchMode, setSearchMode] = useState<'leads' | 'address'>('leads');
   const [addressResults, setAddressResults] = useState<BuildingSearchResult[]>([]);
   const [addressSearching, setAddressSearching] = useState(false);
+  
   
   // Sorting
   const [sortField, setSortField] = useState<SortField>('score');
@@ -96,7 +97,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
       prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
     );
   };
-
   const toggleEntityType = (type: string) => {
     setFilterEntityTypes(prev =>
       prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
@@ -121,8 +121,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     );
   };
 
+
   // Count of secondary filters active (for badge)
-  const activeSecondaryFilterCount = [
+  const activeFiltersCount = [
     filterEntityTypes.length > 0 ? 'yes' : '',
     filterOutreachStatuses.length > 0 ? 'yes' : '',
     filterEnrichmentStatuses.length > 0 ? 'yes' : '',
@@ -144,7 +145,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     setLoading(true);
     setError(null);
     try {
-      const params: Record<string, string | number | boolean> = {
+      const params: Record<string, any> = {
         limit: pageSize,
         offset: currentPage * pageSize,
         sort_by: sortField === 'agent_name' ? 'company_name' : sortField,
@@ -164,7 +165,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
       if (filterBoroughs.length > 0) params.boro = filterBoroughs.join(',');
       if (filterHasPhone !== null) params.has_phone = filterHasPhone;
       if (filterHasEmail !== null) params.has_email = filterHasEmail;
-      if (filterHasWebsite !== null) params.has_website = filterHasWebsite;
       if (filterEntityTypes.length > 0) params.entity_type = filterEntityTypes.join(',');
       if (filterOutreachStatuses.length > 0) params.outreach_status = filterOutreachStatuses.join(',');
       if (filterPipelineStages.length > 0) params.pipeline_stage = filterPipelineStages.join(',');
@@ -192,7 +192,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     } finally {
       setLoading(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterMinScore, filterMaxScore, filterMinPortfolio, filterMaxPortfolio, filterBoroughs, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityTypes, filterOutreachStatuses, filterPipelineStages, filterEnrichmentStatuses, filterMinUnits, filterMaxUnits, filterMinUnitsPerBldg, filterMaxUnitsPerBldg, filterBuildingTypes, pageSize, sortField, sortDir, searchTerm]);
 
   // Keep ref in sync so callbacks can call latest version
@@ -248,7 +247,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     setPage(0);
     loadLeads(0);
   };
-
   // Apply filter preset from Dashboard navigation
   useEffect(() => {
     if (!filterPreset) return;
@@ -268,6 +266,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     setTimeout(() => { loadLeadsRef.current?.(0); }, 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterPreset]);
+
 
   const totalPages = Math.ceil(totalLeads / pageSize);
 
@@ -325,16 +324,15 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     setFilterMaxPortfolio('');
     setFilterHasPhone(null);
     setFilterHasEmail(null);
-    setFilterHasWebsite(null);
     setFilterEntityTypes([]);
     setFilterOutreachStatuses([]);
     setFilterPipelineStages([]);
     setFilterEnrichmentStatuses([]);
+    setFilterPipelineStage('');
     setFilterMinUnits('');
     setFilterMaxUnits('');
     setFilterMinUnitsPerBldg('');
     setFilterMaxUnitsPerBldg('');
-    setFilterBuildingTypes([]);
     // Reload with no filters (use ref to get latest loadLeads after state resets)
     setPage(0);
     setTimeout(() => loadLeadsRef.current?.(0), 0);
@@ -357,8 +355,8 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     
     if (filterBoroughs.length > 0) params.set('boro', filterBoroughs.join(','));
     if (filterHasPhone === true) params.set('has_phone', 'true');
-    if (filterHasEmail === true) params.set('has_email', 'true');
     if (filterEntityTypes.length > 0) params.set('entity_type', filterEntityTypes.join(','));
+    if (filterEntityType) params.set('entity_type', filterEntityType);
     
     const minUnits = parseInt(filterMinUnits);
     if (!isNaN(minUnits) && minUnits > 0) params.set('min_units', minUnits.toString());
@@ -368,11 +366,11 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     if (!isNaN(minUpb) && minUpb > 0) params.set('min_units_per_bldg', minUpb.toString());
     const maxUpb = parseFloat(filterMaxUnitsPerBldg);
     if (!isNaN(maxUpb) && maxUpb > 0) params.set('max_units_per_bldg', maxUpb.toString());
-    if (filterBuildingTypes.length > 0) params.set('building_type_has', filterBuildingTypes.join(','));
     if (filterOutreachStatuses.length > 0) params.set('outreach_status', filterOutreachStatuses.join(','));
     if (filterPipelineStages.length > 0) params.set('pipeline_stage', filterPipelineStages.join(','));
     if (filterEnrichmentStatuses.length > 0) params.set('enrichment_status', filterEnrichmentStatuses.join(','));
     if (searchTerm.trim()) params.set('search', searchTerm.trim());
+    if (filterBuildingTypes.length > 0) params.set('building_type_has', filterBuildingTypes.join(','));
 
     try {
       const { getAuthHeaders } = await import('../services/auth');
@@ -467,7 +465,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
       {/* Filter Bar */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3 md:p-4">
         {/* Primary Filters Row */}
-        <div className="flex flex-wrap gap-2 md:gap-3 items-center">
+        <div className="flex flex-wrap items-center gap-2 md:gap-3">
           <div className="flex-1 min-w-[160px] md:min-w-[200px] flex gap-1">
             <input type="text" placeholder={searchMode === 'leads' ? "Search name, company..." : "Search by address (e.g., 245 Bleecker)..."}
               className="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -539,7 +537,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
         {showMoreFilters && (
           <div className="mt-3 pt-3 border-t border-gray-200 space-y-3">
             {/* Row 1: Range filters */}
-            <div className="flex flex-wrap gap-4 items-center">
+            <div className="flex flex-wrap gap-3 items-center">
               <div className="flex items-center gap-1" title="Filter by lead quality score (0-100)">
                 <span className="text-[10px] text-gray-400 uppercase font-bold w-12">Score</span>
                 <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMinScore} onChange={(e) => setFilterMinScore(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
@@ -694,7 +692,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
           )}
         </div>
       </div>
-
       {/* Address Search Results */}
       {searchMode === 'address' && addressResults.length > 0 && (
         <div className="bg-white shadow-sm border border-blue-200 rounded-xl p-4 mb-3">
@@ -736,6 +733,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
           Searching buildings...
         </div>
       )}
+
 
       {/* Data Table — desktop table, mobile cards */}
       <div className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
@@ -1072,8 +1070,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
             <div className="flex items-center gap-2">
               <span className="text-xs text-gray-400">Per page:</span>
               <select
-                value={pageSize}
                 onChange={(e) => { const newSize = Number(e.target.value); setPageSize(newSize); setPage(0); setTimeout(() => loadLeadsRef.current?.(0), 0); }}
+                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }}
+                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }}
                 className="px-2 py-1 bg-white border border-gray-200 rounded text-xs text-gray-700 focus:outline-none"
               >
                 <option value={25}>25</option>

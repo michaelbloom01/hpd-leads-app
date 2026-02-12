@@ -23,6 +23,12 @@ const AgentPanel: React.FC<AgentPanelProps> = ({ isOpen, onClose, onSelectLead }
         } else {
           onClose();
         }
+        if (active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) {
+          // Blur the input instead of closing the panel
+          (active as HTMLElement).blur();
+        } else {
+          onClose();
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);

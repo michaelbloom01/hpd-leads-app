@@ -1,6 +1,8 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { toast } from 'react-hot-toast';
 import DOMPurify from 'dompurify';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { ApiLead, updateLead, addOutreachAttempt, enrichLeadAll, getDueDiligence, OutreachAttempt } from '../services/api';
 
 // Lazy-load map to avoid large initial bundle
@@ -162,19 +164,28 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
         // Propagate to parent so the table updates without a page reload
         onLeadUpdated?.(updatedLead);
       }
-    } catch (err) { console.error('Enrichment failed:', err); toast.error('Enrichment failed — check server logs'); } 
-    finally { setIsEnriching(false); }
+    } catch (err) {
+      console.error('Enrichment failed:', err);
+      toast.error('Enrichment failed. Please try again.');
+    } finally {
+      setIsEnriching(false);
+    }
   };
 
   const handleAddOutreachAttempt = async () => {
     if (!newOutreach.method || !newOutreach.outcome) return;
     setIsSaving(true);
     try {
-      const result = await addOutreachAttempt(lead.lead_id, newOutreach);
-      setOutreachAttempts([result.attempt, ...outreachAttempts]);
-      setShowAddOutreach(false);
-      setNewOutreach({ method: 'phone', outcome: 'no_answer', notes: '' });
-    } catch (err) { console.error('Failed to add outreach:', err); toast.error('Failed to log outreach'); } 
+      await addOutreachAttempt(lead.id, {
+        method: newOutreach.method,
+        outcome: newOutreach.outcome,
+        notes: newOutreach.notes,
+        date: new Date().toISOString(),
+      });
+      toast.success('Outreach logged');
+      setNewOutreach({ method: '', outcome: '', notes: '' });
+      setShowOutreachForm(false);
+    } catch (err) { console.error('Failed to add outreach:', err); toast.error('Failed to log outreach'); }
     finally { setIsSaving(false); }
   };
 
@@ -465,6 +476,13 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                     <div className="grid grid-cols-2 gap-3">
                       {Object.entries(enrichedLead.score_breakdown).map(([key, value]) => {
                         const SCORE_LABELS: Record<string, string> = {
+                          portfolio_size: 'Portfolio Size',
+                          total_units: 'Total Units',
+                          building_diversity: 'Building Mix',
+                          building_types: 'Building Types',
+                          contact_completeness: 'Contact Info Available',
+                          data_quality: 'Data Completeness',
+                          violation_density: 'Violation Density',
                           condo_coop: 'Condo/Co-op %',
                           density: 'Unit Density',
                           units: 'Unit Count',
@@ -472,10 +490,12 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                           professional: 'Professional Mgmt',
                           contact: 'Contact Info',
                         };
+                        const label = SCORE_LABELS[key] || key.replace(/_/g, ' ');
+                        const numVal = typeof value === 'number' ? value : 0;
                         return (
-                          <div key={key} className="flex items-center justify-between">
-                            <span className="text-xs text-gray-500">{SCORE_LABELS[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</span>
-                            <span className="text-xs font-mono text-gray-700">{typeof value === 'number' ? value.toFixed(1) : String(value)}</span>
+                          <div key={key} className="flex items-center justify-between text-xs">
+                            <span className="text-gray-500">{label}</span>
+                            <span className={`font-mono font-medium ${numVal > 0 ? 'text-emerald-600' : 'text-gray-300'}`}>{numVal.toFixed(1)}</span>
                           </div>
                         );
                       })}
@@ -585,18 +605,14 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 )}
               </div>
 
-              {/* HPD Registered Contacts */}
-              {uniqueContacts.length > 0 && (
-                <div className="bg-gray-50 rounded-xl p-4">
-                  <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">HPD Registered Contacts</h3>
-                  <div className="space-y-1.5">
-                    {uniqueContacts.map((contact: any, i: number) => (
-                      <div key={i} className="flex items-center justify-between py-1">
-                        <span className="text-sm text-gray-700">{contact.name}</span>
-                        <span className="text-[10px] text-gray-400">{(contact.type || '').replace(/([A-Z])/g, ' $1').trim()}</span>
-                      </div>
-                    ))}
-                  </div>
+              {/* Company Research Results */}
+              {companyResearch && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-2">
+                  <h3 className="text-xs font-bold text-emerald-600 uppercase tracking-wider">Company Research</h3>
+                  {companyResearch.owner_names?.length > 0 && <div><span className="text-xs text-gray-500">Owners: </span><span className="text-sm text-gray-700">{companyResearch.owner_names.join(', ')}</span></div>}
+                  {companyResearch.year_established && <div><span className="text-xs text-gray-500">Est: </span><span className="text-sm text-gray-700">{companyResearch.year_established}</span></div>}
+                  {companyResearch.service_areas?.length > 0 && <div><span className="text-xs text-gray-500">Areas: </span><span className="text-sm text-gray-700">{companyResearch.service_areas.join(', ')}</span></div>}
+                  {companyResearch.description && <p className="text-sm text-gray-500 leading-relaxed">{companyResearch.description}</p>}
                 </div>
               )}
             </>
@@ -801,6 +817,8 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                           h2{font-size:18px;color:#3b82f6;margin-top:24px}
                           h3{font-size:14px;margin-top:16px}
                           li{margin:4px 0}p{line-height:1.6}
+                          strong{font-weight:700}
+                          a{color:#3b82f6;text-decoration:underline}
                           table{width:100%;border-collapse:collapse;margin:16px 0}
                           th,td{border:1px solid #e2e8f0;padding:6px 10px;text-align:left;font-size:13px}
                           th{background:#f8fafc;font-weight:600}
@@ -810,6 +828,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                           .replace(/^## (.*)/gm, '<h2>$1</h2>')
                           .replace(/^### (.*)/gm, '<h3>$1</h3>')
                           .replace(/^- (.*)/gm, '<li>$1</li>')
+                          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                           .replace(/\n\n/g, '<p></p>')
                           .replace(/\n/g, '<br>');
                         if (ddReport.comparables?.length > 0) {
@@ -830,16 +849,33 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                       Print / PDF
                     </button>
                   </div>
-                  <div className="prose prose-sm max-w-none">
-                    {ddReport.report_markdown.split('\n').map((line, i) => {
-                      if (line.startsWith('# ')) return <h1 key={i} className="text-xl font-bold text-gray-900 mt-4 mb-2">{line.slice(2)}</h1>;
-                      if (line.startsWith('## ')) return <h2 key={i} className="text-lg font-bold text-blue-600 mt-3 mb-1">{line.slice(3)}</h2>;
-                      if (line.startsWith('### ')) return <h3 key={i} className="text-sm font-bold text-gray-700 mt-3 mb-1">{line.slice(4)}</h3>;
-                      if (line.startsWith('- ')) return <li key={i} className="text-gray-700 text-sm ml-4">{line.slice(2)}</li>;
-                      if (line.trim() === '') return <br key={i} />;
-                      return <p key={i} className="text-gray-500 text-sm leading-relaxed">{line}</p>;
-                    })}
+
+                  {/* Rendered Markdown Report */}
+                  <div className="text-gray-700 text-sm leading-relaxed space-y-1">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        h1: ({ children }) => <h1 className="text-xl font-bold text-gray-900 border-b border-gray-200 pb-2 mt-4 mb-2">{children}</h1>,
+                        h2: ({ children }) => <h2 className="text-lg font-semibold text-blue-600 mt-5 mb-2">{children}</h2>,
+                        h3: ({ children }) => <h3 className="text-sm font-semibold text-gray-800 mt-3 mb-1">{children}</h3>,
+                        p: ({ children }) => <p className="text-gray-600 leading-relaxed my-1">{children}</p>,
+                        strong: ({ children }) => <strong className="font-semibold text-gray-900">{children}</strong>,
+                        ul: ({ children }) => <ul className="list-disc list-inside space-y-0.5 my-1 ml-2">{children}</ul>,
+                        ol: ({ children }) => <ol className="list-decimal list-inside space-y-0.5 my-1 ml-2">{children}</ol>,
+                        li: ({ children }) => <li className="text-gray-600">{children}</li>,
+                        a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline hover:text-blue-800">{children}</a>,
+                        table: ({ children }) => <div className="overflow-x-auto my-2"><table className="w-full text-sm border-collapse">{children}</table></div>,
+                        thead: ({ children }) => <thead className="bg-gray-50">{children}</thead>,
+                        th: ({ children }) => <th className="border border-gray-200 px-2 py-1 text-left text-xs font-semibold text-gray-600 uppercase">{children}</th>,
+                        td: ({ children }) => <td className="border border-gray-200 px-2 py-1 text-gray-700">{children}</td>,
+                        hr: () => <hr className="border-gray-200 my-3" />,
+                        blockquote: ({ children }) => <blockquote className="border-l-3 border-blue-300 pl-3 italic text-gray-500 my-2">{children}</blockquote>,
+                      }}
+                    >
+                      {ddReport.report_markdown}
+                    </ReactMarkdown>
                   </div>
+
                   {ddReport.comparables?.length > 0 && (
                     <div className="border-t border-gray-200 pt-3">
                       <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Comparables</h3>

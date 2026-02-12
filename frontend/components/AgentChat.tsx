@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+﻿import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   agentChat,
   AgentSSEEvent,
@@ -254,7 +254,7 @@ const AgentChat: React.FC<AgentChatProps> = ({
           setIsStreaming(false);
           setStatus(null);
           setLastFailedMsg(text.trim());
-          accumulatedError = 'No response received after 90 seconds. The server may be starting up — try again.';
+          accumulatedError = 'No response received after 90 seconds. The server may be starting up â€” try again.';
           updateAssistant();
         }
       }, 90_000);
@@ -281,7 +281,7 @@ const AgentChat: React.FC<AgentChatProps> = ({
         if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
           errorMsg = 'Could not reach the server. Check your connection and try again.';
         } else if (err.message.includes('timeout') || err.message.includes('Timeout')) {
-          errorMsg = 'Request timed out. The server may be busy — try again in a moment.';
+          errorMsg = 'Request timed out. The server may be busy â€” try again in a moment.';
         }
         accumulatedError = errorMsg;
         updateAssistant();

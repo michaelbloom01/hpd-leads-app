@@ -930,24 +930,6 @@ export async function getConversation(conversationId: string): Promise<{ convers
 }
 
 /**
- * Log an outreach attempt from Call Mode.
- */
-export async function logOutreachFromCallMode(
-  leadId: string,
-  outcome: string,
-  notes?: string,
-): Promise<void> {
-  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/outreach`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      method: 'cold_call',
-      outcome,
-      notes: notes || '',
-    }),
-  });
-  if (!response.ok) throw new Error('Failed to log outreach');
-}
 
 
 // === Data Robustness APIs (v2) ===
@@ -1010,4 +992,24 @@ export async function fetchDataHealth(): Promise<DataHealthResponse> {
   const response = await fetchWithRetry(`${API_BASE_URL}/api/data-health`);
   if (!response.ok) throw new Error(`Failed to fetch data health: ${response.statusText}`);
   return response.json();
+}
+
+/**
+ * Log an outreach attempt from Call Mode.
+ */
+export async function logOutreachFromCallMode(
+  leadId: string,
+  outcome: string,
+  notes?: string,
+): Promise<void> {
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/outreach`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      method: 'cold_call',
+      outcome,
+      notes: notes || '',
+    }),
+  });
+  if (!response.ok) throw new Error('Failed to log outreach');
 }
