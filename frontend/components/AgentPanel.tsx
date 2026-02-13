@@ -18,13 +18,6 @@ const AgentPanel: React.FC<AgentPanelProps> = ({ isOpen, onClose, onSelectLead }
       if (e.key === 'Escape' && isOpen) {
         const active = document.activeElement;
         if (active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) {
-          // Blur the input instead of closing the panel
-          (active as HTMLElement).blur();
-        } else {
-          onClose();
-        }
-        if (active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) {
-          // Blur the input instead of closing the panel
           (active as HTMLElement).blur();
         } else {
           onClose();
@@ -48,19 +41,20 @@ const AgentPanel: React.FC<AgentPanelProps> = ({ isOpen, onClose, onSelectLead }
 
   return (
     <>
-      {/* Backdrop shadow (subtle, not blocking) */}
+      {/* Backdrop — blocks interaction on mobile, subtle shadow on desktop */}
       {!isExpanded && (
         <div
-          className="fixed inset-0 z-[39] pointer-events-none"
-          style={{ boxShadow: 'inset -450px 0 60px -30px rgba(0,0,0,0.05)' }}
+          className="fixed inset-0 z-[39] bg-black/40 md:bg-transparent md:pointer-events-none"
+          onClick={onClose}
+          style={{ boxShadow: window.innerWidth >= 768 ? 'inset -450px 0 60px -30px rgba(0,0,0,0.05)' : 'none' }}
         />
       )}
 
-      {/* Panel */}
+      {/* Panel — full-screen on mobile, 450px sidebar on desktop */}
       <div
         ref={panelRef}
         className={`fixed inset-y-0 right-0 z-40 flex flex-col bg-white border-l border-gray-200 shadow-xl transition-all duration-300 ease-in-out ${
-          isExpanded ? 'left-0' : 'w-[450px]'
+          isExpanded ? 'left-0' : 'w-full md:w-[450px]'
         }`}
       >
         {/* Panel Header */}

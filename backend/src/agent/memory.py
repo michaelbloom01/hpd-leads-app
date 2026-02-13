@@ -214,11 +214,7 @@ def save_pending_action(
 
 
 def get_pending_action(conversation_id: str, action_id: str) -> Optional[dict]:
-    """Get a pending action by conversation and action ID.
-
-    Extracts the stored _tool_use_id from tool_input and returns it as a
-    top-level field for easy access by the orchestrator.
-    """
+    """Get a pending action by conversation and action ID."""
     db = get_database()
     with db._get_connection() as conn:
         row = conn.execute(
@@ -234,11 +230,6 @@ def get_pending_action(conversation_id: str, action_id: str) -> Optional[dict]:
         result["tool_input"] = json.loads(result["tool_input"])
     except (json.JSONDecodeError, TypeError):
         pass
-    # Extract the stored tool_use_id and clean it from tool_input
-    if isinstance(result.get("tool_input"), dict):
-        result["tool_use_id"] = result["tool_input"].pop("_tool_use_id", None)
-    else:
-        result["tool_use_id"] = None
     return result
 
 

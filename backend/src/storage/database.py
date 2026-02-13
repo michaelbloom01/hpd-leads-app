@@ -6,6 +6,10 @@ Stores:
 - Lead metadata (notes, outreach_status)
 - Enrichment results (phone, email, website, etc.)
 - User-added data that shouldn't be lost on refresh
+
+Domain-specific methods live in src/storage/repos/ mixins;
+LeadsDatabase composes them all via multiple inheritance so every
+call-site that used to import `get_database()` keeps working.
 """
 import json
 import sqlite3
@@ -14,6 +18,11 @@ from datetime import datetime, date
 from pathlib import Path
 from typing import Optional, Dict, List, TYPE_CHECKING
 from contextlib import contextmanager
+
+from src.storage.repos import (
+    UserRepo, LeadRepo, EnrichmentRepo,
+    OutreachRepo, CacheRepo, AlertRepo, SettingsRepo,
+)
 
 if TYPE_CHECKING:
     from src.transform.aggregate import Lead
@@ -30,8 +39,15 @@ else:
     DEFAULT_DB_PATH = Path(__file__).parent.parent.parent / "data" / "leads.db"
 
 
-class LeadsDatabase:
-    """SQLite database for lead persistence."""
+class LeadsDatabase(
+    UserRepo, LeadRepo, EnrichmentRepo,
+    OutreachRepo, CacheRepo, AlertRepo, SettingsRepo,
+):
+    """SQLite database for lead persistence.
+
+    Domain methods are organized in mixin classes under src/storage/repos/.
+    This class owns the connection pool, schema init, and bulk lead I/O.
+    """
     
     def __init__(self, db_path: Optional[Path] = None):
         self.db_path = db_path or DEFAULT_DB_PATH
@@ -340,6 +356,17 @@ class LeadsDatabase:
                     description TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
+                
+                -- Users table (JWT auth)
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id TEXT PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'user',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_login TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
             """)
             conn.commit()
             logger.info(f"Database initialized at {self.db_path}")
@@ -505,6 +532,60 @@ class LeadsDatabase:
                 (key, value, datetime.now().isoformat())
             )
             conn.commit()
+    
+    # === User Management (Auth) ===
+    
+    def create_user(self, user_id: str, email: str, password_hash: str, role: str = "user") -> bool:
+        """Create a new user. Returns False if email already exists."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "INSERT INTO users (user_id, email, password_hash, role) VALUES (?, ?, ?, ?)",
+                    (user_id, email, password_hash, role)
+                )
+                conn.commit()
+                return True
+        except sqlite3.IntegrityError:
+            return False
+    
+    def get_user_by_email(self, email: str) -> Optional[Dict]:
+        """Get a user by email address."""
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+            return dict(row) if row else None
+    
+    def get_user_by_id(self, user_id: str) -> Optional[Dict]:
+        """Get a user by ID."""
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+            return dict(row) if row else None
+    
+    def update_user_password(self, user_id: str, new_password_hash: str) -> bool:
+        """Update a user's password hash."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "UPDATE users SET password_hash = ? WHERE user_id = ?",
+                (new_password_hash, user_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+    
+    def update_user_last_login(self, user_id: str):
+        """Update the last_login timestamp for a user."""
+        with self._get_connection() as conn:
+            conn.execute(
+                "UPDATE users SET last_login = ? WHERE user_id = ?",
+                (datetime.now().isoformat(), user_id)
+            )
+            conn.commit()
+    
+    def list_users(self) -> list:
+        """List all users (without password hashes)."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT user_id, email, role, created_at, last_login FROM users ORDER BY created_at"
+            ).fetchall()
+            return [dict(r) for r in rows]
     
     # === Lead User Data ===
     
@@ -1165,15 +1246,16 @@ class LeadsDatabase:
             where_clauses.append("estimated_annual_revenue <= ?")
             params.append(max_revenue)
         
-        # 2B: Full-text search across name/company/address fields
+        # 2B: Full-text search across name/company/address fields AND building addresses
         if search is not None and search.strip():
             search_term = f"%{search.strip()}%"
             where_clauses.append(
                 "(agent_name LIKE ? COLLATE NOCASE OR owner_name LIKE ? COLLATE NOCASE "
                 "OR company_name LIKE ? COLLATE NOCASE OR primary_contact LIKE ? COLLATE NOCASE "
-                "OR address LIKE ? COLLATE NOCASE)"
+                "OR address LIKE ? COLLATE NOCASE "
+                "OR buildings LIKE ? COLLATE NOCASE)"
             )
-            params.extend([search_term] * 5)
+            params.extend([search_term] * 6)
         
         where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
         

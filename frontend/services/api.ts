@@ -23,6 +23,8 @@ export interface HealthStatus {
 
 /**
  * Check backend health status. Returns 'starting' while backend is booting.
+ * Railway returns 502/503 when the container is sleeping or cold-starting,
+ * so we treat those as 'starting' to keep polling instead of showing an error.
  */
 export async function checkHealth(): Promise<HealthStatus> {
   try {
@@ -31,6 +33,10 @@ export async function checkHealth(): Promise<HealthStatus> {
     const response = await fetch(`${API_BASE_URL}/api/health`, { signal: controller.signal });
     clearTimeout(timeoutId);
     if (!response.ok) {
+      // 502/503/504 = Railway container sleeping or cold-starting — treat as 'starting'
+      if (response.status >= 502 && response.status <= 504) {
+        return { status: 'starting', message: `Backend is waking up (HTTP ${response.status}).` };
+      }
       return { status: 'error', message: `HTTP ${response.status}` };
     }
     return response.json();
@@ -43,6 +49,35 @@ export async function checkHealth(): Promise<HealthStatus> {
 // ============================================================================
 // R5: Fetch with Retry + AbortController Timeout
 // ============================================================================
+
+/**
+ * Convenience wrapper: GET with JSON response.
+ * Throws on non-OK and handles auth/retry automatically.
+ */
+async function apiGet<T>(path: string, timeoutMs = 30000): Promise<T> {
+  const response = await fetchWithRetry(`${API_BASE_URL}${path}`, {}, 1, timeoutMs);
+  if (!response.ok) throw new Error(`GET ${path} failed: ${response.statusText}`);
+  return response.json();
+}
+
+/**
+ * Convenience wrapper: POST/PATCH/DELETE with JSON body.
+ */
+async function apiMutate<T>(
+  path: string,
+  method: 'POST' | 'PATCH' | 'DELETE' = 'POST',
+  body?: unknown,
+  timeoutMs = 30000,
+): Promise<T> {
+  const opts: RequestInit = { method };
+  if (body !== undefined) {
+    opts.headers = { 'Content-Type': 'application/json' };
+    opts.body = JSON.stringify(body);
+  }
+  const response = await fetchWithRetry(`${API_BASE_URL}${path}`, opts, 1, timeoutMs);
+  if (!response.ok) throw new Error(`${method} ${path} failed: ${response.statusText}`);
+  return response.json();
+}
 
 /**
  * Enhanced fetch wrapper with automatic retries and timeout via AbortController.
@@ -928,9 +963,6 @@ export async function getConversation(conversationId: string): Promise<{ convers
   if (!response.ok) throw new Error('Failed to fetch conversation');
   return response.json();
 }
-
-/**
-
 
 // === Data Robustness APIs (v2) ===
 

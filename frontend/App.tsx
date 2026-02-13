@@ -130,7 +130,7 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       {/* Mobile Menu Overlay */}
       {isMobileMenuOpen && (
         <div 
-          className="lg:hidden fixed inset-0 bg-black/20 z-40"
+          className="lg:hidden fixed inset-0 bg-black/40 z-40"
           onClick={() => setIsMobileMenuOpen(false)}
         />
       )}
@@ -154,12 +154,12 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         
         <main className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-12 bg-gray-50">
           <div className="max-w-[1600px] mx-auto space-y-8">
-            <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+            <header className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4 sm:gap-6 pl-10 sm:pl-0">
               <div className="space-y-1">
-                <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">
+                <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">
                   {activeTab === 'dashboard' ? 'Lead Dashboard' : 'All Leads'}
                 </h1>
-                <p className="text-gray-500 text-sm max-w-xl leading-relaxed">
+                <p className="text-gray-500 text-xs sm:text-sm max-w-xl leading-relaxed">
                   {activeTab === 'dashboard' 
                     ? 'NYC property management companies ranked by portfolio size and acquisition potential.' 
                     : 'Browse, filter, and take action on property management leads.'}
@@ -168,7 +168,7 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
               <button 
                 onClick={handleRefresh}
                 disabled={isRefreshing}
-                className="flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-gray-50 text-gray-700 rounded-lg font-medium text-sm transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed border border-gray-200"
+                className="flex items-center gap-2 px-4 sm:px-5 py-2 sm:py-2.5 bg-white hover:bg-gray-50 text-gray-700 rounded-lg font-medium text-sm transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed border border-gray-200 self-start sm:self-auto"
               >
                 <svg className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                 {isRefreshing ? 'Refreshing...' : 'Refresh Data'}

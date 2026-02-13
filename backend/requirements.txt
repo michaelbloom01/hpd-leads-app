@@ -1,47 +1,50 @@
 # Core
-requests>=2.31.0,<3
-pydantic>=2.5.0,<3
-pydantic-settings>=2.1.0,<3
-python-dotenv>=1.0.0,<2
-PyYAML>=6.0.0,<7
+requests>=2.31.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-dotenv>=1.0.0
+PyYAML>=6.0.0
 
 # API Server
-fastapi>=0.109.0,<1
-uvicorn[standard]>=0.27.0,<1
-gunicorn>=21.2.0,<24
-sse-starlette>=1.6.0,<3
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+gunicorn>=21.2.0
+sse-starlette>=1.6.0
 
 # Data processing
-pandas>=2.1.0,<3
+pandas>=2.1.0
 
 # Google Sheets
-google-auth>=2.25.0,<3
-google-api-python-client>=2.111.0,<3
+google-auth>=2.25.0
+google-api-python-client>=2.111.0
 
 # Web scraping
-beautifulsoup4>=4.12.0,<5
-trafilatura>=1.6.0,<3
-lxml>=5.1.0,<6
+beautifulsoup4>=4.12.0
+trafilatura>=1.6.0
+lxml>=5.1.0
 
-# Google search (pinned exactly to avoid breaking changes)
+# Optional: better Google search (R8: pinned to avoid breaking changes)
 googlesearch-python==1.2.5
 
+# Optional: paid APIs
+# serpapi>=0.1.5  # Uncomment if using SerpAPI
+
 # AI summaries
-anthropic>=0.18.0,<1
+anthropic>=0.18.0
 
 # Authentication
-python-jose>=3.3.0,<4
-bcrypt>=4.0.0,<5
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
 
 # Rate limiting
-slowapi>=0.1.9,<1
+slowapi>=0.1.9
 
 # Error tracking (optional)
-sentry-sdk[fastapi]>=1.40.0,<3
+sentry-sdk[fastapi]>=1.40.0
 
 # Development
-pytest>=7.4.0,<9
-pytest-cov>=4.1.0,<7
-httpx>=0.27.0,<1
-black>=23.12.0,<25
-ruff>=0.1.0,<1
+pytest>=7.4.0
+pytest-cov>=4.1.0
+httpx>=0.27.0
+black>=23.12.0
+ruff>=0.1.0

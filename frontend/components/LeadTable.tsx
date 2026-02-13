@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { fetchLeads, ApiLead, enrichLeads, API_BASE_URL, checkHealth, searchBuildings, BuildingSearchResult } from '../services/api';
+import { BOROUGHS, BOROUGH_SHORT, formatCurrency, scoreColor } from '../utils/format';
 
 export interface LeadFilterPreset {
   outreachStatuses?: string[];
@@ -23,22 +24,6 @@ const HEALTH_POLL_INTERVAL = 5000;
 
 type SortField = 'agent_name' | 'portfolio_size' | 'total_units' | 'units_per_bldg' | 'score' | 'boro' | 'enrichment_status' | 'estimated_annual_revenue' | 'violations_per_unit';
 type SortDir = 'asc' | 'desc';
-
-const BOROUGHS = ['MANHATTAN', 'BROOKLYN', 'QUEENS', 'BRONX', 'STATEN ISLAND'];
-const BOROUGH_SHORT: Record<string, string> = { 'MANHATTAN': 'Man', 'BROOKLYN': 'Bklyn', 'QUEENS': 'Qns', 'BRONX': 'Bronx', 'STATEN ISLAND': 'SI' };
-
-const formatCurrency = (amount: number | undefined | null): string => {
-  if (amount == null || isNaN(amount)) return '—';
-  if (amount >= 1_000_000) return `$${(amount / 1_000_000).toFixed(1)}m`;
-  if (amount >= 1_000) return `$${(amount / 1_000).toFixed(0)}k`;
-  return `$${amount.toFixed(0)}`;
-};
-
-const scoreColor = (score: number): string => {
-  if (score >= 60) return 'text-emerald-600';
-  if (score >= 40) return 'text-amber-600';
-  return 'text-gray-400';
-};
 
 const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPresetConsumed }) => {
   const [leads, setLeads] = useState<ApiLead[]>([]);
@@ -201,12 +186,20 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
   useEffect(() => {
     let cancelled = false;
     let timerId: ReturnType<typeof setTimeout>;
+    let errorRetries = 0;
+    const MAX_ERROR_RETRIES = 24; // ~2 minutes of polling at 5s intervals
     
     const pollHealth = async () => {
       const health = await checkHealth();
       if (cancelled) return;
       if (health.status === 'starting') {
         setBackendStarting(true);
+        errorRetries = 0; // Reset error counter when we get a proper 'starting' response
+        timerId = setTimeout(pollHealth, HEALTH_POLL_INTERVAL);
+      } else if (health.status === 'error' && errorRetries < MAX_ERROR_RETRIES) {
+        // Backend may be sleeping or crashing — keep polling
+        setBackendStarting(true);
+        errorRetries++;
         timerId = setTimeout(pollHealth, HEALTH_POLL_INTERVAL);
       } else {
         setBackendStarting(false);
@@ -242,10 +235,31 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
 
+  // Detect if search term looks like a building address (starts with a number)
+  const looksLikeAddress = (term: string) => /^\d/.test(term.trim());
+
   // Apply filters — called by the "Go" button
+  // Auto-detects address-like searches and triggers building search alongside lead search
   const applyFilters = () => {
     setPage(0);
     loadLeads(0);
+
+    // Auto-detect address search: if the term starts with a number, also search buildings
+    const term = searchTerm.trim();
+    if (term && looksLikeAddress(term)) {
+      setAddressSearching(true);
+      searchBuildings(term).then(res => {
+        setAddressResults(res.buildings || []);
+        // Auto-switch to address mode so results display
+        if ((res.buildings || []).length > 0) {
+          setSearchMode('address');
+        }
+      }).catch(() => setAddressResults([])).finally(() => setAddressSearching(false));
+    } else {
+      // Clear any stale address results when doing a name search
+      setAddressResults([]);
+      if (searchMode === 'address' && !term) setSearchMode('leads');
+    }
   };
   // Apply filter preset from Dashboard navigation
   useEffect(() => {
@@ -317,6 +331,8 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
 
   const clearFilters = async () => {
     setSearchTerm('');
+    setSearchMode('leads');
+    setAddressResults([]);
     setFilterBoroughs([]);
     setFilterMinScore('');
     setFilterMaxScore('');
@@ -328,7 +344,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     setFilterOutreachStatuses([]);
     setFilterPipelineStages([]);
     setFilterEnrichmentStatuses([]);
-    setFilterPipelineStage('');
+    setFilterHasWebsite(null);
     setFilterMinUnits('');
     setFilterMaxUnits('');
     setFilterMinUnitsPerBldg('');
@@ -356,7 +372,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     if (filterBoroughs.length > 0) params.set('boro', filterBoroughs.join(','));
     if (filterHasPhone === true) params.set('has_phone', 'true');
     if (filterEntityTypes.length > 0) params.set('entity_type', filterEntityTypes.join(','));
-    if (filterEntityType) params.set('entity_type', filterEntityType);
     
     const minUnits = parseInt(filterMinUnits);
     if (!isNaN(minUnits) && minUnits > 0) params.set('min_units', minUnits.toString());
@@ -467,19 +482,12 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
         {/* Primary Filters Row */}
         <div className="flex flex-wrap items-center gap-2 md:gap-3">
           <div className="flex-1 min-w-[160px] md:min-w-[200px] flex gap-1">
-            <input type="text" placeholder={searchMode === 'leads' ? "Search name, company..." : "Search by address (e.g., 245 Bleecker)..."}
+            <input type="text" placeholder={searchMode === 'leads' ? "Search name, company, or address..." : "Search by building address (e.g., 140 E 28th St)..."}
               className="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
               value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
-                  if (searchMode === 'address' && searchTerm.trim()) {
-                    setAddressSearching(true);
-                    searchBuildings(searchTerm.trim()).then(res => {
-                      setAddressResults(res.buildings);
-                    }).catch(() => setAddressResults([])).finally(() => setAddressSearching(false));
-                  } else {
-                    applyFilters();
-                  }
+                  applyFilters();
                 }
               }} />
             <button
@@ -489,16 +497,16 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                   ? 'bg-blue-50 border-blue-300 text-blue-700'
                   : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
               }`}
-              title={searchMode === 'leads' ? 'Switch to address search' : 'Switch to lead search'}
+              title={searchMode === 'leads' ? 'Switch to address search' : 'Switch to company name search'}
             >
-              {searchMode === 'leads' ? '🏢' : '👤'}
+              {searchMode === 'leads' ? '📍' : '👤'}
             </button>
           </div>
-          {/* Borough multi-select toggles */}
-          <div className="flex gap-1">
+          {/* Borough multi-select toggles — horizontally scrollable on mobile */}
+          <div className="flex gap-1 overflow-x-auto flex-shrink-0 scrollbar-hide">
             {BOROUGHS.map(b => (
               <button key={b} onClick={() => toggleBorough(b)}
-                className={`px-2 py-1.5 rounded text-xs font-medium transition-colors ${
+                className={`px-3 py-2 sm:px-2 sm:py-1.5 rounded text-xs font-medium transition-colors flex-shrink-0 ${
                   filterBoroughs.includes(b)
                     ? 'bg-blue-50 text-blue-700 border border-blue-300'
                     : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'
@@ -509,18 +517,18 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
           </div>
           <div className="flex gap-1.5">
             <button onClick={() => setFilterHasPhone(filterHasPhone === true ? null : true)}
-              className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasPhone === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
+              className={`px-3 py-2 sm:px-2 sm:py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasPhone === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
               {filterHasPhone === true && <span className="text-emerald-600">✓</span>}Phone
             </button>
             <button onClick={() => setFilterHasEmail(filterHasEmail === true ? null : true)}
-              className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasEmail === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
+              className={`px-3 py-2 sm:px-2 sm:py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasEmail === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
               {filterHasEmail === true && <span className="text-emerald-600">✓</span>}Email
             </button>
           </div>
-          <button onClick={() => setShowMoreFilters(!showMoreFilters)} className="px-3 py-2 text-xs text-gray-500 hover:text-gray-700 transition-colors relative">
+          <button onClick={() => setShowMoreFilters(!showMoreFilters)} className="px-3 py-2 sm:py-2 text-xs text-gray-500 hover:text-gray-700 transition-colors relative flex-shrink-0">
             {showMoreFilters ? 'Less Filters' : 'More Filters'}
-            {activeSecondaryFilterCount > 0 && !showMoreFilters && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 text-white text-[9px] rounded-full flex items-center justify-center font-bold">{activeSecondaryFilterCount}</span>
+            {activeFiltersCount > 0 && !showMoreFilters && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 text-white text-[9px] rounded-full flex items-center justify-center font-bold">{activeFiltersCount}</span>
             )}
           </button>
           <button onClick={applyFilters} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors">
@@ -537,7 +545,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
         {showMoreFilters && (
           <div className="mt-3 pt-3 border-t border-gray-200 space-y-3">
             {/* Row 1: Range filters */}
-            <div className="flex flex-wrap gap-3 items-center">
+            <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 sm:gap-3 items-center">
               <div className="flex items-center gap-1" title="Filter by lead quality score (0-100)">
                 <span className="text-[10px] text-gray-400 uppercase font-bold w-12">Score</span>
                 <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMinScore} onChange={(e) => setFilterMinScore(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
@@ -699,8 +707,8 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
             Building Address Results ({addressResults.length})
           </h3>
           <div className="space-y-2">
-            {addressResults.map((b) => (
-              <div key={b.building_id} className="flex items-center justify-between p-2 rounded-lg bg-blue-50/50 hover:bg-blue-50 transition-colors">
+            {addressResults.map((b, idx) => (
+              <div key={b.building_id || `${b.address}-${idx}`} className="flex items-center justify-between p-2 rounded-lg bg-blue-50/50 hover:bg-blue-50 transition-colors">
                 <div>
                   <div className="text-sm font-medium text-gray-900">{b.address}</div>
                   <div className="text-xs text-gray-500">{b.boro} · {b.units_res} units · {b.building_type || 'unknown'}</div>
@@ -972,8 +980,16 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
               onClick={() => onSelectLead(lead)}
             >
               <div className="flex justify-between items-start mb-2">
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-gray-800 text-sm truncate">{lead.company_name || lead.agent_name || lead.owner_name}</div>
+                <div className="flex items-start gap-2 flex-1 min-w-0">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(lead.lead_id)}
+                    onChange={() => toggleSelect(lead.lead_id)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="rounded bg-white border-gray-300 mt-0.5 flex-shrink-0"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-gray-800 text-sm truncate">{lead.company_name || lead.agent_name || lead.owner_name}</div>
                   <div className="flex items-center gap-1.5 mt-1">
                     <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
                       lead.entity_type === 'company' ? 'bg-blue-50 text-blue-700' :
@@ -991,12 +1007,13 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                       </span>
                     ))}
                   </div>
+                  </div>
                 </div>
                 <span className={`font-mono text-lg font-bold ${scoreColor(lead.score)}`}>
                   {(lead.score || 0).toFixed(0)}
                 </span>
               </div>
-              <div className="flex items-center gap-4 text-xs">
+              <div className="flex items-center gap-4 text-xs ml-6">
                 <span className="text-gray-500"><span className="font-mono text-gray-700">{lead.portfolio_size || 0}</span> bldgs</span>
                 <span className="text-gray-500"><span className="font-mono text-blue-600">{(lead.total_units || 0).toLocaleString()}</span> units</span>
                 {(lead.portfolio_size || 0) > 0 && (
@@ -1011,16 +1028,16 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-2 mt-2" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-2 mt-2 ml-6" onClick={(e) => e.stopPropagation()}>
                 {lead.phone && (
-                  <a href={`tel:${lead.phone}`} className="p-2 bg-emerald-50 rounded-lg">
+                  <a href={`tel:${lead.phone}`} className="p-2.5 bg-emerald-50 rounded-lg">
                     <svg className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
                     </svg>
                   </a>
                 )}
                 {lead.email && (
-                  <a href={`mailto:${lead.email}`} className="p-2 bg-blue-50 rounded-lg">
+                  <a href={`mailto:${lead.email}`} className="p-2.5 bg-blue-50 rounded-lg">
                     <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
                     </svg>
@@ -1054,42 +1071,41 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
           ))}
         </div>
         
-        {/* Pagination */}
-        <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
-          <button
-            onClick={() => setPage(Math.max(0, page - 1))}
-            disabled={page === 0}
-            className="px-3 py-1 text-sm text-gray-500 hover:text-gray-900 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          >
-            ← Previous
-          </button>
-          <div className="flex items-center gap-4">
+        {/* Pagination — stacks on mobile */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-2 px-4 py-3 border-t border-gray-200 bg-gray-50">
+          <div className="flex items-center justify-between w-full sm:w-auto gap-2">
+            <button
+              onClick={() => setPage(Math.max(0, page - 1))}
+              disabled={page === 0}
+              className="px-3 py-2 sm:py-1 text-sm text-gray-500 hover:text-gray-900 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              ← Prev
+            </button>
             <div className="text-sm text-gray-400">
               Page {page + 1} of {totalPages || 1}
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-400">Per page:</span>
-              <select
-                onChange={(e) => { const newSize = Number(e.target.value); setPageSize(newSize); setPage(0); setTimeout(() => loadLeadsRef.current?.(0), 0); }}
-                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }}
-                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }}
-                className="px-2 py-1 bg-white border border-gray-200 rounded text-xs text-gray-700 focus:outline-none"
-              >
-                <option value={25}>25</option>
-                <option value={50}>50</option>
-                <option value={100}>100</option>
-                <option value={250}>250</option>
-                <option value={500}>500</option>
-              </select>
-            </div>
+            <button
+              onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
+              disabled={page >= totalPages - 1}
+              className="px-3 py-2 sm:py-1 text-sm text-gray-500 hover:text-gray-900 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              Next →
+            </button>
           </div>
-          <button
-            onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
-            disabled={page >= totalPages - 1}
-            className="px-3 py-1 text-sm text-gray-500 hover:text-gray-900 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          >
-            Next →
-          </button>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-400">Per page:</span>
+            <select
+              value={pageSize}
+              onChange={(e) => { const newSize = Number(e.target.value); setPageSize(newSize); setPage(0); setTimeout(() => loadLeadsRef.current?.(0), 0); }}
+              className="px-2 py-1.5 bg-white border border-gray-200 rounded text-xs text-gray-700 focus:outline-none"
+            >
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+              <option value={250}>250</option>
+              <option value={500}>500</option>
+            </select>
+          </div>
         </div>
       </div>
     </div>

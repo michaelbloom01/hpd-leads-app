@@ -23,6 +23,17 @@ import {
   fetchDataHealth,
   DataHealthResponse,
 } from '../services/api';
+import {
+  PIPELINE_STAGES,
+  BOROUGH_COLORS,
+  SCORE_COLORS,
+  OUTREACH_COLORS,
+  OUTREACH_LABELS,
+  ENRICHMENT_COLORS,
+  ENRICHMENT_LABELS,
+  formatCurrency,
+  scoreColor,
+} from '../utils/format';
 
 interface LeadFilterPreset {
   outreachStatuses?: string[];
@@ -39,69 +50,7 @@ interface DashboardProps {
   onNavigateToLeads?: (filters?: LeadFilterPreset) => void;
 }
 
-const PIPELINE_STAGES = [
-  { key: 'research', label: 'Research', color: '#475569', tailwind: 'bg-slate-600' },
-  { key: 'first_contact', label: 'Contact', color: '#2563eb', tailwind: 'bg-blue-600' },
-  { key: 'follow_up', label: 'Follow-Up', color: '#4f46e5', tailwind: 'bg-indigo-600' },
-  { key: 'meeting_scheduled', label: 'Meeting Set', color: '#9333ea', tailwind: 'bg-purple-600' },
-  { key: 'meeting_done', label: 'Meeting Done', color: '#7c3aed', tailwind: 'bg-violet-600' },
-  { key: 'loi', label: 'LOI', color: '#d97706', tailwind: 'bg-amber-600' },
-  { key: 'due_diligence', label: 'Due Diligence', color: '#ea580c', tailwind: 'bg-orange-600' },
-  { key: 'closed', label: 'Closed', color: '#059669', tailwind: 'bg-emerald-600' },
-];
-
-const BOROUGH_COLORS: Record<string, string> = {
-  'MANHATTAN': '#2563eb',
-  'BROOKLYN': '#7c3aed',
-  'QUEENS': '#059669',
-  'BRONX': '#ea580c',
-  'STATEN ISLAND': '#6b7280',
-};
-
-const SCORE_COLORS = ['#cbd5e1', '#fbbf24', '#fb923c', '#34d399', '#059669'];
-
-const OUTREACH_COLORS: Record<string, string> = {
-  'new': '#94a3b8',
-  'contacted': '#3b82f6',
-  'interested': '#10b981',
-  'not_interested': '#f87171',
-  'closed': '#6b7280',
-};
-
-const ENRICHMENT_COLORS: Record<string, string> = {
-  'complete': '#10b981',
-  'partial': '#fbbf24',
-  'failed': '#f87171',
-  'none': '#e2e8f0',
-};
-
-const OUTREACH_LABELS: Record<string, string> = {
-  'new': 'New',
-  'contacted': 'Contacted',
-  'interested': 'Interested',
-  'not_interested': 'Not Interested',
-  'closed': 'Closed',
-};
-
-const ENRICHMENT_LABELS: Record<string, string> = {
-  'complete': 'Enriched',
-  'partial': 'Partial',
-  'failed': 'No Data',
-  'none': 'Not Enriched',
-};
-
-const formatCurrency = (amount: number | undefined | null): string => {
-  if (amount == null || isNaN(amount)) return '—';
-  if (amount >= 1_000_000) return `$${(amount / 1_000_000).toFixed(1)}m`;
-  if (amount >= 1_000) return `$${(amount / 1_000).toFixed(0)}k`;
-  return `$${amount.toFixed(0)}`;
-};
-
-const scoreColor = (score: number): string => {
-  if (score >= 60) return 'text-emerald-600';
-  if (score >= 40) return 'text-amber-600';
-  return 'text-gray-400';
-};
+// scoreColor imported from utils/format
 
 
 const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }) => {
@@ -202,12 +151,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
   useEffect(() => {
     let cancelled = false;
     let timerId: ReturnType<typeof setTimeout>;
+    let errorRetries = 0;
+    const MAX_ERROR_RETRIES = 24; // ~2 minutes of polling at 5s intervals
     
     const pollHealth = async () => {
       const health = await checkHealth();
       if (cancelled) return;
       if (health.status === 'starting') {
         setBackendStarting(true);
+        errorRetries = 0; // Reset error counter when we get a proper 'starting' response
+        timerId = setTimeout(pollHealth, 5000);
+      } else if (health.status === 'error' && errorRetries < MAX_ERROR_RETRIES) {
+        // Backend may be sleeping or crashing — keep polling
+        setBackendStarting(true);
+        errorRetries++;
         timerId = setTimeout(pollHealth, 5000);
       } else {
         setBackendStarting(false);

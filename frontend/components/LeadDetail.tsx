@@ -4,38 +4,10 @@ import DOMPurify from 'dompurify';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ApiLead, updateLead, addOutreachAttempt, enrichLeadAll, getDueDiligence, OutreachAttempt } from '../services/api';
+import { PIPELINE_STAGES, OUTREACH_STATUSES, OUTREACH_METHODS, OUTREACH_OUTCOMES, formatCurrency } from '../utils/format';
 
 // Lazy-load map to avoid large initial bundle
 const PortfolioMap = lazy(() => import('./PortfolioMap'));
-
-const PIPELINE_STAGES = [
-  { value: 'research', label: 'Research' },
-  { value: 'first_contact', label: 'First Contact' },
-  { value: 'follow_up', label: 'Follow-Up' },
-  { value: 'meeting_scheduled', label: 'Meeting Set' },
-  { value: 'meeting_done', label: 'Meeting Done' },
-  { value: 'loi', label: 'LOI' },
-  { value: 'due_diligence', label: 'Due Diligence' },
-  { value: 'closed', label: 'Closed' },
-];
-
-const OUTREACH_STATUSES = [
-  { value: 'new', label: 'New', color: 'bg-gray-200 text-gray-700' },
-  { value: 'contacted', label: 'Contacted', color: 'bg-blue-600 text-blue-100' },
-  { value: 'interested', label: 'Interested', color: 'bg-emerald-600 text-emerald-100' },
-  { value: 'not_interested', label: 'Not Interested', color: 'bg-amber-600 text-amber-100' },
-  { value: 'closed', label: 'Closed', color: 'bg-purple-600 text-purple-100' },
-];
-
-const OUTREACH_METHODS = ['phone', 'email', 'linkedin', 'in_person', 'other'];
-const OUTREACH_OUTCOMES = ['no_answer', 'left_voicemail', 'spoke_with_contact', 'sent_email', 'meeting_scheduled', 'not_interested', 'other'];
-
-const formatCurrency = (amount: number | undefined | null): string => {
-  if (amount == null || isNaN(amount)) return '—';
-  if (amount >= 1_000_000) return `$${(amount / 1_000_000).toFixed(1)}m`;
-  if (amount >= 1_000) return `$${(amount / 1_000).toFixed(0)}k`;
-  return `$${amount.toFixed(0)}`;
-};
 
 type TabId = 'overview' | 'contacts' | 'pipeline' | 'buildings' | 'dd';
 
@@ -176,15 +148,14 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     if (!newOutreach.method || !newOutreach.outcome) return;
     setIsSaving(true);
     try {
-      await addOutreachAttempt(lead.id, {
+      await addOutreachAttempt(lead.lead_id, {
         method: newOutreach.method,
         outcome: newOutreach.outcome,
         notes: newOutreach.notes,
-        date: new Date().toISOString(),
       });
       toast.success('Outreach logged');
       setNewOutreach({ method: '', outcome: '', notes: '' });
-      setShowOutreachForm(false);
+      setShowAddOutreach(false);
     } catch (err) { console.error('Failed to add outreach:', err); toast.error('Failed to log outreach'); }
     finally { setIsSaving(false); }
   };
@@ -217,58 +188,60 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
         {/* === STICKY HEADER === */}
         <div className="flex-shrink-0 border-b border-gray-200">
           {/* Top row: name + close */}
-          <div className="p-5 pb-3 flex justify-between items-start">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
-                  enrichedLead.entity_type === 'company' ? 'bg-blue-50 text-blue-700' :
-                  enrichedLead.entity_type === 'individual_agent' ? 'bg-amber-50 text-amber-700' :
-                  enrichedLead.entity_type === 'owner_operator' ? 'bg-purple-50 text-purple-700' :
-                  'bg-gray-100 text-gray-500'
-                }`} title={enrichedLead.entity_type === 'company' ? 'Registered management company or housing entity' : enrichedLead.entity_type === 'individual_agent' ? 'Individual person acting as managing agent' : enrichedLead.entity_type === 'owner_operator' ? 'Property owner who self-manages' : 'Entity type unknown'}>
-                  {enrichedLead.entity_type === 'company' ? 'Company' : 
-                   enrichedLead.entity_type === 'individual_agent' ? 'Individual Agent' : 
-                   enrichedLead.entity_type === 'owner_operator' ? 'Owner-Operator' : 'Unknown'}
-                </span>
-                {(enrichedLead.boros || [enrichedLead.boro]).map((b, i) => (
-                  <span key={i} className="px-1.5 py-0.5 bg-gray-100 text-gray-500 text-[10px] rounded">
-                    {b ? b.charAt(0) + b.slice(1).toLowerCase() : ''}
+          <div className="p-4 sm:p-5 pb-3">
+            {/* Close button — always top-right */}
+            <div className="flex justify-between items-start">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
+                    enrichedLead.entity_type === 'company' ? 'bg-blue-50 text-blue-700' :
+                    enrichedLead.entity_type === 'individual_agent' ? 'bg-amber-50 text-amber-700' :
+                    enrichedLead.entity_type === 'owner_operator' ? 'bg-purple-50 text-purple-700' :
+                    'bg-gray-100 text-gray-500'
+                  }`} title={enrichedLead.entity_type === 'company' ? 'Registered management company or housing entity' : enrichedLead.entity_type === 'individual_agent' ? 'Individual person acting as managing agent' : enrichedLead.entity_type === 'owner_operator' ? 'Property owner who self-manages' : 'Entity type unknown'}>
+                    {enrichedLead.entity_type === 'company' ? 'Company' : 
+                     enrichedLead.entity_type === 'individual_agent' ? 'Individual Agent' : 
+                     enrichedLead.entity_type === 'owner_operator' ? 'Owner-Operator' : 'Unknown'}
                   </span>
-                ))}
-              </div>
-              <h2 className="text-xl font-bold text-gray-900 truncate">{enrichedLead.company_name || enrichedLead.agent_name || enrichedLead.owner_name}</h2>
-            </div>
-            <div className="flex items-center gap-3 ml-4">
-              {/* Score with context */}
-              <div className={`px-3 py-1 rounded-lg text-center ${
-                (enrichedLead.score || 0) >= 60 ? 'bg-emerald-50' :
-                (enrichedLead.score || 0) >= 40 ? 'bg-amber-50' : 'bg-gray-100'
-              }`} title={`Lead quality score (0–100): ${(enrichedLead.score || 0) >= 60 ? 'Strong acquisition target' : (enrichedLead.score || 0) >= 40 ? 'Moderate potential' : 'Lower priority'}\nBased on portfolio size, building types, registration status, and data completeness`}>
-                <div className={`text-2xl font-bold font-mono ${
-                  (enrichedLead.score || 0) >= 60 ? 'text-emerald-600' :
-                  (enrichedLead.score || 0) >= 40 ? 'text-amber-600' : 'text-gray-500'
-                }`}>{(enrichedLead.score || 0).toFixed(0)}</div>
-                <div className="text-[9px] text-gray-400 uppercase font-bold">Score</div>
-              </div>
-              {/* Revenue */}
-              {(enrichedLead.estimated_annual_revenue || 0) > 0 && (
-                <div className="text-right" title="Estimated annual management fee if acquired: Total Units × Avg Rent (by borough & building type) × 5% management fee">
-                  <div className="text-lg font-bold font-mono text-emerald-600">{formatCurrency(enrichedLead.estimated_annual_revenue)}<span className="text-xs text-emerald-500">/yr</span></div>
-                  <div className="text-[9px] text-gray-400 uppercase font-bold">Mgmt Fee</div>
+                  {(enrichedLead.boros || [enrichedLead.boro]).map((b, i) => (
+                    <span key={i} className="px-1.5 py-0.5 bg-gray-100 text-gray-500 text-[10px] rounded">
+                      {b ? b.charAt(0) + b.slice(1).toLowerCase() : ''}
+                    </span>
+                  ))}
                 </div>
-              )}
-              <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-900 transition-colors">
+                <h2 className="text-lg sm:text-xl font-bold text-gray-900 truncate">{enrichedLead.company_name || enrichedLead.agent_name || enrichedLead.owner_name}</h2>
+              </div>
+              <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-900 transition-colors ml-2 flex-shrink-0">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/>
                 </svg>
               </button>
             </div>
+            {/* Score + Revenue — below name on mobile, inline on desktop */}
+            <div className="flex items-center gap-3 mt-2">
+              <div className={`px-3 py-1 rounded-lg text-center ${
+                (enrichedLead.score || 0) >= 60 ? 'bg-emerald-50' :
+                (enrichedLead.score || 0) >= 40 ? 'bg-amber-50' : 'bg-gray-100'
+              }`} title={`Lead quality score (0–100): ${(enrichedLead.score || 0) >= 60 ? 'Strong acquisition target' : (enrichedLead.score || 0) >= 40 ? 'Moderate potential' : 'Lower priority'}\nBased on portfolio size, building types, registration status, and data completeness`}>
+                <div className={`text-xl sm:text-2xl font-bold font-mono ${
+                  (enrichedLead.score || 0) >= 60 ? 'text-emerald-600' :
+                  (enrichedLead.score || 0) >= 40 ? 'text-amber-600' : 'text-gray-500'
+                }`}>{(enrichedLead.score || 0).toFixed(0)}</div>
+                <div className="text-[9px] text-gray-400 uppercase font-bold">Score</div>
+              </div>
+              {(enrichedLead.estimated_annual_revenue || 0) > 0 && (
+                <div className="text-right" title="Estimated annual management fee if acquired: Total Units × Avg Rent (by borough & building type) × 5% management fee">
+                  <div className="text-base sm:text-lg font-bold font-mono text-emerald-600">{formatCurrency(enrichedLead.estimated_annual_revenue)}<span className="text-xs text-emerald-500">/yr</span></div>
+                  <div className="text-[9px] text-gray-400 uppercase font-bold">Mgmt Fee</div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Quick actions + pipeline in header */}
-          <div className="px-5 pb-3 flex items-center gap-2 flex-wrap">
+          <div className="px-4 sm:px-5 pb-3 flex items-center gap-2 flex-wrap">
             {enrichedLead.phone && (
-              <a href={`tel:${enrichedLead.phone}`} className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 transition-colors flex items-center gap-1">
+              <a href={`tel:${enrichedLead.phone}`} className="px-3 py-2 sm:py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 transition-colors flex items-center gap-1">
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
                 Call
               </a>
@@ -277,7 +250,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
               <div className="relative">
                 <button 
                   onClick={(e) => { e.preventDefault(); setShowEmailMenu(!showEmailMenu); }}
-                  className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-500 transition-colors flex items-center gap-1">
+                  className="px-3 py-2 sm:py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-500 transition-colors flex items-center gap-1">
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
                   Email
                   <svg className={`w-3 h-3 ml-0.5 transition-transform ${showEmailMenu ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"/></svg>
@@ -303,20 +276,20 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 )}
               </div>
             )}
-            <button onClick={openWebsite} className="px-3 py-1.5 bg-purple-600 text-white text-xs font-bold rounded-lg hover:bg-purple-500 transition-colors">
+            <button onClick={openWebsite} className="px-3 py-2 sm:py-1.5 bg-purple-600 text-white text-xs font-bold rounded-lg hover:bg-purple-500 transition-colors">
               {enrichedLead.website ? 'Website' : 'Search'}
             </button>
-            <button onClick={handleEnrichAll} disabled={isEnriching} className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors" title="Find contacts, scrape website, and generate AI summary — all in one step">
+            <button onClick={handleEnrichAll} disabled={isEnriching} className="px-3 py-2 sm:py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors" title="Find contacts, scrape website, and generate AI summary — all in one step">
               {isEnriching ? 'Enriching...' : 'Enrich Lead'}
             </button>
-            <div className="flex-1" />
+            <div className="hidden sm:block flex-1" />
             {/* Pipeline selector - dropdown for readability */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 w-full sm:w-auto mt-1 sm:mt-0">
               <span className="text-[10px] text-gray-400 uppercase">Pipeline:</span>
               <select 
                 value={pipelineStage} 
                 onChange={(e) => handlePipelineChange(e.target.value)}
-                className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 font-bold"
+                className="px-3 py-2 sm:py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 font-bold flex-1 sm:flex-initial"
               >
                 {PIPELINE_STAGES.map((stage) => (
                   <option key={stage.value} value={stage.value}>{stage.label}</option>
@@ -325,11 +298,11 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
             </div>
           </div>
 
-          {/* Tab bar */}
-          <div className="flex border-b border-gray-200">
+          {/* Tab bar — scrollable on mobile */}
+          <div className="flex overflow-x-auto border-b border-gray-200 scrollbar-hide">
             {TABS.map(tab => (
               <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                className={`flex-1 px-4 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors ${
+                className={`flex-shrink-0 flex-1 min-w-0 px-3 sm:px-4 py-2.5 text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors whitespace-nowrap ${
                   activeTab === tab.id ? 'text-gray-900 border-b-2 border-emerald-500' : 'text-gray-500 hover:text-gray-700'
                 }`}>
                 {tab.label}
@@ -339,7 +312,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
         </div>
 
         {/* === SCROLLABLE TAB CONTENT === */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 sm:space-y-5">
 
           {/* TAB: OVERVIEW */}
           {activeTab === 'overview' && (
@@ -415,7 +388,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
               </div>
 
               {/* Portfolio Summary */}
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-3 sm:grid-cols-3 gap-2 sm:gap-3">
                 <div className="bg-gray-50 rounded-xl p-3 text-center" title="Lead quality score (0–100) based on portfolio size, building mix, registration status, and data completeness">
                   <div className={`text-2xl font-bold font-mono ${(enrichedLead.score || 0) >= 60 ? 'text-emerald-600' : (enrichedLead.score || 0) >= 40 ? 'text-amber-600' : 'text-gray-500'}`}>{(enrichedLead.score || 0).toFixed(1)}</div>
                   <div className="text-[10px] text-gray-400 mt-0.5 uppercase">Lead Score</div>
@@ -473,7 +446,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                   <summary className="p-4 cursor-pointer text-xs font-bold text-gray-500 uppercase tracking-wider hover:text-gray-700">How is the score calculated?</summary>
                   <div className="px-4 pb-4">
                     <p className="text-[10px] text-gray-400 mb-3">Score is weighted across 6 factors: Condo/Co-op % (35%), Density (20%), Units (15%), Location (10%), Professional (10%), Contact (10%). Max 100.</p>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {Object.entries(enrichedLead.score_breakdown).map(([key, value]) => {
                         const SCORE_LABELS: Record<string, string> = {
                           portfolio_size: 'Portfolio Size',
@@ -605,16 +578,6 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 )}
               </div>
 
-              {/* Company Research Results */}
-              {companyResearch && (
-                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-2">
-                  <h3 className="text-xs font-bold text-emerald-600 uppercase tracking-wider">Company Research</h3>
-                  {companyResearch.owner_names?.length > 0 && <div><span className="text-xs text-gray-500">Owners: </span><span className="text-sm text-gray-700">{companyResearch.owner_names.join(', ')}</span></div>}
-                  {companyResearch.year_established && <div><span className="text-xs text-gray-500">Est: </span><span className="text-sm text-gray-700">{companyResearch.year_established}</span></div>}
-                  {companyResearch.service_areas?.length > 0 && <div><span className="text-xs text-gray-500">Areas: </span><span className="text-sm text-gray-700">{companyResearch.service_areas.join(', ')}</span></div>}
-                  {companyResearch.description && <p className="text-sm text-gray-500 leading-relaxed">{companyResearch.description}</p>}
-                </div>
-              )}
             </>
           )}
 
@@ -622,7 +585,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
           {activeTab === 'pipeline' && (
             <>
               {/* Priority & Follow-Up */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs text-gray-400 uppercase tracking-wider block mb-2">Priority</label>
                   <div className="flex gap-1">
@@ -677,7 +640,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 </div>
                 {showAddOutreach && (
                   <div className="bg-white shadow-sm rounded-lg p-3 mb-3 space-y-2">
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <select value={newOutreach.method} onChange={e => setNewOutreach({...newOutreach, method: e.target.value})}
                         className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900">
                         {OUTREACH_METHODS.map(m => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}

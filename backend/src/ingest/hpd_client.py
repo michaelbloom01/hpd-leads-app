@@ -45,30 +45,6 @@ class HPDClient:
         if self.app_token:
             self.session.headers["X-App-Token"] = self.app_token
     
-    def get_total_count(self, dataset: str = 'buildings') -> int:
-        """
-        Query Socrata for the total record count in a dataset.
-        Used for pre-flight completeness checks before a refresh.
-        
-        Args:
-            dataset: 'buildings' or 'contacts'
-            
-        Returns:
-            Total record count, or 0 if the query fails
-        """
-        endpoint = BUILDINGS_ENDPOINT if dataset == 'buildings' else CONTACTS_ENDPOINT
-        try:
-            params = {"$select": "COUNT(*) as cnt"}
-            response = self.session.get(endpoint, params=params, timeout=15)
-            response.raise_for_status()
-            rows = response.json()
-            count = int(rows[0]["cnt"]) if rows else 0
-            logger.info(f"HPD {dataset} total count from Socrata: {count}")
-            return count
-        except Exception as e:
-            logger.warning(f"Failed to get {dataset} count from Socrata: {e}")
-            return 0
-    
     def fetch_all_buildings(self, limit: Optional[int] = None) -> List[dict]:
         """
         Fetch all building registrations from HPD, handling pagination.
@@ -165,12 +141,8 @@ class HPDClient:
                 remaining = limit - len(all_records)
                 page_size = min(PAGE_SIZE, remaining)
             
-            # Fetch page (may raise RuntimeError if all retries exhausted)
-            try:
-                page = self._fetch_page(endpoint, offset=offset, limit=page_size, where=where)
-            except RuntimeError as e:
-                logger.error(f"Pagination halted: {e}. Returning {len(all_records)} records collected so far.")
-                break
+            # Fetch page
+            page = self._fetch_page(endpoint, offset=offset, limit=page_size, where=where)
             
             if not page:
                 consecutive_empty += 1
@@ -192,11 +164,7 @@ class HPDClient:
                 # Partial page — likely the last page, but verify with one more request
                 logger.debug(f"Partial page ({len(page)}/{page_size}) at offset {offset}, verifying end...")
                 offset += len(page)
-                try:
-                    verify_page = self._fetch_page(endpoint, offset=offset, limit=page_size, where=where)
-                except RuntimeError as e:
-                    logger.warning(f"Verify page failed: {e}. Treating partial page as end of data.")
-                    verify_page = None
+                verify_page = self._fetch_page(endpoint, offset=offset, limit=page_size, where=where)
                 if verify_page:
                     # Not actually the end — keep going
                     all_records.extend(verify_page)
@@ -246,33 +214,18 @@ class HPDClient:
         for attempt in range(settings.api_retry_attempts):
             try:
                 response = self.session.get(endpoint, params=params, timeout=30)
-                
-                # Handle rate limiting (HTTP 429) explicitly
-                if response.status_code == 429:
-                    retry_after = response.headers.get('Retry-After')
-                    if retry_after:
-                        wait_time = int(retry_after)
-                    else:
-                        wait_time = settings.api_retry_delay_seconds * (2 ** attempt)
-                    logger.warning(f"Rate limited (429), waiting {wait_time}s before retry (attempt {attempt + 1})")
-                    time.sleep(wait_time)
-                    continue
-                
                 response.raise_for_status()
                 return response.json()
             except requests.RequestException as e:
                 if attempt < settings.api_retry_attempts - 1:
                     wait_time = settings.api_retry_delay_seconds * (2 ** attempt)
-                    logger.warning(f"Request failed (attempt {attempt + 1}/{settings.api_retry_attempts}), retrying in {wait_time}s: {e}")
+                    logger.warning(f"Request failed, retrying in {wait_time}s: {e}")
                     time.sleep(wait_time)
                 else:
                     logger.error(f"Request failed after {settings.api_retry_attempts} attempts: {e}")
                     raise
         
-        raise RuntimeError(
-            f"HPD API: all {settings.api_retry_attempts} retries exhausted for page at offset={offset}. "
-            "This likely means persistent rate-limiting. Data may be incomplete."
-        )
+        return []
     
     def get_combined_data(self, building_limit: Optional[int] = None) -> List[Dict]:
         """

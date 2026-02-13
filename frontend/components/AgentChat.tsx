@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   agentChat,
   AgentSSEEvent,
@@ -278,7 +278,7 @@ const AgentChat: React.FC<AgentChatProps> = ({
         setLastFailedMsg(text.trim());
         // Provide user-friendly error messages
         let errorMsg = err.message;
-        if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
+        if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError') || err.message.includes('Load failed')) {
           errorMsg = 'Could not reach the server. Check your connection and try again.';
         } else if (err.message.includes('timeout') || err.message.includes('Timeout')) {
           errorMsg = 'Request timed out. The server may be busy â€” try again in a moment.';
@@ -358,7 +358,7 @@ const AgentChat: React.FC<AgentChatProps> = ({
                 <button
                   key={i}
                   onClick={() => sendMessage(prompt)}
-                  className="w-full text-left px-3 py-2.5 text-sm text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors border border-gray-100"
+                  className="w-full text-left px-4 py-3 text-sm text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors border border-gray-100"
                 >
                   {prompt}
                 </button>
@@ -440,7 +440,7 @@ const AgentChat: React.FC<AgentChatProps> = ({
             <button
               key={i}
               onClick={() => sendMessage(action)}
-              className="bg-gray-100 text-gray-600 rounded-full px-3 py-1 text-xs hover:bg-gray-200 transition-colors"
+              className="bg-gray-100 text-gray-600 rounded-full px-3 py-2 sm:py-1 text-xs hover:bg-gray-200 transition-colors"
             >
               {action}
             </button>

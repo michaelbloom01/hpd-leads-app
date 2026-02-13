@@ -93,9 +93,6 @@ class PLUTOClient:
         
         # Cache to avoid repeated lookups
         self._cache: Dict[str, BuildingClassification] = {}
-        # Error tracking for audit logging
-        self._batch_errors = 0
-        self._single_errors = 0
     
     def make_bbl(self, boro_id: str, block: str, lot: str) -> str:
         """
@@ -133,36 +130,29 @@ class PLUTOClient:
         if bbl in self._cache:
             return self._cache[bbl]
         
-        for attempt in range(3):
-            try:
-                # Query by borough, block, lot for exact match
-                params = {
-                    "$where": f"borocode='{boro_id}' AND block='{block}' AND lot='{lot}'",
-                    "$limit": 1
-                }
-                
-                response = self.session.get(PLUTO_ENDPOINT, params=params, timeout=15)
-                response.raise_for_status()
-                results = response.json()
-                
-                if not results:
-                    self._cache[bbl] = None
-                    return None
-                
-                record = results[0]
-                classification = self._parse_record(record)
-                self._cache[bbl] = classification
-                return classification
-                
-            except (requests.RequestException, ValueError) as e:
-                if attempt < 2:
-                    wait = 1.0 * (2 ** attempt)
-                    logger.warning(f"PLUTO lookup attempt {attempt + 1} failed for BBL {bbl}: {e}, retrying in {wait}s")
-                    time.sleep(wait)
-                else:
-                    self._single_errors += 1
-                    logger.warning(f"PLUTO lookup failed for BBL {bbl} after 3 attempts: {e}")
-                    return None
+        try:
+            # Query by borough, block, lot for exact match
+            params = {
+                "$where": f"borocode='{boro_id}' AND block='{block}' AND lot='{lot}'",
+                "$limit": 1
+            }
+            
+            response = self.session.get(PLUTO_ENDPOINT, params=params, timeout=15)
+            response.raise_for_status()
+            results = response.json()
+            
+            if not results:
+                self._cache[bbl] = None
+                return None
+            
+            record = results[0]
+            classification = self._parse_record(record)
+            self._cache[bbl] = classification
+            return classification
+            
+        except Exception as e:
+            logger.warning(f"PLUTO lookup failed for BBL {bbl}: {e}")
+            return None
     
     def get_classifications_batch(
         self, 
@@ -230,46 +220,39 @@ class PLUTOClient:
             for i in range(0, len(block_list), batch_size):
                 batch_blocks = block_list[i:i+batch_size]
                 
-                for attempt in range(3):
-                    try:
-                        # Build IN clause for blocks
-                        blocks_str = ",".join(f"'{b}'" for b in batch_blocks)
-                        params = {
-                            "$where": f"borocode='{boro}' AND block in ({blocks_str})",
-                            "$limit": 50000  # Max per request
-                        }
+                try:
+                    # Build IN clause for blocks
+                    blocks_str = ",".join(f"'{b}'" for b in batch_blocks)
+                    params = {
+                        "$where": f"borocode='{boro}' AND block in ({blocks_str})",
+                        "$limit": 50000  # Max per request
+                    }
+                    
+                    response = self.session.get(PLUTO_ENDPOINT, params=params, timeout=60)
+                    response.raise_for_status()
+                    records = response.json()
+                    
+                    logger.info(f"PLUTO: Got {len(records)} records for boro {boro} blocks {batch_blocks[0]}-{batch_blocks[-1]}")
+                    
+                    # Process results
+                    for record in records:
+                        block = record.get('block', '')
+                        lot = record.get('lot', '')
+                        bbl = self.make_bbl(boro, block, lot)
                         
-                        response = self.session.get(PLUTO_ENDPOINT, params=params, timeout=60)
-                        response.raise_for_status()
-                        records = response.json()
+                        classification = self._parse_record(record)
+                        self._cache[bbl] = classification
                         
-                        logger.info(f"PLUTO: Got {len(records)} records for boro {boro} blocks {batch_blocks[0]}-{batch_blocks[-1]}")
-                        
-                        # Process results
-                        for record in records:
-                            block = record.get('block', '')
-                            lot = record.get('lot', '')
-                            bbl = self.make_bbl(boro, block, lot)
-                            
-                            classification = self._parse_record(record)
-                            self._cache[bbl] = classification
-                            
-                            if bbl in bbls_needed:
-                                results[bbl] = classification
-                                total_fetched += 1
-                        
-                        # Small delay between requests
-                        time.sleep(0.2)
-                        break  # Success, exit retry loop
-                        
-                    except (requests.RequestException, ValueError) as e:
-                        if attempt < 2:
-                            wait = 2.0 * (2 ** attempt)
-                            logger.warning(f"PLUTO batch attempt {attempt + 1} failed for boro={boro}, blocks {batch_blocks[0]}-{batch_blocks[-1]}: {e}, retrying in {wait}s")
-                            time.sleep(wait)
-                        else:
-                            logger.warning(f"PLUTO batch fetch failed after 3 attempts for boro={boro}, blocks {batch_blocks[0]}-{batch_blocks[-1]}: {e}")
-                            self._batch_errors += 1
+                        if bbl in bbls_needed:
+                            results[bbl] = classification
+                            total_fetched += 1
+                    
+                    # Small delay between requests
+                    time.sleep(0.2)
+                    
+                except Exception as e:
+                    logger.warning(f"PLUTO batch fetch failed for boro={boro}, blocks {batch_blocks[0]}-{batch_blocks[-1]}: {e}")
+                    self._batch_errors += 1
             
             # Mark BBLs not found as None in cache
             for bbl in bbls_needed:
