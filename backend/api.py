@@ -71,7 +71,13 @@ if agent_router is not None:
 @app.get("/")
 async def root():
     cache = get_cache()
-    return {"status": "ok" if cache.startup_complete else "starting", "service": "hpd-leads-api"}
+    if cache.startup_state == "ready":
+        status = "ok"
+    elif cache.startup_state == "degraded":
+        status = "degraded"
+    else:
+        status = "starting"
+    return {"status": status, "service": "hpd-leads-api"}
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +87,10 @@ async def root():
 @app.on_event("startup")
 async def startup_load():
     """Load leads from SQLite on startup and run background tasks."""
+    cache = get_cache()
+    cache.startup_complete = False
+    cache.startup_state = "starting"
+    cache.startup_error = None
     asyncio.create_task(_startup_load_background())
 
 
@@ -89,8 +99,12 @@ async def _startup_load_background():
     cache = get_cache()
     try:
         await asyncio.to_thread(_startup_load_sync)
+        cache.startup_state = "ready"
+        cache.startup_error = None
     except Exception as e:
         logger.error(f"Startup failed (server will start with empty cache): {e}", exc_info=True)
+        cache.startup_state = "degraded"
+        cache.startup_error = str(e)
     finally:
         cache.startup_complete = True
         logger.info("Startup: _startup_complete = True")

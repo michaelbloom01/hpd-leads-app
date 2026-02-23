@@ -7,7 +7,6 @@ Data source: https://data.ny.gov/Economic-Development/Active-Corporations-Beginn
 """
 import logging
 import re
-import time
 from typing import Optional, Dict, List
 from dataclasses import dataclass
 
@@ -223,6 +222,10 @@ class NYDOSClient:
         except Exception as e:
             logger.error(f"NY DOS search failed: {e}")
             return []
+
+    def search_corporation(self, name: str, limit: int = 10) -> List[DOSEntity]:
+        """Backward-compatible alias for legacy API naming."""
+        return self.search_entities(name, limit=limit)
     
     def get_registered_agent(self, dos_id: str) -> Optional[str]:
         """

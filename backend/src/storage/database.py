@@ -13,7 +13,9 @@ call-site that used to import `get_database()` keeps working.
 """
 import json
 import sqlite3
+import shutil
 import logging
+import os
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional, Dict, List, TYPE_CHECKING
@@ -28,8 +30,6 @@ if TYPE_CHECKING:
     from src.transform.aggregate import Lead
 
 logger = logging.getLogger(__name__)
-
-import os
 
 # Database path - use environment variable if set (for Railway volume), otherwise local
 _db_path_env = os.environ.get("DATABASE_PATH")
@@ -367,9 +367,38 @@ class LeadsDatabase(
                     last_login TIMESTAMP
                 );
                 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
+                -- Schema version table (backward-compatible with older tests/tools)
+                CREATE TABLE IF NOT EXISTS schema_version (
+                    version INTEGER PRIMARY KEY,
+                    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
             """)
             conn.commit()
             logger.info(f"Database initialized at {self.db_path}")
+
+    def backup(self, backup_path: Optional[Path] = None) -> str:
+        """Create a backup copy of the SQLite database and return its path."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        target = backup_path or self.db_path.with_name(f"{self.db_path.stem}_backup_{timestamp}{self.db_path.suffix}")
+        target = Path(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        # Use sqlite backup API to produce a consistent snapshot while DB is active.
+        with self._get_connection() as src:
+            dst = sqlite3.connect(target)
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
+
+        # If WAL mode generated sidecar files, copy them as well when present.
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(f"{self.db_path}{suffix}")
+            if sidecar.exists():
+                shutil.copy2(sidecar, Path(f"{target}{suffix}"))
+
+        return str(target)
     
     @staticmethod
     def _normalize_for_dedup(name: str) -> str:

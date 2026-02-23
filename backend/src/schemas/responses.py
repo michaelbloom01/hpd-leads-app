@@ -21,6 +21,13 @@ class ScoreBreakdown(BaseModel):
     professional: float = 0.0
     contact: float = 0.0
     concentration: float = 0.0
+    # Backward-compatible aliases used by some older frontend builds.
+    condo_coop: float = 0.0
+    density: float = 0.0
+    location: float = 0.0
+    revenue: float = 0.0
+    distress: float = 0.0
+    deal_fit: float = 0.0
 
 
 class BuildingTypeBreakdownResponse(BaseModel):
@@ -92,6 +99,7 @@ class LeadResponse(BaseModel):
     pipeline_stage: str = "research"
     next_follow_up: Optional[str] = None
     priority_rank: int = 0
+    data_staleness: Optional[str] = None
 
     @staticmethod
     def from_lead(lead: Lead, outreach_attempts: Optional[List["OutreachAttemptResponse"]] = None, revenue_breakdown: Optional[List[Dict]] = None) -> "LeadResponse":
@@ -105,6 +113,12 @@ class LeadResponse(BaseModel):
                 professional=lead.score_breakdown.get("professional", 0.0),
                 contact=lead.score_breakdown.get("contact", 0.0),
                 concentration=lead.score_breakdown.get("concentration", 0.0),
+                condo_coop=lead.score_breakdown.get("condo_coop", 0.0),
+                density=lead.score_breakdown.get("density", 0.0),
+                location=lead.score_breakdown.get("location", 0.0),
+                revenue=lead.score_breakdown.get("revenue", 0.0),
+                distress=lead.score_breakdown.get("distress", 0.0),
+                deal_fit=lead.score_breakdown.get("deal_fit", 0.0),
             )
 
         # Convert phones with sources
@@ -186,6 +200,7 @@ class LeadResponse(BaseModel):
             pipeline_stage=getattr(lead, 'pipeline_stage', 'research') or 'research',
             next_follow_up=getattr(lead, 'next_follow_up', None),
             priority_rank=getattr(lead, 'priority_rank', 0) or 0,
+            data_staleness=getattr(lead, 'data_staleness', None),
         )
 
 

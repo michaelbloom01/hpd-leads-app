@@ -7,6 +7,7 @@ Provides:
 - FastAPI dependency `get_current_user` to protect routes
 """
 import os
+import secrets
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -23,14 +24,20 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-_DEFAULT_SECRET = "CHANGE-ME-IN-PRODUCTION-use-a-64-char-random-string"
-JWT_SECRET = os.environ.get("JWT_SECRET", _DEFAULT_SECRET)
-if JWT_SECRET == _DEFAULT_SECRET:
-    logger.critical(
-        "JWT_SECRET is using the default value! "
-        "Set a strong random string (64+ chars) in environment variables. "
-        "This is a CRITICAL security risk in production."
+_ENV = os.environ.get("ENV", os.environ.get("APP_ENV", "development")).strip().lower()
+_configured_secret = os.environ.get("JWT_SECRET")
+
+if _configured_secret:
+    JWT_SECRET = _configured_secret
+elif _ENV in {"production", "prod"}:
+    raise RuntimeError(
+        "JWT_SECRET is required in production. "
+        "Set a strong random secret (64+ chars) in environment variables."
     )
+else:
+    # Development fallback: secure random secret generated at process start.
+    JWT_SECRET = secrets.token_urlsafe(64)
+    logger.info("JWT_SECRET not set; generated ephemeral development secret for this process.")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES", "1440"))  # 24 hours default
 

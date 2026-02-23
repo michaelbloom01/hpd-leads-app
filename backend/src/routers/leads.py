@@ -11,6 +11,7 @@ from src.services.cache_manager import get_cache
 from src.services.lead_converter import row_to_lead, get_outreach_attempts_for_lead, get_revenue_breakdown
 from src.schemas.requests import UpdateLeadRequest, OutreachEventRequest, OutreachAttemptRequest
 from src.schemas.responses import LeadResponse, LeadsListResponse
+from src.score.revenue import estimate_revenue
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["leads"])
@@ -78,10 +79,48 @@ async def get_lead(lead_id: str):
     raise HTTPException(status_code=404, detail="Lead not found")
 
 
+@router.post("/leads/{lead_id}/estimate-revenue", response_model=LeadResponse)
+async def estimate_lead_revenue(lead_id: str):
+    """Estimate revenue for a single lead, persist it, and return the updated lead."""
+    db = get_database()
+    row = db.get_lead_by_id(lead_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    lead = row_to_lead(row)
+    rev = estimate_revenue(lead)
+    monthly = rev.get("estimated_monthly_revenue", 0.0) or 0.0
+    annual = rev.get("estimated_annual_revenue", 0.0) or 0.0
+
+    # Persist revenue values for future reads.
+    db.update_lead(lead_id, {
+        "estimated_monthly_revenue": monthly,
+        "estimated_annual_revenue": annual,
+    })
+
+    # Keep in-memory cache consistent.
+    cache = get_cache()
+    with cache.leads_lock:
+        for cached_lead in cache.leads:
+            if cached_lead.lead_id == lead_id:
+                cached_lead.estimated_monthly_revenue = monthly
+                cached_lead.estimated_annual_revenue = annual
+                break
+
+    updated_row = db.get_lead_by_id(lead_id)
+    updated_lead = row_to_lead(updated_row) if updated_row else lead
+    return LeadResponse.from_lead(
+        updated_lead,
+        get_outreach_attempts_for_lead(lead_id),
+        get_revenue_breakdown(updated_lead),
+    )
+
+
 @router.patch("/leads/{lead_id}")
 async def update_lead(lead_id: str, request: UpdateLeadRequest):
     """Update a lead's outreach status, notes, pipeline stage, follow-up, and priority."""
     cache = get_cache()
+    db = get_database()
 
     valid_statuses = {"new", "contacted", "interested", "not_interested", "closed"}
     valid_stages = {"research", "first_contact", "follow_up", "meeting_scheduled",
@@ -93,6 +132,24 @@ async def update_lead(lead_id: str, request: UpdateLeadRequest):
         raise HTTPException(status_code=400, detail=f"Invalid pipeline stage. Must be one of: {', '.join(valid_stages)}")
     if request.priority_rank is not None and not (0 <= request.priority_rank <= 5):
         raise HTTPException(status_code=400, detail="priority_rank must be 0-5")
+
+    if not db.get_lead_by_id(lead_id):
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    updates = {}
+    if request.outreach_status is not None:
+        updates["outreach_status"] = request.outreach_status
+    if request.notes is not None:
+        updates["notes"] = request.notes
+    if request.pipeline_stage is not None:
+        updates["pipeline_stage"] = request.pipeline_stage
+    if request.next_follow_up is not None:
+        updates["next_follow_up"] = request.next_follow_up
+    if request.priority_rank is not None:
+        updates["priority_rank"] = request.priority_rank
+    if updates:
+        db.update_lead(lead_id, updates)
+    db.save_lead_user_data(lead_id=lead_id, outreach_status=request.outreach_status, notes=request.notes)
 
     with cache.leads_lock:
         for i, lead in enumerate(cache.leads):
@@ -109,31 +166,18 @@ async def update_lead(lead_id: str, request: UpdateLeadRequest):
                     lead.priority_rank = request.priority_rank
                 lead.updated_at = datetime.now()
                 cache.leads[i] = lead
+                break
 
-                db = get_database()
-                updates = {}
-                if request.outreach_status is not None:
-                    updates["outreach_status"] = request.outreach_status
-                if request.notes is not None:
-                    updates["notes"] = request.notes
-                if request.pipeline_stage is not None:
-                    updates["pipeline_stage"] = request.pipeline_stage
-                if request.next_follow_up is not None:
-                    updates["next_follow_up"] = request.next_follow_up
-                if request.priority_rank is not None:
-                    updates["priority_rank"] = request.priority_rank
-                if updates:
-                    db.update_lead(lead_id, updates)
-                db.save_lead_user_data(lead_id=lead_id, outreach_status=request.outreach_status, notes=request.notes)
-
-                return {
-                    "status": "success", "lead_id": lead_id,
-                    "outreach_status": lead.outreach_status, "pipeline_stage": lead.pipeline_stage,
-                    "next_follow_up": lead.next_follow_up, "priority_rank": lead.priority_rank,
-                    "notes": lead.notes,
-                }
-
-    raise HTTPException(status_code=404, detail="Lead not found")
+    updated = db.get_lead_by_id(lead_id)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Lead not found after update")
+    updated_lead = row_to_lead(updated)
+    return {
+        "status": "success", "lead_id": lead_id,
+        "outreach_status": updated_lead.outreach_status, "pipeline_stage": updated_lead.pipeline_stage,
+        "next_follow_up": updated_lead.next_follow_up, "priority_rank": updated_lead.priority_rank,
+        "notes": updated_lead.notes,
+    }
 
 
 @router.post("/leads/{lead_id}/outreach-event")
@@ -176,9 +220,8 @@ async def get_lead_outreach_events(lead_id: str):
 @router.post("/leads/{lead_id}/outreach")
 async def add_outreach_attempt(lead_id: str, request: OutreachAttemptRequest):
     """Add an outreach attempt to a lead's history."""
-    cache = get_cache()
-    lead_exists = any(l.lead_id == lead_id for l in cache.leads)
-    if not lead_exists:
+    db = get_database()
+    if not db.get_lead_by_id(lead_id):
         raise HTTPException(status_code=404, detail="Lead not found")
 
     attempt = {
@@ -186,7 +229,6 @@ async def add_outreach_attempt(lead_id: str, request: OutreachAttemptRequest):
         "outcome": request.outcome, "notes": request.notes,
         "timestamp": datetime.now().isoformat(),
     }
-    db = get_database()
     db.add_outreach_attempt(lead_id, attempt)
     return {"status": "success", "attempt": attempt}
 
@@ -194,10 +236,9 @@ async def add_outreach_attempt(lead_id: str, request: OutreachAttemptRequest):
 @router.get("/leads/{lead_id}/outreach")
 async def get_outreach_attempts(lead_id: str):
     """Get all outreach attempts for a lead."""
-    cache = get_cache()
-    if not any(l.lead_id == lead_id for l in cache.leads):
-        raise HTTPException(status_code=404, detail="Lead not found")
     db = get_database()
+    if not db.get_lead_by_id(lead_id):
+        raise HTTPException(status_code=404, detail="Lead not found")
     return db.get_outreach_attempts(lead_id)
 
 

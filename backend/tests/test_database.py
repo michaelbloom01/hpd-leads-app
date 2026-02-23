@@ -2,8 +2,6 @@
 Tests for the database module.
 Covers: table creation, lead CRUD, enrichment cache, backups.
 """
-import uuid
-import pytest
 from pathlib import Path
 
 

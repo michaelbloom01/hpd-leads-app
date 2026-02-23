@@ -9,7 +9,6 @@ These tests verify that:
 """
 import pytest
 import os
-from datetime import datetime
 from pathlib import Path
 
 # Set up test database path before importing modules
@@ -17,7 +16,6 @@ os.environ["DATABASE_PATH"] = str(Path(__file__).parent / "test_data" / "test_le
 
 from src.enrich.web_crawl import WebCrawler
 from src.enrich.ny_dos import NYDOSClient
-from src.enrich.enricher import Enricher
 from src.storage.database import LeadsDatabase
 from src.transform.aggregate import Lead, BuildingTypeBreakdown
 

@@ -15,10 +15,12 @@ export { API_BASE_URL };
 // ============================================================================
 
 export interface HealthStatus {
-  status: 'starting' | 'ok' | 'error';
+  status: 'starting' | 'ok' | 'error' | 'degraded';
   message?: string;
   leads_in_cache?: number;
   leads_in_db?: number;
+  startup_error?: string;
+  startup_state?: 'starting' | 'ready' | 'degraded';
 }
 
 /**
@@ -141,15 +143,19 @@ async function fetchWithRetry(
  * Score breakdown showing component scores (V3)
  */
 export interface ScoreBreakdown {
-  condo_coop: number;
-  density: number;
-  units: number;
-  location: number;
-  professional: number;
-  contact: number;
-  revenue: number;     // V2
-  distress: number;    // V2
-  deal_fit: number;    // V2
+  // Current backend fields
+  portfolio?: number;
+  units?: number;
+  professional?: number;
+  contact?: number;
+  concentration?: number;
+  // Backward-compatible fields still accepted by some frontend views
+  condo_coop?: number;
+  density?: number;
+  location?: number;
+  revenue?: number;
+  distress?: number;
+  deal_fit?: number;
 }
 
 /**
@@ -415,6 +421,15 @@ export async function fetchLeads(params?: {
 export async function fetchLead(leadId: string): Promise<ApiLead> {
   const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}`);
   if (!response.ok) throw new Error(`Failed to fetch lead: ${response.statusText}`);
+  return response.json();
+}
+
+/**
+ * Estimate and persist revenue for a single lead.
+ */
+export async function estimateLeadRevenue(leadId: string): Promise<ApiLead> {
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/estimate-revenue`, { method: 'POST' });
+  if (!response.ok) throw new Error(`Failed to estimate lead revenue: ${response.statusText}`);
   return response.json();
 }
 

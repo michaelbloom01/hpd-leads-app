@@ -50,6 +50,9 @@ class CacheManager:
         self._leads_lock = threading.Lock()
         self._last_refresh: Optional[datetime] = None
         self._startup_complete = False
+        self._startup_state = "starting"  # starting | ready | degraded
+        self._startup_error: Optional[str] = None
+        self._startup_lock = threading.Lock()
 
         # Enrichment state
         self.enrichment = _BackgroundState({
@@ -98,11 +101,33 @@ class CacheManager:
 
     @property
     def startup_complete(self) -> bool:
-        return self._startup_complete
+        with self._startup_lock:
+            return self._startup_complete
 
     @startup_complete.setter
     def startup_complete(self, value: bool):
-        self._startup_complete = value
+        with self._startup_lock:
+            self._startup_complete = value
+
+    @property
+    def startup_state(self) -> str:
+        with self._startup_lock:
+            return self._startup_state
+
+    @startup_state.setter
+    def startup_state(self, value: str):
+        with self._startup_lock:
+            self._startup_state = value
+
+    @property
+    def startup_error(self) -> Optional[str]:
+        with self._startup_lock:
+            return self._startup_error
+
+    @startup_error.setter
+    def startup_error(self, value: Optional[str]):
+        with self._startup_lock:
+            self._startup_error = value
 
     def lead_count(self) -> int:
         with self._leads_lock:

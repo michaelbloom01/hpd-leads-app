@@ -290,6 +290,10 @@ class WebCrawler:
         
         logger.info(f"No website found for {company_name}")
         return None
+
+    def search_website(self, company_name: str) -> Optional[str]:
+        """Backward-compatible alias for older call sites/tests."""
+        return self.find_website(company_name)
     
     def find_linkedin_profiles(self, company_name: str) -> Dict:
         """
@@ -726,10 +730,6 @@ class WebCrawler:
             # Look for owner keywords near names
             for keyword in self.OWNER_KEYWORDS:
                 if keyword in text:
-                    # Find the context around the keyword
-                    idx = text.find(keyword)
-                    context = text[idx:idx+200]
-                    
                     # Look for a name pattern (Capitalized First Last)
                     # This is a simple heuristic
                     name_match = re.search(

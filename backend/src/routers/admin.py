@@ -20,6 +20,15 @@ async def health_check():
     if not cache.startup_complete:
         return {"status": "starting", "message": "Backend is loading data. This usually takes 1-2 minutes."}
 
+    if cache.startup_state == "degraded":
+        return {
+            "status": "error",
+            "message": "Backend started in degraded mode",
+            "startup_error": cache.startup_error,
+            "leads_in_cache": cache.lead_count(),
+            "leads_in_db": get_database().get_leads_count(),
+        }
+
     db = get_database()
     lead_count = db.get_leads_count()
     with cache.leads_lock:
@@ -31,6 +40,7 @@ async def health_check():
         "enrichment_running": cache.enrichment.get("running", False),
         "unenriched_high_value": unenriched_count,
         "last_refresh": cache.last_refresh.isoformat() if cache.last_refresh else None,
+        "startup_state": cache.startup_state,
     }
 
 

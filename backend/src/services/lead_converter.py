@@ -45,7 +45,7 @@ def row_to_lead(row_dict: Dict) -> Lead:
         except (ValueError, TypeError):
             pass
 
-    return Lead(
+    lead = Lead(
         lead_id=row_dict["lead_id"],
         agent_name=row_dict.get("agent_name") or "",
         owner_name=row_dict.get("owner_name") or "",
@@ -83,6 +83,20 @@ def row_to_lead(row_dict: Dict) -> Lead:
         priority_rank=row_dict.get("priority_rank") or 0,
         enrichment_retries=row_dict.get("enrichment_retries") or 0,
     )
+
+    # Backward-compatible fallback: when persisted revenue is missing/null,
+    # compute a live estimate so UI does not get stuck in "calculating".
+    if lead.total_units > 0 and (lead.estimated_annual_revenue or 0) <= 0:
+        try:
+            from src.score.revenue import estimate_revenue
+            rev = estimate_revenue(lead)
+            lead.estimated_monthly_revenue = rev.get("estimated_monthly_revenue", 0.0) or 0.0
+            lead.estimated_annual_revenue = rev.get("estimated_annual_revenue", 0.0) or 0.0
+        except Exception:
+            # Non-fatal: keep zero values if estimation fails.
+            pass
+
+    return lead
 
 
 def get_outreach_attempts_for_lead(lead_id: str) -> List[OutreachAttemptResponse]:

@@ -1,16 +1,18 @@
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, Suspense, lazy } from 'react';
 import { Toaster, toast } from 'react-hot-toast';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
-import Dashboard from './components/Dashboard';
-import LeadTable, { LeadFilterPreset } from './components/LeadTable';
-import LeadDetail from './components/LeadDetail';
 import ErrorBoundary from './components/ErrorBoundary';
-import AgentPanel from './components/AgentPanel';
 import LoginPage from './components/LoginPage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ApiLead, refreshPipeline, fetchLead } from './services/api';
+import type { LeadFilterPreset } from './components/LeadTable';
+
+const Dashboard = lazy(() => import('./components/Dashboard'));
+const LeadTable = lazy(() => import('./components/LeadTable'));
+const LeadDetail = lazy(() => import('./components/LeadDetail'));
+const AgentPanel = lazy(() => import('./components/AgentPanel'));
 
 const AppContent: React.FC = () => {
   const { isAuthenticated, isLoading, logout } = useAuth();
@@ -85,6 +87,10 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     }
   }, []);
 
+  const sectionLoader = (
+    <div className="py-16 text-center text-sm text-gray-500">Loading section...</div>
+  );
+
   return (
     <ErrorBoundary>
     <div className="flex h-screen bg-white text-gray-800 overflow-hidden font-sans">
@@ -116,7 +122,8 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       {/* Mobile Menu Button */}
       <button
         onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-        className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-white rounded-lg border border-gray-200 shadow-sm"
+        className="lg:hidden fixed top-3 left-3 z-50 p-3 bg-white rounded-xl border border-gray-200 shadow-sm"
+        aria-label={isMobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
       >
         <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           {isMobileMenuOpen ? (
@@ -154,7 +161,7 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         
         <main className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-12 bg-gray-50">
           <div className="max-w-[1600px] mx-auto space-y-8">
-            <header className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4 sm:gap-6 pl-10 sm:pl-0">
+            <header className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4 sm:gap-6 pl-12 sm:pl-0">
               <div className="space-y-1">
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">
                   {activeTab === 'dashboard' ? 'Lead Dashboard' : 'All Leads'}
@@ -175,45 +182,51 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
               </button>
             </header>
 
-            <div className="transition-all duration-500 ease-out" key={refreshKey}>
-              {activeTab === 'dashboard' ? (
-                <Dashboard
-                  onSelectLead={setSelectedLead}
-                  onNavigateToLeads={(filters) => {
-                    if (filters) setLeadFilterPreset(filters);
-                    setActiveTab('leads');
-                  }}
-                />
-              ) : (
-                <LeadTable
-                  onSelectLead={setSelectedLead}
-                  filterPreset={leadFilterPreset}
-                  onFilterPresetConsumed={() => setLeadFilterPreset(null)}
-                />
-              )}
-            </div>
+            <Suspense fallback={sectionLoader}>
+              <div className="transition-all duration-500 ease-out" key={refreshKey}>
+                {activeTab === 'dashboard' ? (
+                  <Dashboard
+                    onSelectLead={setSelectedLead}
+                    onNavigateToLeads={(filters) => {
+                      if (filters) setLeadFilterPreset(filters);
+                      setActiveTab('leads');
+                    }}
+                  />
+                ) : (
+                  <LeadTable
+                    onSelectLead={setSelectedLead}
+                    filterPreset={leadFilterPreset}
+                    onFilterPresetConsumed={() => setLeadFilterPreset(null)}
+                  />
+                )}
+              </div>
+            </Suspense>
           </div>
         </main>
       </div>
 
       {/* Agent Panel */}
-      <AgentPanel
-        isOpen={isAgentOpen}
-        onClose={() => setIsAgentOpen(false)}
-        onSelectLead={(leadId) => {
-          fetchLead(leadId)
-            .then(lead => { if (lead) setSelectedLead(lead); })
-            .catch(err => { console.error('Failed to fetch lead:', err); toast.error('Could not load lead details'); });
-        }}
-      />
+      <Suspense fallback={null}>
+        <AgentPanel
+          isOpen={isAgentOpen}
+          onClose={() => setIsAgentOpen(false)}
+          onSelectLead={(leadId) => {
+            fetchLead(leadId)
+              .then(lead => { if (lead) setSelectedLead(lead); })
+              .catch(err => { console.error('Failed to fetch lead:', err); toast.error('Could not load lead details'); });
+          }}
+        />
+      </Suspense>
 
       {/* Lead Detail Modal (z-50) */}
       {selectedLead && (
-        <LeadDetail 
-          lead={selectedLead} 
-          onClose={() => setSelectedLead(null)}
-          onLeadUpdated={handleLeadUpdated}
-        />
+        <Suspense fallback={null}>
+          <LeadDetail 
+            lead={selectedLead} 
+            onClose={() => setSelectedLead(null)}
+            onLeadUpdated={handleLeadUpdated}
+          />
+        </Suspense>
       )}
     </div>
     </ErrorBoundary>

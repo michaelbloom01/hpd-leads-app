@@ -14,12 +14,47 @@ from src.enrich.enricher import Enricher
 from src.enrich.ny_dos import NYDOSClient
 from src.storage.database import get_database
 from src.services.cache_manager import get_cache
-from src.services.lead_converter import row_to_lead
+from src.services.lead_converter import row_to_lead, get_outreach_attempts_for_lead, get_revenue_breakdown
 from src.schemas.requests import EnrichmentRequest
 from src.schemas.responses import LeadResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["enrichment"])
+_enrichment_start_lock = threading.Lock()
+
+
+def _set_enrichment_idle(
+    cache,
+    *,
+    phase: str = "",
+    error: Optional[str] = None,
+    reset_counts: bool = False,
+):
+    """
+    Normalize enrichment state when a run exits early or finishes.
+
+    This prevents the UI/API from getting stuck in `already_running` after
+    no-op batches or early-exit paths.
+    """
+    updates = {
+        "running": False,
+        "phase": phase,
+        "current_lead": None,
+        "finished_at": datetime.now().isoformat(),
+        "error": error,
+    }
+    if reset_counts:
+        updates.update({
+            "progress": 0,
+            "total": 0,
+            "completed": 0,
+            "failed": 0,
+            "dos_completed": 0,
+            "dos_found": 0,
+            "web_completed": 0,
+            "web_found": 0,
+        })
+    cache.enrichment.update(**updates)
 
 
 # ---------------------------------------------------------------------------
@@ -30,32 +65,39 @@ router = APIRouter(prefix="/api", tags=["enrichment"])
 async def enrich_leads(request: EnrichmentRequest):
     """Enrich specific leads by ID using web crawl."""
     cache = get_cache()
+    db = get_database()
     if not request.lead_ids:
         raise HTTPException(status_code=400, detail="No lead IDs provided")
 
-    lead_index = {l.lead_id: i for i, l in enumerate(cache.leads)}
-    to_enrich = [cache.leads[lead_index[lid]] for lid in request.lead_ids if lid in lead_index]
+    to_enrich = []
+    with cache.leads_lock:
+        lead_index = cache.get_lead_index()
+        for lid in request.lead_ids:
+            if lid in lead_index:
+                to_enrich.append(cache.leads[lead_index[lid]])
+                continue
+            row = db.get_lead_by_id(lid)
+            if row:
+                to_enrich.append(row_to_lead(row))
     if not to_enrich:
         raise HTTPException(status_code=404, detail="No matching leads found")
 
     enricher = Enricher(use_cache=True)
     enriched = enricher.enrich_batch(to_enrich, limit=len(to_enrich), skip_enriched=False)
 
-    db = get_database()
-    updated_leads = []
+    # Persist first (source-of-truth), then update cache.
+    db.save_leads(enriched)
     with cache.leads_lock:
+        lead_index = cache.get_lead_index()
         for lead in enriched:
             if lead.lead_id in lead_index:
                 cache.leads[lead_index[lead.lead_id]] = lead
-                updated_leads.append(lead)
             db.save_enrichment(
                 lead_id=lead.lead_id, phone=lead.phone, email=lead.email,
                 website=lead.website, business_summary=lead.business_summary,
                 owner_principal=lead.owner_principal,
                 enrichment_status=lead.enrichment_status, enrichment_sources=lead.enrichment_sources,
             )
-    if updated_leads:
-        db.save_leads(updated_leads)
 
     return {
         "status": "success", "enriched_count": len(enriched),
@@ -74,10 +116,13 @@ def _run_background_enrichment(limit: int, min_score: Optional[float] = None):
     cache.enrichment_stop_requested = False
     db = get_database()
 
-    candidates = [l for l in cache.leads if l.enrichment_status not in ("complete", "partial") and (min_score is None or l.score >= min_score)]
+    with cache.leads_lock:
+        snapshot = list(cache.leads)
+    candidates = [l for l in snapshot if l.enrichment_status not in ("complete", "partial") and (min_score is None or l.score >= min_score)]
     candidates.sort(key=lambda l: l.score, reverse=True)
     batch = candidates[:limit]
     if not batch:
+        _set_enrichment_idle(cache, phase="", reset_counts=True)
         return
 
     lead_ids = [l.lead_id for l in batch]
@@ -98,11 +143,12 @@ def _run_background_enrichment_with_job(job_id: int, lead_ids_remaining: set, mi
     try:
         enricher = Enricher(use_cache=True)
         db = get_database()
-        lead_index = cache.get_lead_index()
-        batch = [l for l in cache.leads if l.lead_id in lead_ids_remaining]
+        with cache.leads_lock:
+            batch = [l for l in cache.leads if l.lead_id in lead_ids_remaining]
         batch.sort(key=lambda l: l.score, reverse=True)
         cache.enrichment.update(total=len(batch))
         remaining = list(lead_ids_remaining)
+        stopped_early = False
 
         for i, lead in enumerate(batch):
             if cache.enrichment_stop_requested:
@@ -110,15 +156,17 @@ def _run_background_enrichment_with_job(job_id: int, lead_ids_remaining: set, mi
                 db.update_enrichment_job(job_id, status="paused", lead_ids_remaining=remaining,
                                          processed=i, completed=cache.enrichment.get("completed"),
                                          failed=cache.enrichment.get("failed"), error="Stopped by user")
+                stopped_early = True
                 break
 
             cache.enrichment.update(progress=i + 1, current_lead=lead.agent_name or lead.owner_name)
             try:
                 enriched_lead = enricher.enrich_lead(lead)
+                db.save_leads([enriched_lead])
                 with cache.leads_lock:
+                    lead_index = cache.get_lead_index()
                     if lead.lead_id in lead_index:
                         cache.leads[lead_index[lead.lead_id]] = enriched_lead
-                db.save_leads([enriched_lead])
                 if lead.lead_id in remaining:
                     remaining.remove(lead.lead_id)
 
@@ -134,13 +182,14 @@ def _run_background_enrichment_with_job(job_id: int, lead_ids_remaining: set, mi
                 if lead.lead_id in remaining:
                     remaining.remove(lead.lead_id)
 
-        db.update_enrichment_job(job_id, status="completed", processed=len(batch),
-                                 completed=cache.enrichment.get("completed"),
-                                 failed=cache.enrichment.get("failed"), lead_ids_remaining=[])
-        try:
-            db.set_setting("enrichment_completed_at", datetime.now().isoformat())
-        except Exception:
-            pass
+        if not stopped_early:
+            db.update_enrichment_job(job_id, status="completed", processed=len(batch),
+                                     completed=cache.enrichment.get("completed"),
+                                     failed=cache.enrichment.get("failed"), lead_ids_remaining=[])
+            try:
+                db.set_setting("enrichment_completed_at", datetime.now().isoformat())
+            except Exception:
+                pass
 
     except Exception as e:
         logger.error(f"Background enrichment failed: {e}", exc_info=True)
@@ -168,15 +217,18 @@ def _run_full_enrichment_batch(lead_ids: list):
         enricher_ms = MultiSourceEnricher()
         crawler = WebCrawler()
         db = get_database()
-        lead_index = cache.get_lead_index()
-
         for idx, lead_id in enumerate(lead_ids):
             if cache.enrichment_stop_requested:
                 break
-            cache_idx = lead_index.get(lead_id)
-            if cache_idx is None:
-                continue
-            lead = cache.leads[cache_idx]
+            with cache.leads_lock:
+                lead_index = cache.get_lead_index()
+                cache_idx = lead_index.get(lead_id)
+                lead = cache.leads[cache_idx] if cache_idx is not None else None
+            if lead is None:
+                row = db.get_lead_by_id(lead_id)
+                if not row:
+                    continue
+                lead = row_to_lead(row)
             company_name = lead.agent_name or lead.owner_name
             cache.enrichment.update(progress=idx + 1, current_lead=company_name)
 
@@ -234,12 +286,15 @@ def _run_full_enrichment_batch(lead_ids: list):
                 has_contact = bool(lead.phone or lead.email)
                 has_website = bool(lead.website)
                 lead.enrichment_status = "complete" if has_contact and has_website else "partial" if has_contact or has_website else "failed"
-                cache.leads[cache_idx] = lead
                 db.update_lead(lead_id, {
                     "phone": lead.phone, "email": lead.email, "website": lead.website,
                     "owner_principal": lead.owner_principal, "enrichment_status": lead.enrichment_status,
                     "business_summary": lead.business_summary,
                 })
+                with cache.leads_lock:
+                    lead_index = cache.get_lead_index()
+                    if lead_id in lead_index:
+                        cache.leads[lead_index[lead_id]] = lead
                 cache.enrichment.update(completed=cache.enrichment.get("completed", 0) + 1)
             except Exception as e:
                 logger.error(f"Full enrichment failed for {lead_id}: {e}")
@@ -266,15 +321,20 @@ async def enrich_batch_full(
 ):
     """Full unified enrichment for leads with >= min_units."""
     cache = get_cache()
-    if cache.enrichment.get("running"):
-        return {"status": "already_running", "progress": cache.enrichment.get("progress"), "total": cache.enrichment.get("total")}
-    if not cache.leads:
-        raise HTTPException(status_code=400, detail="No leads loaded.")
+    with _enrichment_start_lock:
+        if cache.enrichment.get("running"):
+            return {"status": "already_running", "progress": cache.enrichment.get("progress"), "total": cache.enrichment.get("total")}
+        with cache.leads_lock:
+            snapshot = list(cache.leads)
+        if not snapshot:
+            raise HTTPException(status_code=400, detail="No leads loaded.")
+        cache.enrichment.update(running=True, phase="queued")
 
-    candidates = [l for l in cache.leads if (l.total_units or 0) >= min_units and l.enrichment_status not in ("complete", "partial") and (min_score is None or (l.score or 0) >= min_score)]
+    candidates = [l for l in snapshot if (l.total_units or 0) >= min_units and l.enrichment_status not in ("complete", "partial") and (min_score is None or (l.score or 0) >= min_score)]
     candidates.sort(key=lambda l: (l.total_units or 0), reverse=True)
     batch = candidates[:limit]
     if not batch:
+        _set_enrichment_idle(cache, phase="", reset_counts=True)
         return {"status": "no_candidates", "message": f"No unenriched leads with >= {min_units} units found."}
 
     background_tasks.add_task(_run_full_enrichment_batch, [l.lead_id for l in batch])
@@ -290,26 +350,30 @@ async def enrich_batch(
 ):
     """Enrich a batch of top leads."""
     cache = get_cache()
-    if cache.enrichment.get("running"):
-        return {"status": "already_running", "progress": cache.enrichment.get("progress"), "total": cache.enrichment.get("total")}
-    if not cache.leads:
-        raise HTTPException(status_code=400, detail="No leads loaded. Run /api/refresh first.")
+    with _enrichment_start_lock:
+        if cache.enrichment.get("running"):
+            return {"status": "already_running", "progress": cache.enrichment.get("progress"), "total": cache.enrichment.get("total")}
+        with cache.leads_lock:
+            snapshot = list(cache.leads)
+        if not snapshot:
+            raise HTTPException(status_code=400, detail="No leads loaded. Run /api/refresh first.")
+        if background:
+            cache.enrichment.update(running=True, phase="queued")
 
     if background:
         background_tasks.add_task(_run_background_enrichment, limit, min_score)
         return {"status": "started", "message": f"Background enrichment started for up to {limit} leads", "check_progress": "/api/enrich/status"}
     else:
         enricher = Enricher(use_cache=True)
-        enriched = enricher.enrich_batch(cache.leads, limit=limit, skip_enriched=True, min_score=min_score)
-        lead_index = {l.lead_id: i for i, l in enumerate(cache.leads)}
+        enriched = enricher.enrich_batch(snapshot, limit=limit, skip_enriched=True, min_score=min_score)
         db = get_database()
-        updated = []
-        for lead in enriched:
-            if lead.lead_id in lead_index:
-                cache.leads[lead_index[lead.lead_id]] = lead
-                updated.append(lead)
-        if updated:
-            db.save_leads(updated)
+        if enriched:
+            db.save_leads(enriched)
+        with cache.leads_lock:
+            lead_index = cache.get_lead_index()
+            for lead in enriched:
+                if lead.lead_id in lead_index:
+                    cache.leads[lead_index[lead.lead_id]] = lead
         return {"status": "success", "enriched_count": len(enriched)}
 
 
@@ -322,22 +386,25 @@ async def enrich_all_leads(
 ):
     """High-performance batch enrichment for all leads."""
     cache = get_cache()
-    if cache.enrichment.get("running"):
-        return {"status": "already_running", "phase": cache.enrichment.get("phase"), "check_progress": "/api/enrich/status"}
-    if not cache.leads:
-        raise HTTPException(status_code=400, detail="No leads loaded. Run /api/refresh first.")
+    with _enrichment_start_lock:
+        if cache.enrichment.get("running"):
+            return {"status": "already_running", "phase": cache.enrichment.get("phase"), "check_progress": "/api/enrich/status"}
+        with cache.leads_lock:
+            snapshot = list(cache.leads)
+        if not snapshot:
+            raise HTTPException(status_code=400, detail="No leads loaded. Run /api/refresh first.")
+        cache.enrichment.update(running=True, phase="queued")
 
     from src.enrich.batch_enricher import BatchEnricher, EnrichmentConfig
 
     def _run():
         cache.enrichment.update(
-            running=True, phase="initializing", progress=0, total=len(cache.leads),
+            running=True, phase="initializing", progress=0, total=len(snapshot),
             completed=0, failed=0, dos_completed=0, dos_found=0, web_completed=0, web_found=0,
             started_at=datetime.now().isoformat(), finished_at=None, error=None,
         )
         try:
             db = get_database()
-            lead_idx = cache.get_lead_index()
             config = EnrichmentConfig(
                 dos_enabled=dos_enabled, dos_batch_size=100, dos_workers=5,
                 web_enabled=web_enabled, web_batch_size=50, web_workers=3,
@@ -353,13 +420,14 @@ async def enrich_all_leads(
                                         failed=p.failed, current_lead=p.current_lead)
 
             def on_batch_complete(enriched_leads):
+                db.save_leads(enriched_leads)
                 with cache.leads_lock:
+                    lead_idx = cache.get_lead_index()
                     for lead in enriched_leads:
                         if lead.lead_id in lead_idx:
                             cache.leads[lead_idx[lead.lead_id]] = lead
-                db.save_leads(enriched_leads)
 
-            enricher.enrich_all(list(cache.leads), on_progress=on_progress, on_batch_complete=on_batch_complete)
+            enricher.enrich_all(snapshot, on_progress=on_progress, on_batch_complete=on_batch_complete)
             cache.enrichment.update(completed=cache.enrichment.get("dos_found", 0) + cache.enrichment.get("web_found", 0))
         except Exception as e:
             logger.error(f"Batch enrichment failed: {e}", exc_info=True)
@@ -368,7 +436,7 @@ async def enrich_all_leads(
             cache.enrichment.update(running=False, phase="complete", current_lead=None, finished_at=datetime.now().isoformat())
 
     background_tasks.add_task(_run)
-    return {"status": "started", "message": f"Batch enrichment started for {len(cache.leads)} leads", "check_progress": "/api/enrich/status"}
+    return {"status": "started", "message": f"Batch enrichment started for {len(snapshot)} leads", "check_progress": "/api/enrich/status"}
 
 
 @router.get("/enrich/status")
@@ -466,6 +534,7 @@ async def get_enrichment_gaps():
 async def enrich_lead_contacts(lead_id: str):
     """Enrich a single lead's contact info using multiple sources."""
     cache = get_cache()
+    db = get_database()
     lead = None
     lead_idx = None
     for i, l in enumerate(cache.leads):
@@ -474,7 +543,12 @@ async def enrich_lead_contacts(lead_id: str):
             lead_idx = i
             break
     if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
+        # Fallback to DB if cache is cold.
+        row = db.get_lead_by_id(lead_id)
+        if row:
+            lead = row_to_lead(row)
+        else:
+            raise HTTPException(status_code=404, detail="Lead not found")
 
     company_name = lead.agent_name or lead.owner_name
     try:
@@ -505,14 +579,320 @@ async def enrich_lead_contacts(lead_id: str):
         lead.last_enriched = datetime.now()
 
         with cache.leads_lock:
-            cache.leads[lead_idx] = lead
-        db = get_database()
+            if lead_idx is not None and 0 <= lead_idx < len(cache.leads):
+                cache.leads[lead_idx] = lead
         db.save_leads([lead])
 
         return {"status": "success", "lead_id": lead_id, "phones": [p.model_dump() for p in phones], "emails": [e.model_dump() for e in emails], "website": result.website, "enrichment_status": lead.enrichment_status}
     except Exception as e:
         logger.error(f"Contact enrichment failed for {lead_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/leads/{lead_id}/enrich-all")
+async def enrich_single_lead_all(lead_id: str):
+    """
+    Unified single-lead enrichment:
+    1) Multi-source contacts
+    2) Website deep scrape
+    3) AI description
+
+    Always returns a structured response. Individual source failures are
+    recorded in `errors` but do not fail the whole request.
+    """
+    cache = get_cache()
+    db = get_database()
+
+    lead = None
+    lead_idx = None
+    with cache.leads_lock:
+        for i, l in enumerate(cache.leads):
+            if l.lead_id == lead_id:
+                lead = l
+                lead_idx = i
+                break
+
+    if not lead:
+        # Fallback to DB if cache is cold.
+        row = db.get_lead_by_id(lead_id)
+        if row:
+            lead = row_to_lead(row)
+        else:
+            raise HTTPException(status_code=404, detail="Lead not found")
+
+    company_name = lead.agent_name or lead.owner_name
+    errors = []
+    owner_names = []
+    website_scraped = False
+    ai_generated = False
+    ai_description = None
+    contacts_phones_found = 0
+    contacts_emails_found = 0
+    contacts_website_found = bool(lead.website)
+
+    # 1) Multi-source contact enrichment
+    try:
+        from src.enrich.contact_sources import MultiSourceEnricher
+
+        ms = MultiSourceEnricher()
+        location = f"{lead.boro}, New York" if lead.boro else "New York, NY"
+        result = ms.enrich(
+            lead_id=lead_id,
+            company_name=company_name,
+            website=lead.website,
+            location=location,
+            address=lead.address,
+            contacts=lead.contacts,
+        )
+
+        contacts_phones_found = len(result.phones or [])
+        contacts_emails_found = len(result.emails or [])
+
+        if result.phones and not lead.phone:
+            best_phone = result.best_phone()
+            if best_phone:
+                lead.phone = best_phone.value
+        if result.emails and not lead.email:
+            best_email = result.best_email()
+            if best_email:
+                lead.email = best_email.value
+        if result.website and not lead.website:
+            lead.website = result.website
+        contacts_website_found = bool(lead.website)
+
+        if result.dos_registered_agent and not lead.owner_principal:
+            lead.owner_principal = result.dos_registered_agent
+        if result.dos_id:
+            lead.dos_id = result.dos_id
+            lead.dos_status = result.dos_entity_type or lead.dos_status
+
+        if result.sources_succeeded:
+            existing_sources = set(lead.enrichment_sources or [])
+            for src_name in result.sources_succeeded:
+                existing_sources.add(src_name)
+            lead.enrichment_sources = list(existing_sources)
+
+        if result.errors:
+            errors.extend(result.errors)
+    except Exception as e:
+        errors.append(f"contacts: {e}")
+        logger.warning(f"Single-lead contacts enrichment failed for {lead_id}: {e}")
+
+    # 2) Website research / scrape
+    try:
+        from src.enrich.web_crawl import WebCrawler
+
+        crawler = WebCrawler()
+        if not lead.website:
+            found = crawler.find_website(f"{company_name} property management NYC")
+            if found:
+                lead.website = found
+                contacts_website_found = True
+
+        if lead.website:
+            scrape_data = crawler.deep_scrape(lead.website, company_name=company_name)
+            website_scraped = True
+            owner_names = scrape_data.get("owner_names", []) or []
+            if scrape_data.get("phones") and not lead.phone:
+                lead.phone = scrape_data["phones"][0]
+            if scrape_data.get("emails") and not lead.email:
+                lead.email = scrape_data["emails"][0]
+    except Exception as e:
+        errors.append(f"research: {e}")
+        logger.warning(f"Single-lead web research failed for {lead_id}: {e}")
+
+    # 3) AI summary
+    try:
+        from src.enrich.ai_summary import generate_company_description
+
+        bt_dict = None
+        if lead.building_types:
+            bt_dict = {
+                "condo": lead.building_types.condo,
+                "coop": lead.building_types.coop,
+                "rental_elevator": lead.building_types.rental_elevator,
+                "rental_walkup": lead.building_types.rental_walkup,
+                "small_residential": lead.building_types.small_residential,
+            }
+
+        description, ai_error = generate_company_description(
+            company_name=company_name,
+            portfolio_size=lead.portfolio_size,
+            total_units=lead.total_units,
+            boroughs=lead.boros,
+            building_types=bt_dict,
+            owner_names=owner_names or ([lead.owner_principal] if lead.owner_principal else None),
+        )
+
+        if description:
+            ai_generated = True
+            ai_description = description
+            lead.business_summary = description
+        elif ai_error:
+            # Missing AI key should not mark enrichment as failed.
+            ai_error_l = str(ai_error).lower()
+            if "api key" not in ai_error_l and "not configured" not in ai_error_l:
+                errors.append(f"ai_summary: {ai_error}")
+    except Exception as e:
+        errors.append(f"ai_summary: {e}")
+        logger.warning(f"Single-lead AI summary failed for {lead_id}: {e}")
+
+    # Normalize final status
+    has_contact = bool(lead.phone or lead.email)
+    has_website = bool(lead.website)
+    had_partial_or_better = lead.enrichment_status in ("partial", "complete")
+    has_any_enrichment_signal = bool(
+        has_contact
+        or has_website
+        or ai_generated
+        or lead.business_summary
+        or lead.owner_principal
+        or owner_names
+    )
+    if has_contact and has_website:
+        lead.enrichment_status = "complete"
+    elif has_any_enrichment_signal or had_partial_or_better:
+        lead.enrichment_status = "partial"
+    else:
+        lead.enrichment_status = "failed"
+    lead.last_enriched = datetime.now()
+
+    # Persist + update cache
+    db.save_leads([lead])
+    with cache.leads_lock:
+        if lead_idx is not None and 0 <= lead_idx < len(cache.leads):
+            cache.leads[lead_idx] = lead
+
+    lead_response = LeadResponse.from_lead(
+        lead,
+        get_outreach_attempts_for_lead(lead_id),
+        get_revenue_breakdown(lead),
+    )
+
+    return {
+        "lead_id": lead_id,
+        "contacts": {
+            "phones_found": contacts_phones_found,
+            "emails_found": contacts_emails_found,
+            "website_found": contacts_website_found,
+        },
+        "research": {
+            "owner_names": owner_names,
+            "year_established": None,
+            "website_scraped": website_scraped,
+        },
+        "ai_summary": {
+            "generated": ai_generated,
+            "description": ai_description,
+        },
+        "errors": errors,
+        "enrichment_status": lead.enrichment_status,
+        "pipeline_stage": lead.pipeline_stage,
+        "lead": lead_response.model_dump(),
+    }
+
+
+@router.post("/leads/{lead_id}/research")
+async def research_single_lead(lead_id: str):
+    """Backward-compatible endpoint: deep website research for a single lead."""
+    cache = get_cache()
+    db = get_database()
+    lead = None
+    with cache.leads_lock:
+        lead_index = cache.get_lead_index()
+        if lead_id in lead_index:
+            lead = cache.leads[lead_index[lead_id]]
+    if not lead:
+        row = db.get_lead_by_id(lead_id)
+        if row:
+            lead = row_to_lead(row)
+        else:
+            raise HTTPException(status_code=404, detail="Lead not found")
+
+    from src.enrich.web_crawl import WebCrawler
+    crawler = WebCrawler()
+    company_name = lead.agent_name or lead.owner_name
+    website = lead.website or crawler.find_website(f"{company_name} property management NYC")
+    data = crawler.deep_scrape(website) if website else {
+        "owner_names": [],
+        "year_established": None,
+        "service_areas": [],
+        "description": None,
+        "phones": [],
+        "emails": [],
+        "social_links": {},
+    }
+
+    if website and not lead.website:
+        lead.website = website
+        db.update_lead(lead_id, {"website": website})
+        with cache.leads_lock:
+            lead_index = cache.get_lead_index()
+            if lead_id in lead_index:
+                cache.leads[lead_index[lead_id]].website = website
+
+    return {
+        "lead_id": lead_id,
+        "owner_names": data.get("owner_names", []),
+        "year_established": data.get("year_established"),
+        "service_areas": data.get("service_areas", []),
+        "description": data.get("description"),
+        "phones": data.get("phones", []),
+        "emails": data.get("emails", []),
+        "social_links": data.get("social_links", {}),
+        "scraped_at": datetime.now().isoformat(),
+        "ai_description": lead.business_summary,
+    }
+
+
+@router.post("/leads/{lead_id}/ai-summary")
+async def ai_summary_single_lead(lead_id: str):
+    """Backward-compatible endpoint: generate AI summary for a single lead."""
+    cache = get_cache()
+    db = get_database()
+    lead = None
+    with cache.leads_lock:
+        lead_index = cache.get_lead_index()
+        if lead_id in lead_index:
+            lead = cache.leads[lead_index[lead_id]]
+    if not lead:
+        row = db.get_lead_by_id(lead_id)
+        if row:
+            lead = row_to_lead(row)
+        else:
+            raise HTTPException(status_code=404, detail="Lead not found")
+
+    from src.enrich.ai_summary import generate_company_description
+
+    bt_dict = None
+    if lead.building_types:
+        bt_dict = {
+            "condo": lead.building_types.condo,
+            "coop": lead.building_types.coop,
+            "rental_elevator": lead.building_types.rental_elevator,
+            "rental_walkup": lead.building_types.rental_walkup,
+            "small_residential": lead.building_types.small_residential,
+        }
+
+    description, error = generate_company_description(
+        company_name=lead.agent_name or lead.owner_name,
+        portfolio_size=lead.portfolio_size,
+        total_units=lead.total_units,
+        boroughs=lead.boros,
+        building_types=bt_dict,
+        owner_names=[lead.owner_principal] if lead.owner_principal else None,
+    )
+
+    if description:
+        lead.business_summary = description
+        db.update_lead(lead_id, {"business_summary": description})
+        with cache.leads_lock:
+            lead_index = cache.get_lead_index()
+            if lead_id in lead_index:
+                cache.leads[lead_index[lead_id]].business_summary = description
+        return {"status": "success", "lead_id": lead_id, "ai_description": description, "message": None}
+
+    return {"status": "skipped", "lead_id": lead_id, "ai_description": None, "message": error or "AI summary unavailable"}
 
 
 # ---------------------------------------------------------------------------
@@ -590,10 +970,13 @@ async def enrich_api_only(
 ):
     """API-only batch enrichment using Google Places + NY DOS."""
     cache = get_cache()
-    if cache.enrichment.get("running"):
-        return {"status": "already_running", "check_progress": "/api/enrich/status"}
-    if not cache.leads:
-        raise HTTPException(status_code=400, detail="No leads loaded.")
+    with _enrichment_start_lock:
+        if cache.enrichment.get("running"):
+            return {"status": "already_running", "check_progress": "/api/enrich/status"}
+        with cache.leads_lock:
+            if not cache.leads:
+                raise HTTPException(status_code=400, detail="No leads loaded.")
+        cache.enrichment.update(running=True, phase="queued")
 
     from src.enrich.contact_sources import GooglePlacesEnricher
     gp = GooglePlacesEnricher()
@@ -617,12 +1000,12 @@ def _run_api_enrichment(limit: int, min_portfolio: int = 5, boro: Optional[str] 
         dos_client = NYDOSClient()
         db = get_database()
 
-        candidates = [l for l in cache.leads if not l.phone and not l.email and l.portfolio_size >= min_portfolio and (not boro or l.boro == boro.upper())]
+        with cache.leads_lock:
+            snapshot = list(cache.leads)
+        candidates = [l for l in snapshot if not l.phone and not l.email and l.portfolio_size >= min_portfolio and (not boro or l.boro == boro.upper())]
         candidates.sort(key=lambda l: (l.score, l.portfolio_size), reverse=True)
         batch = candidates[:limit]
         cache.enrichment.update(total=len(batch))
-        lead_index = cache.get_lead_index()
-
         def enrich_single(lead):
             name = lead.agent_name or lead.owner_name
             if not name:
@@ -673,10 +1056,11 @@ def _run_api_enrichment(limit: int, min_portfolio: int = 5, boro: Optional[str] 
                     break
                 try:
                     enriched_lead, gp_f, dos_f = future.result()
+                    db.save_leads([enriched_lead])
                     with cache.leads_lock:
+                        lead_index = cache.get_lead_index()
                         if enriched_lead.lead_id in lead_index:
                             cache.leads[lead_index[enriched_lead.lead_id]] = enriched_lead
-                    db.save_leads([enriched_lead])
                     completed_count += 1
                     upd = {"progress": completed_count, "current_lead": enriched_lead.agent_name or enriched_lead.owner_name}
                     if gp_f:

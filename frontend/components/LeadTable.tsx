@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { fetchLeads, ApiLead, enrichLeads, API_BASE_URL, checkHealth, searchBuildings, BuildingSearchResult } from '../services/api';
+import { getAuthHeaders } from '../services/auth';
 import { BOROUGHS, BOROUGH_SHORT, formatCurrency, scoreColor } from '../utils/format';
 
 export interface LeadFilterPreset {
@@ -388,7 +389,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     if (filterBuildingTypes.length > 0) params.set('building_type_has', filterBuildingTypes.join(','));
 
     try {
-      const { getAuthHeaders } = await import('../services/auth');
       const response = await fetch(`${API_BASE_URL}/api/export/csv?${params.toString()}`, {
         headers: getAuthHeaders(),
       });
@@ -531,13 +531,34 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
               <span className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 text-white text-[9px] rounded-full flex items-center justify-center font-bold">{activeFiltersCount}</span>
             )}
           </button>
-          <button onClick={applyFilters} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors">
+          <button onClick={applyFilters} className="hidden sm:inline-flex px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors">
             Go
           </button>
-          <button onClick={clearFilters} className="px-3 py-2 text-xs text-gray-500 hover:text-gray-700 transition-colors">Clear</button>
+          <button onClick={clearFilters} className="hidden sm:inline-flex px-3 py-2 text-xs text-gray-500 hover:text-gray-700 transition-colors">Clear</button>
           <button onClick={exportToCsv} disabled={displayLeads.length === 0}
-            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs text-gray-700 hover:bg-gray-50 hover:text-gray-900 disabled:opacity-40 transition-colors flex items-center gap-1.5">
+            className="hidden sm:inline-flex px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs text-gray-700 hover:bg-gray-50 hover:text-gray-900 disabled:opacity-40 transition-colors items-center gap-1.5">
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+            Export
+          </button>
+        </div>
+        <div className="mt-3 grid grid-cols-3 gap-2 sm:hidden">
+          <button
+            onClick={applyFilters}
+            className="px-3 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors"
+          >
+            Apply
+          </button>
+          <button
+            onClick={clearFilters}
+            className="px-3 py-2.5 bg-gray-100 text-gray-700 text-xs font-semibold rounded-lg border border-gray-200"
+          >
+            Clear
+          </button>
+          <button
+            onClick={exportToCsv}
+            disabled={displayLeads.length === 0}
+            className="px-3 py-2.5 bg-white border border-gray-200 rounded-lg text-xs text-gray-700 disabled:opacity-40"
+          >
             Export
           </button>
         </div>
@@ -1013,7 +1034,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                   {(lead.score || 0).toFixed(0)}
                 </span>
               </div>
-              <div className="flex items-center gap-4 text-xs ml-6">
+              <div className="flex flex-wrap items-center gap-2 text-xs ml-0 mt-2">
                 <span className="text-gray-500"><span className="font-mono text-gray-700">{lead.portfolio_size || 0}</span> bldgs</span>
                 <span className="text-gray-500"><span className="font-mono text-blue-600">{(lead.total_units || 0).toLocaleString()}</span> units</span>
                 {(lead.portfolio_size || 0) > 0 && (
@@ -1028,7 +1049,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-2 mt-2 ml-6" onClick={(e) => e.stopPropagation()}>
+              <div className="flex flex-wrap items-center gap-2 mt-2 ml-0" onClick={(e) => e.stopPropagation()}>
                 {lead.phone && (
                   <a href={`tel:${lead.phone}`} className="p-2.5 bg-emerald-50 rounded-lg">
                     <svg className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">

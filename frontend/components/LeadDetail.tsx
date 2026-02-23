@@ -3,7 +3,7 @@ import { toast } from 'react-hot-toast';
 import DOMPurify from 'dompurify';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ApiLead, updateLead, addOutreachAttempt, enrichLeadAll, getDueDiligence, OutreachAttempt } from '../services/api';
+import { ApiLead, updateLead, addOutreachAttempt, enrichLeadAll, getDueDiligence, estimateLeadRevenue, OutreachAttempt } from '../services/api';
 import { PIPELINE_STAGES, OUTREACH_STATUSES, OUTREACH_METHODS, OUTREACH_OUTCOMES, formatCurrency } from '../utils/format';
 
 // Lazy-load map to avoid large initial bundle
@@ -36,6 +36,8 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   const [isLoadingDD, setIsLoadingDD] = useState(false);
   const [buildingSearch, setBuildingSearch] = useState('');
   const [showEmailMenu, setShowEmailMenu] = useState(false);
+  const [isEstimatingRevenue, setIsEstimatingRevenue] = useState(false);
+  const [revenueEstimateFailed, setRevenueEstimateFailed] = useState(false);
 
   useEffect(() => {
     setEnrichedLead(lead);
@@ -48,7 +50,66 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     setNextFollowUp(lead.next_follow_up || '');
     setActiveTab('overview');
     setShowEmailMenu(false);
+    setIsEstimatingRevenue(false);
+    setRevenueEstimateFailed(false);
   }, [lead]);
+
+  // Auto-estimate revenue once when a lead has units but missing persisted values.
+  useEffect(() => {
+    let cancelled = false;
+    const needsEstimate = (enrichedLead.total_units || 0) > 0 && (enrichedLead.estimated_annual_revenue || 0) <= 0;
+    if (!needsEstimate || isEstimatingRevenue || revenueEstimateFailed) return;
+
+    const run = async () => {
+      setIsEstimatingRevenue(true);
+      setRevenueEstimateFailed(false);
+      try {
+        const updatedLead = await estimateLeadRevenue(enrichedLead.lead_id);
+        if (!cancelled) {
+          setEnrichedLead(updatedLead);
+          onLeadUpdated?.(updatedLead);
+          if ((updatedLead.estimated_annual_revenue || 0) <= 0) {
+            setRevenueEstimateFailed(true);
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setRevenueEstimateFailed(true);
+          console.error('Failed to estimate lead revenue:', err);
+        }
+      } finally {
+        if (!cancelled) setIsEstimatingRevenue(false);
+      }
+    };
+
+    run();
+    return () => { cancelled = true; };
+  }, [
+    enrichedLead.lead_id,
+    enrichedLead.total_units,
+    enrichedLead.estimated_annual_revenue,
+    isEstimatingRevenue,
+    revenueEstimateFailed,
+    onLeadUpdated,
+  ]);
+
+  // Guardrail: never leave revenue in a permanent "calculating" state.
+  useEffect(() => {
+    if (!isEstimatingRevenue) return;
+    const timeout = window.setTimeout(() => {
+      setIsEstimatingRevenue(false);
+      setRevenueEstimateFailed(true);
+    }, 20000);
+    return () => window.clearTimeout(timeout);
+  }, [isEstimatingRevenue, enrichedLead.lead_id]);
+
+  const fallbackAnnualRevenue = ((enrichedLead.revenue_breakdown || []).reduce((sum: number, item: any) => {
+    const monthlyGross = Number(item?.monthly_gross || 0);
+    const feeRate = Number(item?.fee_rate || 0.05);
+    return sum + (monthlyGross * feeRate * 12);
+  }, 0));
+
+  const fallbackMonthlyRevenue = fallbackAnnualRevenue > 0 ? fallbackAnnualRevenue / 12 : 0;
 
   // === Handlers ===
   const handleSaveStatus = async (newStatus: string) => {
@@ -118,11 +179,16 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
       if (found.length > 0) {
         toast.success(`Enrichment complete: found ${found.join(', ')}`);
       } else {
-        toast.error('Enrichment complete but no new data found');
+        toast('Enrichment finished. No new contact data found this run.');
       }
-      
-      if (result.errors?.length > 0) {
-        console.warn('Enrichment partial errors:', result.errors);
+
+      const nonBlockingErrors = (result.errors || []).filter((err: string) => {
+        const lowered = String(err || '').toLowerCase();
+        return !(lowered.includes('anthropic') && lowered.includes('not configured'));
+      });
+      if (nonBlockingErrors.length > 0) {
+        console.warn('Enrichment partial errors:', nonBlockingErrors);
+        toast(`Enrichment finished with ${nonBlockingErrors.length} warning(s).`);
       }
       
       // Use the full lead returned by the backend — single source of truth, no second call
@@ -347,8 +413,18 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                         </div>
                       </details>
                     </div>
+                  ) : fallbackAnnualRevenue > 0 ? (
+                    <div>
+                      <div className="text-2xl font-bold font-mono text-emerald-600">{formatCurrency(fallbackAnnualRevenue)}<span className="text-sm text-emerald-500">/yr</span></div>
+                      <div className="text-sm font-mono text-gray-500 mt-1">{formatCurrency(fallbackMonthlyRevenue)}<span className="text-xs text-gray-400">/mo</span></div>
+                      <div className="text-[10px] text-gray-400 mt-2">Live estimate shown; saving to lead record...</div>
+                    </div>
+                  ) : isEstimatingRevenue ? (
+                    <div className="text-gray-400 text-sm">Estimating revenue...</div>
+                  ) : revenueEstimateFailed ? (
+                    <div className="text-amber-600 text-sm">Revenue estimate unavailable right now. Try "Enrich Lead" or reopen this lead.</div>
                   ) : (
-                    <div className="text-gray-400 text-sm">{(enrichedLead.total_units || 0) > 0 ? 'Revenue calculating...' : 'No unit data available'}</div>
+                    <div className="text-gray-400 text-sm">{(enrichedLead.total_units || 0) > 0 ? 'Revenue not available yet' : 'No unit data available'}</div>
                   )}
                 </div>
                 <div className={`${
@@ -506,7 +582,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 </span>
                 {enrichedLead.enrichment_status === 'complete' ? 'Fully enriched — contacts, website, and AI summary found' :
                  enrichedLead.enrichment_status === 'partial' ? 'Partially enriched — some data found. Click "Re-enrich" to try again.' :
-                 enrichedLead.enrichment_status === 'failed' ? 'Enriched but nothing found — try "Re-enrich" or search manually' :
+                 enrichedLead.enrichment_status === 'failed' ? 'No contact matches found yet — try "Re-enrich" or search manually' :
                  'Not yet enriched — click "Enrich Lead" to find contacts, website, and generate a summary'}
               </div>
 
