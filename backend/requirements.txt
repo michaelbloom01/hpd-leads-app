@@ -38,6 +38,10 @@ asyncpg>=0.29.0
 psycopg>=3.1.0
 alembic>=1.13.0
 
+# Background task processing
+celery[redis]>=5.3.0
+redis>=5.0.0
+
 # Entity resolution (Phase 3B)
 networkx>=3.2.0
 

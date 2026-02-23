@@ -15,6 +15,12 @@ from datetime import datetime, timedelta
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.logging_config import configure_logging
+from src.sentry_init import init_sentry
+
+configure_logging()
+init_sentry()
+
 from src.storage.database import get_database
 from src.services.cache_manager import get_cache
 from src.services.violations_service import ViolationsService
@@ -29,6 +35,12 @@ from src.routers.enrichment import router as enrichment_router
 from src.routers.pipeline import router as pipeline_router
 from src.routers.export import router as export_router
 from src.routers.admin import router as admin_router
+from src.routers.scoring import router as scoring_router
+from src.routers.buildings import router as buildings_router
+from src.routers.jobs import router as jobs_router
+from src.routers.quality import router as quality_router
+from src.routers.alerts import router as alerts_router
+from src.routers.export_v1 import router as export_v1_router
 try:
     from src.routers.agent import router as agent_router
 except ImportError:
@@ -41,8 +53,19 @@ logger = logging.getLogger(__name__)
 # Create FastAPI app
 app = FastAPI(
     title="HPD Leads API",
-    description="API for NYC HPD property management lead generation",
-    version="2.0.0",
+    description=(
+        "Enterprise API for NYC property management lead generation and building churn analysis.\n\n"
+        "**Personas:**\n"
+        "- PE Searcher (Leads tab): Evaluate PM businesses for acquisition\n"
+        "- PM Operator (Buildings tab): Find buildings ripe for high-value outreach\n\n"
+        "**API Versions:**\n"
+        "- `/api/` - Legacy endpoints (SQLite-backed)\n"
+        "- `/api/v1/` - Enterprise endpoints (PostgreSQL-backed)"
+    ),
+    version="3.0.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
 )
 
 # Enable CORS for frontend
@@ -66,6 +89,12 @@ app.include_router(enrichment_router)
 app.include_router(pipeline_router)
 app.include_router(export_router)
 app.include_router(admin_router)
+app.include_router(scoring_router)
+app.include_router(buildings_router)
+app.include_router(jobs_router)
+app.include_router(quality_router)
+app.include_router(alerts_router)
+app.include_router(export_v1_router)
 if agent_router is not None:
     app.include_router(agent_router)
 
