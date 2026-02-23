@@ -8,6 +8,9 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application settings with defaults and env var loading."""
     
+    # Database
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/hpd_leads"
+    
     # NYC Open Data
     nyc_open_data_app_token: str = ""
     

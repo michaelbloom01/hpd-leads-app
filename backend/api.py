@@ -3,6 +3,9 @@ FastAPI server for HPD Leads Pipeline.
 
 Thin entry point that registers routers and handles startup/shutdown.
 All route logic lives in src/routers/.
+
+SQLAlchemy async sessions are available via the `get_session` dependency
+for new code. Existing SQLite code continues to work via `get_database()`.
 """
 import asyncio
 import logging
@@ -15,6 +18,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.storage.database import get_database
 from src.services.cache_manager import get_cache
 from src.services.violations_service import ViolationsService
+
+# SQLAlchemy async session (new code path)
+from src.db.session import get_session  # noqa: F401 -- re-exported for router imports
 
 # Routers
 from src.routers.auth import router as auth_router
