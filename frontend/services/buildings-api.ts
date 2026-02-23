@@ -110,12 +110,25 @@ export interface BuildingsQueryParams {
   min_churn?: number;
   max_churn?: number;
   churn_category?: string;
+  outreach_status?: string;
   lead_id?: string;
   search?: string;
   sort_by?: string;
   sort_dir?: string;
   limit?: number;
   offset?: number;
+}
+
+export interface OutreachEvent {
+  id: number;
+  bbl: string;
+  stage: string;
+  method: string | null;
+  outcome: string | null;
+  notes: string | null;
+  next_follow_up: string | null;
+  event_timestamp: string;
+  created_at: string;
 }
 
 export function fetchBuildings(params: BuildingsQueryParams = {}): Promise<BuildingsListResponse> {
@@ -149,4 +162,20 @@ export function fetchBuildingScoreHistory(bbl: string): Promise<ScoreHistoryEntr
 
 export function addBuildingToPipeline(bbl: string): Promise<{ bbl: string; status: string }> {
   return apiPost(`/api/v1/buildings/${bbl}/pipeline`);
+}
+
+export function fetchBuildingOutreachEvents(bbl: string): Promise<{ bbl: string; events: OutreachEvent[] }> {
+  return apiGet(`/api/v1/buildings/${bbl}/outreach-events`);
+}
+
+export function logBuildingOutreachEvent(
+  bbl: string,
+  event: { stage: string; method?: string; outcome?: string; notes?: string; next_follow_up?: string },
+): Promise<{ status: string }> {
+  const params = new URLSearchParams({ stage: event.stage });
+  if (event.method) params.set('method', event.method);
+  if (event.outcome) params.set('outcome', event.outcome);
+  if (event.notes) params.set('notes', event.notes);
+  if (event.next_follow_up) params.set('next_follow_up', event.next_follow_up);
+  return apiPost(`/api/v1/buildings/${bbl}/outreach-event?${params}`);
 }

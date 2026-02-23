@@ -18,7 +18,14 @@ import requests
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from src.worker import app as celery_app
+try:
+    from src.worker import app as celery_app
+except ImportError:
+    class _FakeCelery:
+        @staticmethod
+        def task(*args, **kwargs):
+            return lambda fn: fn
+    celery_app = _FakeCelery()
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +197,7 @@ def ingest_buildings_from_hpd(self):
 
         logger.info("Fetching PLUTO for geographic fields...")
         pluto_data = _socrata_fetch(DATASETS["pluto"], {
-            "$select": "bbl,cd,council,ct2010,ntacode,assesstot,unitsres,yearbuilt,bldgclass",
+            "$select": "bbl,cd,council,ct2010,assesstot,unitsres,yearbuilt,bldgclass",
             "$limit": 50000,
         })
         pluto_by_bbl = {str(p.get("bbl", "")).strip(): p for p in pluto_data if p.get("bbl")}
@@ -248,7 +255,7 @@ def ingest_buildings_from_hpd(self):
                     "council": pluto.get("council"),
                     "cd": pluto.get("cd"),
                     "census": pluto.get("ct2010"),
-                    "nta": pluto.get("ntacode"),
+                    "nta": None,
                 },
             )
             inserted += 1

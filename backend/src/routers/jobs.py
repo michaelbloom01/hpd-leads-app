@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.session import get_session
+from src.auth.auth import AuthUser, get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
@@ -54,37 +55,24 @@ async def get_job(job_id: int, session: AsyncSession = Depends(get_session)):
 
 
 @router.post("/{job_type}/start")
-async def start_job(job_type: str, session: AsyncSession = Depends(get_session)):
-    """Trigger a background ingestion job."""
-    from src.tasks.ingest import (
-        ingest_buildings_from_hpd, ingest_hpd_complaints,
-        ingest_acris_transactions, ingest_hpd_violations,
-        ingest_dob_permits, ingest_hpd_litigation,
-        ingest_emergency_repairs, ingest_aep_designations,
-        ingest_eviction_filings, ingest_energy_grades,
-        ingest_facade_inspections, ingest_pad_addresses,
+async def start_job(
+    job_type: str,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Trigger a background job. Runs in a thread (no Celery/Redis required)."""
+    valid_types = [
+        "buildings", "hpd_complaints", "acris", "hpd_violations",
+        "dob_permits", "hpd_litigation", "emergency_repairs", "aep",
+        "evictions", "energy", "facades", "pad", "scoring",
+    ]
+    if job_type not in valid_types:
+        raise HTTPException(400, f"Unknown job type: {job_type}. Valid: {valid_types}")
+
+    result = await session.execute(
+        text("""INSERT INTO ingestion_jobs (job_type, source, status, started_at, created_at, updated_at)
+                VALUES (:jt, :jt, 'running', now(), now(), now()) RETURNING id"""),
+        {"jt": job_type},
     )
-    from src.tasks.score import compute_churn_scores
-
-    task_map = {
-        "buildings": ingest_buildings_from_hpd,
-        "hpd_complaints": ingest_hpd_complaints,
-        "acris": ingest_acris_transactions,
-        "hpd_violations": ingest_hpd_violations,
-        "dob_permits": ingest_dob_permits,
-        "hpd_litigation": ingest_hpd_litigation,
-        "emergency_repairs": ingest_emergency_repairs,
-        "aep": ingest_aep_designations,
-        "evictions": ingest_eviction_filings,
-        "energy": ingest_energy_grades,
-        "facades": ingest_facade_inspections,
-        "pad": ingest_pad_addresses,
-        "scoring": compute_churn_scores,
-    }
-
-    task = task_map.get(job_type)
-    if not task:
-        raise HTTPException(400, f"Unknown job type: {job_type}. Valid: {list(task_map.keys())}")
-
-    task.delay()
-    return {"status": "queued", "job_type": job_type}
+    job_id = result.scalar_one()
+    return {"status": "queued", "job_type": job_type, "job_id": job_id}

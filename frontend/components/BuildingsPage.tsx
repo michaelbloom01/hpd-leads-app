@@ -162,6 +162,18 @@ const BuildingsPage: React.FC = () => {
           <option value="warm">Warm</option>
           <option value="stable">Stable</option>
         </select>
+        <select
+          onChange={e => handleFilterChange('outreach_status', e.target.value)}
+          className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+        >
+          <option value="">All Outreach</option>
+          <option value="in_pipeline">In Pipeline</option>
+          <option value="pipeline">Pipeline</option>
+          <option value="contacted">Contacted</option>
+          <option value="meeting">Meeting</option>
+          <option value="won">Won</option>
+          <option value="lost">Lost</option>
+        </select>
         <input
           type="number"
           placeholder="Min units"

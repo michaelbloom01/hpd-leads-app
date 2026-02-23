@@ -10,14 +10,20 @@ Usage in FastAPI:
 The engine is created lazily on first use. Connection pooling defaults
 are tuned for Railway's PG (max 25 connections).
 """
+import logging
 import os
 from functools import lru_cache
 from typing import AsyncGenerator
 
-_RAW_DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/hpd_leads",
-)
+logger = logging.getLogger(__name__)
+
+_RAW_DATABASE_URL = os.environ.get("DATABASE_URL", "")
+if not _RAW_DATABASE_URL:
+    _env = os.environ.get("ENVIRONMENT", "development")
+    if _env == "production":
+        raise RuntimeError("DATABASE_URL must be set in production")
+    _RAW_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/hpd_leads"
+    logger.info("DATABASE_URL not set; using localhost default for development")
 
 
 def _resolve_async_url(raw: str) -> str:
@@ -67,10 +73,7 @@ async def get_session() -> AsyncGenerator:
 
 def get_sync_url() -> str:
     """Return a psycopg-compatible sync URL for Alembic and migration scripts."""
-    url = os.environ.get(
-        "DATABASE_URL",
-        "postgresql+psycopg://postgres:postgres@localhost:5432/hpd_leads",
-    )
+    url = _RAW_DATABASE_URL
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql+psycopg://", 1)
     elif url.startswith("postgresql://") and "+" not in url.split("://")[0]:

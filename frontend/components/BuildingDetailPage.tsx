@@ -5,7 +5,10 @@ import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { fetchBuildingDetail, fetchBuildingTimeline, fetchBuildingScoreHistory, addBuildingToPipeline } from '../services/buildings-api';
+import {
+  fetchBuildingDetail, fetchBuildingTimeline, fetchBuildingScoreHistory,
+  addBuildingToPipeline, fetchBuildingOutreachEvents, logBuildingOutreachEvent,
+} from '../services/buildings-api';
 import { toast } from 'react-hot-toast';
 
 const signalLabels: Record<string, string> = {
@@ -50,6 +53,23 @@ const BuildingDetailPage: React.FC = () => {
     queryFn: () => fetchBuildingScoreHistory(bbl!),
     enabled: !!bbl,
   });
+
+  const { data: outreachData, refetch: refetchOutreach } = useQuery({
+    queryKey: ['building-outreach', bbl],
+    queryFn: () => fetchBuildingOutreachEvents(bbl!),
+    enabled: !!bbl,
+  });
+
+  const handleLogOutreach = async (stage: string) => {
+    if (!bbl) return;
+    try {
+      await logBuildingOutreachEvent(bbl, { stage, method: 'manual' });
+      toast.success(`Outreach logged: ${stage}`);
+      refetchOutreach();
+    } catch {
+      toast.error('Failed to log outreach');
+    }
+  };
 
   const handleAddToPipeline = async () => {
     if (!bbl) return;
@@ -176,6 +196,38 @@ const BuildingDetailPage: React.FC = () => {
           </ResponsiveContainer>
         </div>
       )}
+
+      {/* Outreach Pipeline */}
+      <div className="bg-white rounded-lg border border-gray-200 p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold text-gray-900">Outreach Pipeline</h2>
+          <div className="flex gap-2">
+            {['contacted', 'meeting', 'won', 'lost'].map(stage => (
+              <button
+                key={stage}
+                onClick={() => handleLogOutreach(stage)}
+                className="px-3 py-1 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 capitalize"
+              >
+                {stage}
+              </button>
+            ))}
+          </div>
+        </div>
+        {outreachData?.events && outreachData.events.length > 0 ? (
+          <div className="space-y-2 max-h-48 overflow-y-auto">
+            {outreachData.events.map((evt) => (
+              <div key={evt.id} className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0 text-sm">
+                <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-medium capitalize">{evt.stage}</span>
+                <span className="text-gray-500">{evt.method || '--'}</span>
+                <span className="text-gray-400">{evt.event_timestamp ? new Date(evt.event_timestamp).toLocaleDateString() : '--'}</span>
+                {evt.notes && <span className="text-gray-600 truncate">{evt.notes}</span>}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-gray-400 text-sm">No outreach events yet</div>
+        )}
+      </div>
 
       {/* Timeline */}
       {timeline && timeline.length > 0 && (

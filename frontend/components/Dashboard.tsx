@@ -138,6 +138,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
 
       if (healthResult.status === 'fulfilled') {
         setDataHealth(healthResult.value);
+      } else {
+        console.error('Failed to load data health:', healthResult.reason);
       }
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
@@ -733,7 +735,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
                 {dataHealth.last_refresh?.finished_at && ` · refreshed ${new Date(dataHealth.last_refresh.finished_at).toLocaleDateString()}`}
               </>
             ) : (
-              <>{(stats?.total_leads || 0).toLocaleString()} leads · Data health loading...</>
+              <>{(stats?.total_leads || 0).toLocaleString()} leads{loading ? ' · Data health loading...' : ''}</>
             )}
           </span>
         </div>

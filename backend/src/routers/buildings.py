@@ -26,6 +26,7 @@ async def list_buildings(
     min_churn: Optional[float] = None,
     max_churn: Optional[float] = None,
     churn_category: Optional[str] = None,
+    outreach_status: Optional[str] = None,
     lead_id: Optional[str] = None,
     search: Optional[str] = None,
     sort_by: str = "churn_score",
@@ -61,6 +62,12 @@ async def list_buildings(
     if lead_id:
         wheres.append("EXISTS (SELECT 1 FROM building_management bm WHERE bm.bbl = b.bbl AND bm.lead_id = :lead_id AND bm.is_current)")
         params["lead_id"] = lead_id
+    if outreach_status:
+        if outreach_status == "in_pipeline":
+            wheres.append("b.outreach_status != 'none'")
+        else:
+            wheres.append("b.outreach_status = :ostatus")
+            params["ostatus"] = outreach_status
     if search:
         wheres.append("(b.address ILIKE :search OR b.bbl ILIKE :search)")
         params["search"] = f"%{search}%"
@@ -220,3 +227,98 @@ async def add_to_pipeline(
         {"bbl": bbl},
     )
     return {"bbl": bbl, "status": "added_to_pipeline"}
+
+
+@router.patch("/{bbl}/pipeline")
+async def update_pipeline_status(
+    bbl: str,
+    outreach_status: str,
+    outreach_priority: Optional[int] = None,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Update a building's outreach status and priority."""
+    valid = {"none", "pipeline", "contacted", "meeting", "won", "lost"}
+    if outreach_status not in valid:
+        raise HTTPException(400, f"Invalid outreach_status. Must be one of: {', '.join(valid)}")
+    result = await session.execute(
+        text("SELECT 1 FROM buildings WHERE bbl = :bbl"), {"bbl": bbl}
+    )
+    if not result.first():
+        raise HTTPException(404, "Building not found")
+
+    sets = ["outreach_status = :os", "updated_at = now()"]
+    params: dict = {"bbl": bbl, "os": outreach_status}
+    if outreach_priority is not None:
+        sets.append("outreach_priority = :op")
+        params["op"] = outreach_priority
+    await session.execute(
+        text(f"UPDATE buildings SET {', '.join(sets)} WHERE bbl = :bbl"), params
+    )
+    return {"bbl": bbl, "outreach_status": outreach_status}
+
+
+@router.post("/{bbl}/outreach-event")
+async def log_building_outreach_event(
+    bbl: str,
+    stage: str,
+    method: Optional[str] = None,
+    outcome: Optional[str] = None,
+    notes: Optional[str] = None,
+    next_follow_up: Optional[str] = None,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Log an outreach event for a building."""
+    from datetime import datetime, timezone
+    exists = (await session.execute(
+        text("SELECT 1 FROM buildings WHERE bbl = :bbl"), {"bbl": bbl}
+    )).first()
+    if not exists:
+        raise HTTPException(404, "Building not found")
+
+    await session.execute(
+        text("""
+            INSERT INTO outreach_events (bbl, stage, method, outcome, notes, next_follow_up, event_timestamp, created_at, updated_at)
+            VALUES (:bbl, :stage, :method, :outcome, :notes, :nfu, :ts, NOW(), NOW())
+        """),
+        {
+            "bbl": bbl, "stage": stage, "method": method,
+            "outcome": outcome, "notes": notes, "nfu": next_follow_up,
+            "ts": datetime.now(timezone.utc),
+        },
+    )
+
+    update_sql = "UPDATE buildings SET outreach_status = :os, updated_at = now()"
+    update_params: dict = {"bbl": bbl, "os": stage}
+    if next_follow_up:
+        update_sql += ", next_outreach_date = :nod"
+        update_params["nod"] = next_follow_up
+    update_sql += " WHERE bbl = :bbl"
+    await session.execute(text(update_sql), update_params)
+
+    return {"status": "success", "bbl": bbl, "stage": stage}
+
+
+@router.get("/{bbl}/outreach-events")
+async def get_building_outreach_events(
+    bbl: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Get outreach event history for a building."""
+    result = await session.execute(
+        text("""
+            SELECT id, bbl, stage, method, outcome, notes, next_follow_up,
+                   event_timestamp, created_at
+            FROM outreach_events
+            WHERE bbl = :bbl
+            ORDER BY event_timestamp DESC
+        """),
+        {"bbl": bbl},
+    )
+    events = [dict(r._mapping) for r in result]
+    for e in events:
+        for k in ("event_timestamp", "created_at", "next_follow_up"):
+            if e.get(k) and hasattr(e[k], "isoformat"):
+                e[k] = e[k].isoformat()
+    return {"bbl": bbl, "events": events}

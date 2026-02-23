@@ -18,7 +18,14 @@ import networkx as nx
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from src.worker import app as celery_app
+try:
+    from src.worker import app as celery_app
+except ImportError:
+    class _FakeCelery:
+        @staticmethod
+        def task(*args, **kwargs):
+            return lambda fn: fn
+    celery_app = _FakeCelery()
 
 logger = logging.getLogger(__name__)
 
