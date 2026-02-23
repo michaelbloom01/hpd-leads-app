@@ -22,7 +22,7 @@ async def data_health(session: AsyncSession = Depends(get_session)):
     counts = await session.execute(text("""
         SELECT
             (SELECT COUNT(*) FROM leads) AS total_leads,
-            (SELECT COUNT(*) FROM buildings WHERE registration_id IS NOT NULL) AS total_buildings_registered,
+            (SELECT COUNT(*) FROM buildings) AS total_buildings_registered,
             (SELECT COUNT(DISTINCT source_name) FROM data_quality_log) AS hpd_source_count
     """))
     row = dict(counts.first()._mapping)
@@ -38,7 +38,7 @@ async def data_health(session: AsyncSession = Depends(get_session)):
     refresh_row = await session.execute(text("""
         SELECT id, status, started_at, finished_at, succeeded, failed
         FROM ingestion_jobs
-        WHERE job_type = 'buildings'
+        WHERE source IN ('hpd_buildings', 'buildings') OR job_type IN ('buildings', 'ingest')
         ORDER BY started_at DESC NULLS LAST
         LIMIT 1
     """))
