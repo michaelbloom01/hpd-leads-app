@@ -200,17 +200,13 @@ def run_buildings(session):
 
     inserted = matched = rejected = 0
     buildings_seen = set()
-    for reg in registrations:
-        bbl = compute_bbl(reg.get("boroid"), reg.get("block"), reg.get("lot"))
-        if not bbl or bbl in buildings_seen:
-            if not bbl:
-                rejected += 1
-            continue
-        buildings_seen.add(bbl)
-        matched += 1
-        pluto = pluto_by_bbl.get(bbl, {})
-        address = f"{reg.get('housenumber', '')} {reg.get('streetname', '')}".strip()
+    building_batch = []
+    contact_batch = []
+    BATCH_SIZE = 5000
 
+    def flush_buildings(batch):
+        if not batch:
+            return
         session.execute(
             text("""INSERT INTO buildings (
                         bbl, bin, address, borough, block, lot, zip_code,
@@ -225,48 +221,78 @@ def run_buildings(session):
                         address = EXCLUDED.address, assessed_value = EXCLUDED.assessed_value,
                         council_district = EXCLUDED.council_district,
                         community_board = EXCLUDED.community_board, updated_at = now()"""),
-            {"bbl": bbl, "bin": reg.get("buildingid"),
-             "address": address, "borough": reg.get("boro"),
-             "block": reg.get("block"), "lot": reg.get("lot"), "zip": reg.get("zip"),
-             "bldg_class": pluto.get("bldgclass"),
-             "units": int(pluto["unitsres"]) if pluto.get("unitsres") else None,
-             "year_built": int(pluto["yearbuilt"]) if pluto.get("yearbuilt") else None,
-             "assessed_value": float(pluto["assesstot"]) if pluto.get("assesstot") else None,
-             "council": pluto.get("council"), "cd": pluto.get("cd"),
-             "census": pluto.get("ct2010"), "nta": None},
+            batch,
         )
+
+    def flush_contacts(batch):
+        if not batch:
+            return
+        try:
+            session.execute(
+                text("""INSERT INTO building_contacts (
+                        bbl, registration_contact_id, registration_id,
+                        contact_type, description, corporation_name,
+                        first_name, last_name, title,
+                        business_address, business_city, business_state, business_zip,
+                        created_at, updated_at
+                    ) VALUES (
+                        :bbl, :contact_id, :reg_id, :type, :desc, :corp,
+                        :first, :last, :title, :addr, :city, :state, :zip, now(), now()
+                    ) ON CONFLICT DO NOTHING"""),
+                batch,
+            )
+        except Exception as e:
+            session.rollback()
+            logger.warning(f"Contact batch insert failed, skipping {len(batch)} rows: {e}")
+
+    for reg in registrations:
+        bbl = compute_bbl(reg.get("boroid"), reg.get("block"), reg.get("lot"))
+        if not bbl or bbl in buildings_seen:
+            if not bbl:
+                rejected += 1
+            continue
+        buildings_seen.add(bbl)
+        matched += 1
+        pluto = pluto_by_bbl.get(bbl, {})
+        address = f"{reg.get('housenumber', '')} {reg.get('streetname', '')}".strip()
+
+        building_batch.append({
+            "bbl": bbl, "bin": reg.get("buildingid"),
+            "address": address, "borough": reg.get("boro"),
+            "block": reg.get("block"), "lot": reg.get("lot"), "zip": reg.get("zip"),
+            "bldg_class": pluto.get("bldgclass"),
+            "units": int(pluto["unitsres"]) if pluto.get("unitsres") else None,
+            "year_built": int(pluto["yearbuilt"]) if pluto.get("yearbuilt") else None,
+            "assessed_value": float(pluto["assesstot"]) if pluto.get("assesstot") else None,
+            "council": pluto.get("council"), "cd": pluto.get("cd"),
+            "census": pluto.get("ct2010"), "nta": None,
+        })
         inserted += 1
 
         reg_id = reg.get("registrationid")
         for c in contacts_by_reg.get(reg_id, []):
-            try:
-                session.execute(
-                    text("""INSERT INTO building_contacts (
-                            bbl, registration_contact_id, registration_id,
-                            contact_type, description, corporation_name,
-                            first_name, last_name, title,
-                            business_address, business_city, business_state, business_zip,
-                            created_at, updated_at
-                        ) VALUES (
-                            :bbl, :contact_id, :reg_id, :type, :desc, :corp,
-                            :first, :last, :title, :addr, :city, :state, :zip, now(), now()
-                        ) ON CONFLICT DO NOTHING"""),
-                {"bbl": bbl, "contact_id": c.get("registrationcontactid"),
-                 "reg_id": reg_id, "type": c.get("type"),
-                 "desc": c.get("contactdescription"), "corp": c.get("corporationname"),
-                 "first": c.get("firstname"), "last": c.get("lastname"),
-                 "title": c.get("title"),
-                 "addr": f"{c.get('businesshousenumber', '')} {c.get('businessstreetname', '')}".strip(),
-                 "city": c.get("businesscity"), "state": c.get("businessstate"),
-                 "zip": c.get("businesszip")},
-                )
-            except Exception:
-                session.rollback()
-                session.execute(text("SELECT 1"))  # reset session state
+            contact_batch.append({
+                "bbl": bbl, "contact_id": c.get("registrationcontactid"),
+                "reg_id": reg_id, "type": c.get("type"),
+                "desc": c.get("contactdescription"), "corp": c.get("corporationname"),
+                "first": c.get("firstname"), "last": c.get("lastname"),
+                "title": c.get("title"),
+                "addr": f"{c.get('businesshousenumber', '')} {c.get('businessstreetname', '')}".strip(),
+                "city": c.get("businesscity"), "state": c.get("businessstate"),
+                "zip": c.get("businesszip"),
+            })
 
-        if inserted % 5000 == 0:
+        if len(building_batch) >= BATCH_SIZE:
+            flush_buildings(building_batch)
+            flush_contacts(contact_batch)
             session.commit()
             logger.info(f"  Buildings progress: {inserted}")
+            building_batch = []
+            contact_batch = []
+
+    # Flush remaining
+    flush_buildings(building_batch)
+    flush_contacts(contact_batch)
 
     session.commit()
     log_quality(session, "hpd_buildings", len(registrations), matched, rejected, inserted)
@@ -276,11 +302,22 @@ def run_buildings(session):
     return inserted
 
 
+def load_known_bbls(session) -> set:
+    """Load all known BBLs into memory to avoid per-row DB lookups."""
+    rows = session.execute(text("SELECT bbl FROM buildings")).fetchall()
+    return {r[0] for r in rows}
+
+
 def run_signal_task(session, source, dataset_key, select, insert_sql, row_mapper,
-                    order="", use_bbl=True, needs_pad=False):
+                    order="", use_bbl=True, needs_pad=False, known_bbls=None):
     logger.info(f"=== {source} ===")
     job_id = create_job(session, source)
     session.commit()
+
+    if known_bbls is None:
+        logger.info(f"  Loading known BBLs for {source}...")
+        known_bbls = load_known_bbls(session)
+    logger.info(f"  {len(known_bbls):,} known BBLs")
 
     pad_bins = {}
     if needs_pad:
@@ -292,6 +329,9 @@ def run_signal_task(session, source, dataset_key, select, insert_sql, row_mapper
     records = socrata_fetch(DATASETS[dataset_key], params, source)
 
     inserted = matched = rejected = 0
+    batch = []
+    BATCH_SIZE = 5000
+
     for r in records:
         if use_bbl:
             bbl = compute_bbl(r.get("boroughid", r.get("boroid")), r.get("block"), r.get("lot"))
@@ -306,19 +346,32 @@ def run_signal_task(session, source, dataset_key, select, insert_sql, row_mapper
         if not bbl:
             rejected += 1
             continue
-        exists = session.execute(text("SELECT 1 FROM buildings WHERE bbl=:bbl"), {"bbl": bbl}).first()
-        if not exists:
+        if bbl not in known_bbls:
             rejected += 1
             continue
         matched += 1
 
-        values = row_mapper(r, bbl)
-        session.execute(text(insert_sql), values)
-        inserted += 1
-        if inserted % 5000 == 0:
-            session.commit()
+        batch.append(row_mapper(r, bbl))
+        if len(batch) >= BATCH_SIZE:
+            try:
+                session.execute(text(insert_sql), batch)
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                logger.warning(f"{source} batch insert failed: {e}")
+            inserted += len(batch)
+            logger.info(f"  {source} progress: {inserted}")
+            batch = []
 
-    session.commit()
+    if batch:
+        try:
+            session.execute(text(insert_sql), batch)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.warning(f"{source} final batch failed: {e}")
+        inserted += len(batch)
+
     log_quality(session, source, len(records), matched, rejected, inserted)
     finish_job(session, job_id, "completed", len(records), inserted, rejected)
     session.commit()
@@ -326,10 +379,13 @@ def run_signal_task(session, source, dataset_key, select, insert_sql, row_mapper
     return inserted
 
 
-def run_complaints(session):
+def run_complaints(session, known_bbls=None):
     logger.info("=== HPD Complaints ===")
     job_id = create_job(session, "hpd_complaints")
     session.commit()
+
+    if known_bbls is None:
+        known_bbls = load_known_bbls(session)
 
     records = socrata_fetch(DATASETS["hpd_complaints"], {
         "$select": "complaint_id,building_id,borough,block,lot,complaint_status,"
@@ -341,37 +397,52 @@ def run_complaints(session):
 
     boro_map = {"MANHATTAN": "1", "BRONX": "2", "BROOKLYN": "3", "QUEENS": "4", "STATEN ISLAND": "5"}
     inserted = matched = rejected = 0
+    batch = []
+    BATCH_SIZE = 5000
+
     for r in records:
         boro = r.get("borough", "")
         boro_id = boro_map.get(boro.upper(), r.get("borough"))
         bbl = compute_bbl(boro_id, r.get("block"), r.get("lot"))
-        if not bbl:
-            rejected += 1
-            continue
-        exists = session.execute(text("SELECT 1 FROM buildings WHERE bbl=:bbl"), {"bbl": bbl}).first()
-        if not exists:
+        if not bbl or bbl not in known_bbls:
             rejected += 1
             continue
         matched += 1
+        batch.append({
+            "cid": r.get("complaint_id"), "bbl": bbl, "bid": r.get("building_id"),
+            "status": r.get("complaint_status"),
+            "status_date": (r.get("complaint_status_date") or "")[:10] or None,
+            "major": r.get("major_category"), "minor": r.get("minor_category"),
+            "received": (r.get("received_date") or "")[:10] or None,
+        })
+        if len(batch) >= BATCH_SIZE:
+            try:
+                session.execute(
+                    text("""INSERT INTO hpd_complaints (complaint_id,bbl,building_id,status,status_date,
+                       major_category,minor_category,received_date,created_at,updated_at)
+                       VALUES(:cid,:bbl,:bid,:status,:status_date,:major,:minor,:received,now(),now())
+                       ON CONFLICT(complaint_id) DO NOTHING"""), batch)
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                logger.warning(f"Complaints batch failed: {e}")
+            inserted += len(batch)
+            logger.info(f"  Complaints progress: {inserted}")
+            batch = []
+
+    if batch:
         try:
             session.execute(
                 text("""INSERT INTO hpd_complaints (complaint_id,bbl,building_id,status,status_date,
                    major_category,minor_category,received_date,created_at,updated_at)
                    VALUES(:cid,:bbl,:bid,:status,:status_date,:major,:minor,:received,now(),now())
-                   ON CONFLICT(complaint_id) DO NOTHING"""),
-                {"cid": r.get("complaint_id"), "bbl": bbl, "bid": r.get("building_id"),
-                 "status": r.get("complaint_status"),
-                 "status_date": (r.get("complaint_status_date") or "")[:10] or None,
-                 "major": r.get("major_category"), "minor": r.get("minor_category"),
-                 "received": (r.get("received_date") or "")[:10] or None},
-            )
-            inserted += 1
-        except Exception:
-            session.rollback()
-        if inserted % 5000 == 0 and inserted > 0:
+                   ON CONFLICT(complaint_id) DO NOTHING"""), batch)
             session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.warning(f"Complaints final batch failed: {e}")
+        inserted += len(batch)
 
-    session.commit()
     log_quality(session, "hpd_complaints", len(records), matched, rejected, inserted)
     finish_job(session, job_id, "completed", len(records), inserted, rejected)
     session.commit()
@@ -379,10 +450,13 @@ def run_complaints(session):
     return inserted
 
 
-def run_violations(session):
+def run_violations(session, known_bbls=None):
     logger.info("=== HPD Violations ===")
     job_id = create_job(session, "hpd_violations")
     session.commit()
+
+    if known_bbls is None:
+        known_bbls = load_known_bbls(session)
 
     records = socrata_fetch(DATASETS["hpd_violations"], {
         "$select": "violationid,boroid,block,lot,buildingid,class,"
@@ -394,38 +468,54 @@ def run_violations(session):
     }, "hpd_violations")
 
     inserted = matched = rejected = 0
+    batch = []
+    BATCH_SIZE = 5000
+
     for r in records:
         bbl = compute_bbl(r.get("boroid"), r.get("block"), r.get("lot"))
-        if not bbl:
-            rejected += 1
-            continue
-        exists = session.execute(text("SELECT 1 FROM buildings WHERE bbl=:bbl"), {"bbl": bbl}).first()
-        if not exists:
+        if not bbl or bbl not in known_bbls:
             rejected += 1
             continue
         matched += 1
+        batch.append({
+            "vid": r.get("violationid"), "bbl": bbl, "bid": r.get("buildingid"),
+            "cls": r.get("class"), "insp": (r.get("inspectiondate") or "")[:10] or None,
+            "approved": (r.get("approveddate") or "")[:10] or None,
+            "certify": (r.get("originalcertifybydate") or "")[:10] or None,
+            "correct": (r.get("originalcorrectbydate") or "")[:10] or None,
+            "desc": r.get("novdescription"), "status": r.get("currentstatus"),
+            "status_date": (r.get("currentstatusdate") or "")[:10] or None,
+        })
+        if len(batch) >= BATCH_SIZE:
+            try:
+                session.execute(
+                    text("""INSERT INTO hpd_violations (violation_id,bbl,building_id,violation_class,
+                       inspection_date,approved_date,original_certify_by_date,original_correct_by_date,
+                       nov_description,current_status,current_status_date,created_at,updated_at)
+                       VALUES(:vid,:bbl,:bid,:cls,:insp,:approved,:certify,:correct,:desc,:status,:status_date,now(),now())
+                       ON CONFLICT(violation_id) DO NOTHING"""), batch)
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                logger.warning(f"Violations batch failed: {e}")
+            inserted += len(batch)
+            logger.info(f"  Violations progress: {inserted}")
+            batch = []
+
+    if batch:
         try:
             session.execute(
                 text("""INSERT INTO hpd_violations (violation_id,bbl,building_id,violation_class,
                    inspection_date,approved_date,original_certify_by_date,original_correct_by_date,
                    nov_description,current_status,current_status_date,created_at,updated_at)
                    VALUES(:vid,:bbl,:bid,:cls,:insp,:approved,:certify,:correct,:desc,:status,:status_date,now(),now())
-                   ON CONFLICT(violation_id) DO NOTHING"""),
-                {"vid": r.get("violationid"), "bbl": bbl, "bid": r.get("buildingid"),
-                 "cls": r.get("class"), "insp": (r.get("inspectiondate") or "")[:10] or None,
-                 "approved": (r.get("approveddate") or "")[:10] or None,
-                 "certify": (r.get("originalcertifybydate") or "")[:10] or None,
-                 "correct": (r.get("originalcorrectbydate") or "")[:10] or None,
-                 "desc": r.get("novdescription"), "status": r.get("currentstatus"),
-                 "status_date": (r.get("currentstatusdate") or "")[:10] or None},
-            )
-            inserted += 1
-        except Exception:
-            session.rollback()
-        if inserted % 5000 == 0 and inserted > 0:
+                   ON CONFLICT(violation_id) DO NOTHING"""), batch)
             session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.warning(f"Violations final batch failed: {e}")
+        inserted += len(batch)
 
-    session.commit()
     log_quality(session, "hpd_violations", len(records), matched, rejected, inserted)
     finish_job(session, job_id, "completed", len(records), inserted, rejected)
     session.commit()
@@ -433,7 +523,7 @@ def run_violations(session):
     return inserted
 
 
-def run_litigation(session):
+def run_litigation(session, known_bbls=None):
     return run_signal_task(
         session, "hpd_litigation", "hpd_litigation",
         "litigationid,boroid,block,lot,buildingid,casetype,casestatus,caseopendate,caseclosedate,"
@@ -449,6 +539,7 @@ def run_litigation(session):
                         "finding": r.get("findingofharassment"),
                         "penalty": float(r["penalty"]) if r.get("penalty") else None},
         order="caseopendate DESC",
+        known_bbls=known_bbls,
     )
 
 
@@ -471,6 +562,9 @@ def main():
         "litigation": run_litigation,
     }
 
+    # Load known BBLs once after buildings are available, reuse for signal tasks
+    known_bbls = None
+
     for task_name in tasks:
         func = task_funcs.get(task_name)
         if not func:
@@ -478,7 +572,17 @@ def main():
             continue
         start = time.time()
         try:
-            count = func(session)
+            # After buildings are populated, load BBLs once for all signal tasks
+            if task_name in ("complaints", "violations", "litigation") and known_bbls is None:
+                logger.info("Loading known BBLs for signal tasks...")
+                known_bbls = load_known_bbls(session)
+                logger.info(f"  {len(known_bbls):,} BBLs loaded")
+
+            if task_name in ("complaints", "violations", "litigation"):
+                count = func(session, known_bbls=known_bbls)
+            else:
+                count = func(session)
+
             elapsed = time.time() - start
             results[task_name] = {"status": "ok", "inserted": count, "elapsed_s": round(elapsed, 1)}
             logger.info(f"{task_name}: completed in {elapsed:.1f}s")
