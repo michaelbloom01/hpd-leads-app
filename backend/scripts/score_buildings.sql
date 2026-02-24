@@ -160,9 +160,10 @@ final_scores AS (
 )
 UPDATE buildings b SET
     churn_score = ROUND(fs.churn_score::numeric, 1),
+    -- Recalibrated thresholds for current signal coverage (3-4 active signals)
     churn_category = CASE
-        WHEN fs.churn_score >= 70 THEN 'hot'
-        WHEN fs.churn_score >= 40 THEN 'warm'
+        WHEN fs.churn_score >= 35 THEN 'hot'
+        WHEN fs.churn_score >= 15 THEN 'warm'
         ELSE 'stable'
     END,
     key_signal = CASE
@@ -178,12 +179,45 @@ UPDATE buildings b SET
         WHEN fs.building_size_contrib > 0 THEN 'building_size'
         ELSE 'none'
     END,
+    churn_breakdown = jsonb_build_object(
+        'complaint_spike', jsonb_build_object(
+            'raw', rs.complaint_spike_raw, 'weight', 17, 'effective_weight', 20.0,
+            'contribution', fs.complaint_spike_contrib),
+        'violation_trend', jsonb_build_object(
+            'raw', rs.violation_trend_raw, 'weight', 12, 'effective_weight', 14.118,
+            'contribution', fs.violation_trend_contrib),
+        'hpd_litigation', jsonb_build_object(
+            'raw', rs.hpd_litigation_raw, 'weight', 9, 'effective_weight', 10.588,
+            'contribution', fs.hpd_litigation_contrib),
+        'building_size', jsonb_build_object(
+            'raw', rs.building_size_raw, 'weight', 5, 'effective_weight', 5.882,
+            'contribution', fs.building_size_contrib),
+        'ownership_change', jsonb_build_object(
+            'raw', NULL, 'weight', 20, 'effective_weight', 23.529,
+            'contribution', 0.0),
+        'dob_permits', jsonb_build_object(
+            'raw', NULL, 'weight', 8, 'effective_weight', 9.412,
+            'contribution', 0.0),
+        'emergency_repairs', jsonb_build_object(
+            'raw', NULL, 'weight', 5, 'effective_weight', 5.882,
+            'contribution', 0.0),
+        'eviction_activity', jsonb_build_object(
+            'raw', NULL, 'weight', 9, 'effective_weight', 10.588,
+            'contribution', 0.0),
+        'energy_grade_drop', jsonb_build_object(
+            'raw', NULL, 'weight', 8, 'effective_weight', 0,
+            'contribution', 0.0),
+        'facade_status', jsonb_build_object(
+            'raw', NULL, 'weight', 7, 'effective_weight', 0,
+            'contribution', 0.0)
+    ),
     signals_available = 3 + CASE WHEN COALESCE(b.unit_count, 0) > 0 THEN 1 ELSE 0 END,
     coverage_ratio = (3.0 + CASE WHEN COALESCE(b.unit_count, 0) > 0 THEN 1.0 ELSE 0.0 END) / 10.0,
     scoring_config_id = (SELECT id FROM scoring_configs WHERE is_active = true LIMIT 1),
     last_scored_at = now(),
     updated_at = now()
 FROM final_scores fs
+JOIN raw_signals rs ON rs.bbl = fs.bbl
 WHERE b.bbl = fs.bbl;
 
 -- ── 4. Check score distribution ──────────────────────────────

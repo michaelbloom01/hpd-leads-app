@@ -108,7 +108,7 @@ const BuildingDetailPage: React.FC = () => {
         </div>
         <div className="flex items-center gap-3">
           {building.churn_score !== null && (
-            <div className={`text-3xl font-bold ${building.churn_score >= 70 ? 'text-red-600' : building.churn_score >= 40 ? 'text-amber-600' : 'text-green-600'}`}>
+            <div className={`text-3xl font-bold ${building.churn_score >= 35 ? 'text-red-600' : building.churn_score >= 15 ? 'text-amber-600' : 'text-green-600'}`}>
               {building.churn_score.toFixed(1)}
             </div>
           )}

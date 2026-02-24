@@ -27,13 +27,20 @@ async def data_health(session: AsyncSession = Depends(get_session)):
     """))
     row = dict(counts.first()._mapping)
 
-    total_buildings = (await session.execute(
-        text("SELECT COUNT(*) FROM buildings")
+    # Buildings with at least one signal (complaint or violation data)
+    buildings_with_signals = (await session.execute(
+        text("""
+            SELECT COUNT(DISTINCT b.bbl) FROM buildings b
+            WHERE EXISTS (SELECT 1 FROM hpd_complaints c WHERE c.bbl = b.bbl)
+               OR EXISTS (SELECT 1 FROM hpd_violations v WHERE v.bbl = b.bbl)
+        """)
     )).scalar() or 0
 
+    total_buildings = row["total_buildings_registered"] or 0
+
     coverage_pct = None
-    if total_buildings > 0 and row["total_buildings_registered"]:
-        coverage_pct = round(row["total_buildings_registered"] / total_buildings * 100, 1)
+    if total_buildings > 0:
+        coverage_pct = round(buildings_with_signals / total_buildings * 100, 1)
 
     refresh_row = await session.execute(text("""
         SELECT id, status, started_at, finished_at, succeeded, failed
@@ -165,13 +172,27 @@ async def building_coverage(session: AsyncSession = Depends(get_session)):
     }
     total = (await session.execute(text("SELECT COUNT(*) FROM buildings"))).scalar() or 0
     coverage: dict = {"total_buildings": total}
+
+    # Check which tables actually exist
+    existing_tables = set()
+    try:
+        result = await session.execute(text(
+            "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+        ))
+        existing_tables = {r[0] for r in result}
+    except Exception:
+        pass
+
     for key, table in signal_tables.items():
+        if table not in existing_tables:
+            coverage[key] = None
+            continue
         try:
             val = (await session.execute(
                 text(f"SELECT COUNT(DISTINCT bbl) FROM {table}")
             )).scalar()
             coverage[key] = val or 0
         except Exception:
-            coverage[key] = 0
+            coverage[key] = None
             await session.rollback()
     return coverage

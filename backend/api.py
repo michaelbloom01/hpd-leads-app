@@ -37,18 +37,24 @@ from src.routers.quality import router as quality_router
 from src.routers.alerts import router as alerts_router
 from src.routers.export_v1 import router as export_v1_router
 
-# Legacy routers that still use SQLite — load conditionally
+# Legacy SQLite routers: only load when DATABASE_URL is absent (local dev with SQLite).
+# On Railway (PostgreSQL), these routers call get_database() which hits a nonexistent
+# SQLite file and can hang or error, breaking enrichment and pipeline endpoints.
 _legacy_routers = []
-try:
-    from src.routers.enrichment import router as enrichment_router
-    _legacy_routers.append(enrichment_router)
-except Exception:
-    enrichment_router = None
-try:
-    from src.routers.pipeline import router as pipeline_router
-    _legacy_routers.append(pipeline_router)
-except Exception:
-    pipeline_router = None
+_has_pg = bool(os.environ.get("DATABASE_URL"))
+if not _has_pg:
+    try:
+        from src.routers.enrichment import router as enrichment_router
+        _legacy_routers.append(enrichment_router)
+    except Exception:
+        enrichment_router = None
+    try:
+        from src.routers.pipeline import router as pipeline_router
+        _legacy_routers.append(pipeline_router)
+    except Exception:
+        pipeline_router = None
+
+# Agent router uses PostgreSQL — always load
 try:
     from src.routers.agent import router as agent_router
     _legacy_routers.append(agent_router)

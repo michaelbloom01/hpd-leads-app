@@ -40,7 +40,7 @@ const columns = [
     cell: info => {
       const v = info.getValue();
       if (v === null || v === undefined) return '--';
-      const color = v >= 70 ? 'text-red-600' : v >= 40 ? 'text-amber-600' : 'text-green-600';
+      const color = v >= 35 ? 'text-red-600' : v >= 15 ? 'text-amber-600' : 'text-green-600';
       return <span className={`font-semibold ${color}`}>{v.toFixed(1)}</span>;
     },
   }),

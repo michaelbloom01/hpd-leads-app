@@ -1,8 +1,9 @@
-"""Lead CRUD routes — list, get, update, outreach events.
+"""Lead CRUD routes — list, get, update, outreach events, enrichment.
 
 Migrated to PostgreSQL (AsyncSession). The PE Searcher persona uses these
 endpoints to evaluate PM companies as acquisition targets.
 """
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -380,6 +381,191 @@ async def get_outreach_attempts(
             d["timestamp"] = d["timestamp"].isoformat()
         events.append(d)
     return events
+
+
+@router.post("/leads/{lead_id}/enrich-all")
+async def enrich_lead_all(
+    lead_id: str,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """PostgreSQL-native lead enrichment: multi-source contacts, web scrape, AI summary."""
+    row_result = await session.execute(
+        text("SELECT * FROM leads WHERE lead_id = :lid"), {"lid": lead_id}
+    )
+    row = row_result.first()
+    if not row:
+        raise HTTPException(404, "Lead not found")
+    lead_data = dict(row._mapping)
+
+    company_name = lead_data.get("company_name") or lead_data.get("agent_name") or lead_data.get("owner_name") or ""
+    boro = lead_data.get("boro") or lead_data.get("primary_borough") or ""
+    location = f"{boro}, New York" if boro else "New York, NY"
+    errors: list[str] = []
+    owner_names: list[str] = []
+    website_scraped = False
+    ai_generated = False
+    ai_description = None
+    phones_found = 0
+    emails_found = 0
+    phone = lead_data.get("phone")
+    email = lead_data.get("email")
+    website = lead_data.get("website")
+    enrichment_sources = lead_data.get("enrichment_sources") or []
+    owner_principal = lead_data.get("owner_principal")
+    dos_id = lead_data.get("dos_id")
+    dos_status = lead_data.get("dos_status")
+    business_summary = lead_data.get("business_summary")
+
+    # 1) Multi-source contact enrichment
+    try:
+        from src.enrich.contact_sources import MultiSourceEnricher
+        ms = MultiSourceEnricher()
+        import asyncio
+        result = await asyncio.to_thread(
+            ms.enrich,
+            lead_id=lead_id,
+            company_name=company_name,
+            website=website,
+            location=location,
+            address=lead_data.get("address"),
+            contacts=None,
+        )
+        phones_found = len(result.phones or [])
+        emails_found = len(result.emails or [])
+        if result.phones and not phone:
+            best = result.best_phone()
+            if best:
+                phone = best.value
+        if result.emails and not email:
+            best = result.best_email()
+            if best:
+                email = best.value
+        if result.website and not website:
+            website = result.website
+        if result.dos_registered_agent and not owner_principal:
+            owner_principal = result.dos_registered_agent
+        if result.dos_id:
+            dos_id = result.dos_id
+            dos_status = result.dos_entity_type or dos_status
+        if result.sources_succeeded:
+            src_set = set(enrichment_sources)
+            for s in result.sources_succeeded:
+                src_set.add(s)
+            enrichment_sources = list(src_set)
+        if result.errors:
+            errors.extend(result.errors)
+    except Exception as e:
+        errors.append(f"contacts: {e}")
+        logger.warning(f"Enrichment contacts failed for {lead_id}: {e}")
+
+    # 2) Website research / scrape
+    try:
+        from src.enrich.web_crawl import WebCrawler
+        import asyncio
+        crawler = WebCrawler()
+        if not website:
+            found = await asyncio.to_thread(
+                crawler.find_website, f"{company_name} property management NYC"
+            )
+            if found:
+                website = found
+        if website:
+            scrape_data = await asyncio.to_thread(
+                crawler.deep_scrape, website, company_name
+            )
+            website_scraped = True
+            owner_names = scrape_data.get("owner_names", []) or []
+            if scrape_data.get("phones") and not phone:
+                phone = scrape_data["phones"][0]
+            if scrape_data.get("emails") and not email:
+                email = scrape_data["emails"][0]
+    except Exception as e:
+        errors.append(f"research: {e}")
+        logger.warning(f"Enrichment web research failed for {lead_id}: {e}")
+
+    # 3) AI summary
+    try:
+        from src.enrich.ai_summary import generate_company_description
+        import asyncio
+        portfolio_size = lead_data.get("portfolio_size") or 0
+        total_units = lead_data.get("total_units") or 0
+        boros = lead_data.get("boros")
+        desc, ai_err = await asyncio.to_thread(
+            generate_company_description,
+            company_name=company_name,
+            portfolio_size=portfolio_size,
+            total_units=total_units,
+            boroughs=boros,
+            building_types=None,
+            owner_names=owner_names or ([owner_principal] if owner_principal else None),
+        )
+        if desc:
+            ai_generated = True
+            ai_description = desc
+            business_summary = desc
+        elif ai_err:
+            ai_err_l = str(ai_err).lower()
+            if "api key" not in ai_err_l and "not configured" not in ai_err_l:
+                errors.append(f"ai_summary: {ai_err}")
+    except Exception as e:
+        errors.append(f"ai_summary: {e}")
+        logger.warning(f"Enrichment AI summary failed for {lead_id}: {e}")
+
+    # Compute enrichment status
+    has_contact = bool(phone or email)
+    has_website = bool(website)
+    old_status = lead_data.get("enrichment_status") or ""
+    if has_contact and has_website:
+        enrichment_status = "complete"
+    elif has_contact or has_website or ai_generated or business_summary or owner_principal:
+        enrichment_status = "partial"
+    elif old_status in ("partial", "complete"):
+        enrichment_status = old_status
+    else:
+        enrichment_status = "failed"
+
+    # Persist to PostgreSQL
+    await session.execute(text("""
+        UPDATE leads SET
+            phone = :phone,
+            email = :email,
+            website = :website,
+            owner_principal = :owner_principal,
+            dos_id = :dos_id,
+            dos_status = :dos_status,
+            business_summary = :business_summary,
+            enrichment_status = :enrichment_status,
+            enrichment_sources = :enrichment_sources::jsonb,
+            last_enriched = NOW(),
+            updated_at = NOW()
+        WHERE lead_id = :lid
+    """), {
+        "phone": phone, "email": email, "website": website,
+        "owner_principal": owner_principal, "dos_id": dos_id,
+        "dos_status": dos_status, "business_summary": business_summary,
+        "enrichment_status": enrichment_status,
+        "enrichment_sources": json.dumps(enrichment_sources),
+        "lid": lead_id,
+    })
+    await session.commit()
+
+    # Re-fetch updated row
+    updated = await session.execute(
+        text("SELECT * FROM leads WHERE lead_id = :lid"), {"lid": lead_id}
+    )
+    updated_row = dict(updated.first()._mapping)
+
+    return {
+        "lead_id": lead_id,
+        "contacts": {"phones_found": phones_found, "emails_found": emails_found, "website_found": bool(website)},
+        "research": {"owner_names": owner_names, "year_established": None, "website_scraped": website_scraped},
+        "ai_summary": {"generated": ai_generated, "description": ai_description},
+        "errors": errors,
+        "enrichment_status": enrichment_status,
+        "pipeline_stage": updated_row.get("pipeline_stage", "research"),
+        "lead": _row_to_response(updated_row),
+    }
 
 
 @router.get("/follow-ups")

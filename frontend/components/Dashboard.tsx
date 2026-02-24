@@ -34,6 +34,7 @@ import {
   formatCurrency,
   scoreColor,
 } from '../utils/format';
+import { fetchBuildingStats, type BuildingStats } from '../services/buildings-api';
 
 interface LeadFilterPreset {
   outreachStatuses?: string[];
@@ -68,6 +69,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
   const [backendStarting, setBackendStarting] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dataHealth, setDataHealth] = useState<DataHealthResponse | null>(null);
+  const [buildingStats, setBuildingStats] = useState<BuildingStats | null>(null);
 
   // Pipeline drawer state
   const [selectedStage, setSelectedStage] = useState<string | null>(null);
@@ -83,7 +85,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
         ]);
       };
 
-      const [leadsResult, statsResult, enrichResult, followUpsResult, dataStatusResult, gapsResult, healthResult] = await Promise.allSettled([
+      const [leadsResult, statsResult, enrichResult, followUpsResult, dataStatusResult, gapsResult, healthResult, bldgStatsResult] = await Promise.allSettled([
         withTimeout(fetchLeads({ limit: 100, min_portfolio: 10 }), 15000),
         withTimeout(fetchStats(), 15000),
         withTimeout(getEnrichmentProgress(), 10000),
@@ -91,6 +93,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
         withTimeout(fetchDataStatus(), 10000),
         withTimeout(getEnrichmentGaps(), 10000),
         withTimeout(fetchDataHealth(), 10000),
+        withTimeout(fetchBuildingStats(), 10000),
       ]);
       
       if (leadsResult.status === 'fulfilled') {
@@ -140,6 +143,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
         setDataHealth(healthResult.value);
       } else {
         console.error('Failed to load data health:', healthResult.reason);
+      }
+
+      if (bldgStatsResult.status === 'fulfilled') {
+        setBuildingStats(bldgStatsResult.value);
       }
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
@@ -446,10 +453,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
         )}
       </div>
 
-      {/* ── Section 2: Deal Pipeline ───────────────────────────── */}
+      {/* ── Section 2: PM Company Deal Pipeline ──────────────────── */}
       <div className="bg-white shadow-sm border border-gray-200 rounded-2xl p-5">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Deal Pipeline</h3>
+          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">PM Company Deal Pipeline</h3>
           <span className="text-xs text-gray-400">
             {leadsInPipeline} active {leadsInPipeline === 1 ? 'deal' : 'deals'}
             {pipelineRevenue > 0 && ` \u2022 ${formatCurrency(pipelineRevenue)}/yr est. fee`}
@@ -546,6 +553,45 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
           </div>
         )}
       </div>
+
+      {/* ── Section 2b: Building Outreach Pipeline ────────────────── */}
+      {buildingStats?.outreach && (
+        <div className="bg-white shadow-sm border border-gray-200 rounded-2xl p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Building Outreach Pipeline</h3>
+            <span className="text-xs text-gray-400">
+              {buildingStats.outreach.in_pipeline} building{buildingStats.outreach.in_pipeline !== 1 ? 's' : ''} in pipeline
+              {' '}&middot;{' '}
+              {buildingStats.hot} hot &middot; {buildingStats.warm} warm
+            </span>
+          </div>
+          <div className="flex gap-1.5">
+            {[
+              { key: 'pipeline', label: 'Pipeline', tw: 'bg-blue-500' },
+              { key: 'contacted', label: 'Contacted', tw: 'bg-indigo-500' },
+              { key: 'meeting', label: 'Meeting', tw: 'bg-purple-500' },
+              { key: 'won', label: 'Won', tw: 'bg-emerald-500' },
+              { key: 'lost', label: 'Lost', tw: 'bg-gray-400' },
+            ].map((stage) => {
+              const count = (buildingStats.outreach as Record<string, number>)?.[stage.key] || 0;
+              return (
+                <div
+                  key={stage.key}
+                  className="flex-1 rounded-xl overflow-hidden"
+                >
+                  <div
+                    className={`${count > 0 ? stage.tw : 'bg-gray-100'} rounded-xl px-2 text-center flex flex-col items-center justify-center`}
+                    style={{ minHeight: '64px' }}
+                  >
+                    <div className={`text-lg font-bold font-mono ${count > 0 ? 'text-white' : 'text-gray-400'}`}>{count}</div>
+                    <div className={`text-[9px] uppercase tracking-wider font-medium ${count > 0 ? 'text-white/70' : 'text-gray-400'}`}>{stage.label}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ── Section 3: KPI Metrics ─────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

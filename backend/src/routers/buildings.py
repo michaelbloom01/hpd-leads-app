@@ -114,9 +114,26 @@ async def building_stats(session: AsyncSession = Depends(get_session)):
         FROM buildings
     """))
     row = result.first()
+
+    outreach_result = await session.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE outreach_status = 'pipeline') AS pipeline,
+            COUNT(*) FILTER (WHERE outreach_status = 'contacted') AS contacted,
+            COUNT(*) FILTER (WHERE outreach_status = 'meeting') AS meeting,
+            COUNT(*) FILTER (WHERE outreach_status = 'won') AS won,
+            COUNT(*) FILTER (WHERE outreach_status = 'lost') AS lost,
+            COUNT(*) FILTER (WHERE outreach_status IS NOT NULL AND outreach_status != 'none') AS in_pipeline
+        FROM buildings
+    """))
+    orow = outreach_result.first()
+
     return {
         "total": row[0], "hot": row[1], "warm": row[2], "stable": row[3],
         "avg_score": float(row[4]) if row[4] else 0, "scored": row[5],
+        "outreach": {
+            "pipeline": orow[0], "contacted": orow[1], "meeting": orow[2],
+            "won": orow[3], "lost": orow[4], "in_pipeline": orow[5],
+        },
     }
 
 

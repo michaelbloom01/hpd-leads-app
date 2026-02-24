@@ -116,9 +116,13 @@ def _build_claude_messages(conversation_id: str) -> list[dict]:
     return validated
 
 
-async def _call_claude(client, agent_model, system, tools, messages, timeout_secs, max_tokens=4096):
-    """Call Claude API in a thread pool with timeout. Returns response or raises."""
-    return await asyncio.wait_for(
+async def _call_claude_with_heartbeat(client, agent_model, system, tools, messages, timeout_secs, max_tokens=4096):
+    """Call Claude API in a thread pool with timeout. Yields keepalive events while waiting.
+
+    This is an async generator. It yields keepalive dicts while the API call
+    is in flight, then yields the final API response as the last item.
+    """
+    task = asyncio.ensure_future(
         asyncio.to_thread(
             client.messages.create,
             model=agent_model,
@@ -126,32 +130,57 @@ async def _call_claude(client, agent_model, system, tools, messages, timeout_sec
             system=system,
             tools=tools,
             messages=messages,
-        ),
-        timeout=timeout_secs + 10,
+        )
     )
+    deadline = asyncio.get_event_loop().time() + timeout_secs + 10
+    while not task.done():
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            task.cancel()
+            raise asyncio.TimeoutError("Claude API call exceeded deadline")
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=min(15.0, remaining))
+        except asyncio.TimeoutError:
+            if task.done():
+                break
+            yield _sse_event("keepalive", "")
+            continue
+    yield task.result()
 
 
 async def _call_claude_safe(client, agent_model, messages, timeout_secs, max_tokens=4096):
-    """Call Claude with full error handling. Returns (response, error_event_or_none)."""
+    """Call Claude with full error handling. Returns (response, error_event_or_none, heartbeat_events).
+
+    heartbeat_events is a list of keepalive SSE events yielded during the call.
+    """
+    heartbeats = []
     try:
-        response = await _call_claude(
+        response = None
+        async for item in _call_claude_with_heartbeat(
             client, agent_model, SYSTEM_PROMPT, TOOL_SCHEMAS, messages, timeout_secs, max_tokens
-        )
-        return response, None
+        ):
+            if isinstance(item, dict) and item.get("event") == "keepalive":
+                heartbeats.append(item)
+            else:
+                response = item
+        return response, None, heartbeats
     except asyncio.TimeoutError:
         logger.warning("Agent: Claude call timed out")
-        return None, _sse_event(SSEEventType.error, "Request timed out. Try a simpler query.")
+        return None, _sse_event(SSEEventType.error, "Request timed out. Try a simpler query."), heartbeats
+    except asyncio.CancelledError:
+        logger.warning("Agent: Claude call cancelled")
+        return None, _sse_event(SSEEventType.error, "Request timed out. Try a simpler query."), heartbeats
     except anthropic.APIError as e:
         if e.status_code == 429:
-            return None, "rate_limited"  # Sentinel for retry
+            return None, "rate_limited", heartbeats
         logger.error(f"Agent: Claude API error: {e}")
-        return None, _sse_event(SSEEventType.error, f"AI service error: {str(e)}")
+        return None, _sse_event(SSEEventType.error, f"AI service error: {str(e)}"), heartbeats
     except Exception as e:
         err_lower = str(e).lower()
         if "timeout" in err_lower or "timed out" in err_lower:
-            return None, _sse_event(SSEEventType.error, "Request timed out. Try a simpler query.")
+            return None, _sse_event(SSEEventType.error, "Request timed out. Try a simpler query."), heartbeats
         logger.error(f"Agent: unexpected error: {e}", exc_info=True)
-        return None, _sse_event(SSEEventType.error, f"Request failed: {str(e)}")
+        return None, _sse_event(SSEEventType.error, f"Request failed: {str(e)}"), heartbeats
 
 
 async def _tool_use_loop(
@@ -177,13 +206,19 @@ async def _tool_use_loop(
         start_time = time.time()
         logger.info(f"Agent: round {round_count}, calling Claude (timeout={timeout_secs}s)")
 
-        response, error = await _call_claude_safe(client, agent_model, claude_messages, timeout_secs)
+        response, error, heartbeats = await _call_claude_safe(client, agent_model, claude_messages, timeout_secs)
+
+        # Yield any heartbeat events so the frontend knows we're alive
+        for hb in heartbeats:
+            yield hb
 
         # Handle rate limiting with one retry
         if error == "rate_limited":
             yield _sse_event(SSEEventType.status, "Rate limited, retrying...")
             await asyncio.sleep(5)
-            response, error = await _call_claude_safe(client, agent_model, claude_messages, timeout_secs)
+            response, error, heartbeats2 = await _call_claude_safe(client, agent_model, claude_messages, timeout_secs)
+            for hb in heartbeats2:
+                yield hb
             if error == "rate_limited":
                 error = _sse_event(SSEEventType.error, "AI service temporarily unavailable. Try again in a minute.")
 

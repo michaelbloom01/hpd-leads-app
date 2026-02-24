@@ -232,6 +232,8 @@ const AgentChat: React.FC<AgentChatProps> = ({
           setStatus(toolLabel + '...');
           break;
         }
+        case 'keepalive':
+          break;
         case 'done':
           setIsStreaming(false);
           setStatus(null);
@@ -242,8 +244,8 @@ const AgentChat: React.FC<AgentChatProps> = ({
       }
     };
 
-    // Safety timeout: if no events received for 90 seconds, surface an error.
-    // Re-armed on every event so a mid-stream hang is also caught.
+    // Safety timeout: if no events received for 150 seconds, surface an error.
+    // Re-armed on every event (including keepalives) so a mid-stream hang is also caught.
     let safetyTimer: ReturnType<typeof setTimeout>;
     const armSafetyTimeout = () => {
       clearTimeout(safetyTimer);
@@ -257,7 +259,7 @@ const AgentChat: React.FC<AgentChatProps> = ({
           accumulatedError = 'No response received after 90 seconds. The server may be starting up â€” try again.';
           updateAssistant();
         }
-      }, 90_000);
+      }, 150_000);
     };
     armSafetyTimeout();
 

@@ -80,6 +80,15 @@ export interface BuildingDetail {
   current_lead_id: string | null;
 }
 
+export interface BuildingOutreachStats {
+  pipeline: number;
+  contacted: number;
+  meeting: number;
+  won: number;
+  lost: number;
+  in_pipeline: number;
+}
+
 export interface BuildingStats {
   total: number;
   hot: number;
@@ -87,6 +96,7 @@ export interface BuildingStats {
   stable: number;
   avg_score: number;
   scored: number;
+  outreach?: BuildingOutreachStats;
 }
 
 export interface TimelineEvent {
