@@ -187,16 +187,6 @@ async def get_status():
     )
 
 
-@router.get("/stats")
-async def get_stats():
-    """Get detailed statistics using SQL aggregation."""
-    db = get_database()
-    stats = db.get_stats_sql()
-    cache = get_cache()
-    stats["last_refresh"] = cache.last_refresh.isoformat() if cache.last_refresh else None
-    return stats
-
-
 @router.get("/data-status")
 async def get_data_status():
     """Get data freshness timestamps."""
