@@ -501,10 +501,10 @@ def enrich_leads_batch(lead_ids: list[str]) -> dict:
                     else:
                         updates["enrichment_status"] = "failed"
                     
-                    # Track sources
+                    # Track sources — pass list directly; psycopg serialises to JSONB
                     all_sources = list(set(existing_sources + enrich_result.sources_succeeded))
-                    updates["enrichment_sources"] = json.dumps(all_sources)
-                    updates["last_enriched"] = _dt.now().isoformat()
+                    updates["enrichment_sources"] = all_sources
+                    updates["last_enriched"] = _dt.now()
                     
                     # Auto-advance pipeline
                     current_stage = row.get("pipeline_stage") or "research"
@@ -513,13 +513,26 @@ def enrich_leads_batch(lead_ids: list[str]) -> dict:
 
                     # === Persist: update leads table in PostgreSQL ===
                     if updates:
+                        import json as _json
                         from sqlalchemy import text as _text
-                        set_parts = [f"{k} = :{k}" for k in updates]
+                        # JSONB columns need explicit cast; other columns bind directly
+                        JSONB_COLS = {"enrichment_sources", "tags", "score_breakdown",
+                                      "buildings", "building_ids", "contacts",
+                                      "boros", "building_types", "building_classes"}
+                        set_parts = []
+                        bind_params: dict = {"lead_id": lid}
+                        for k, v in updates.items():
+                            if k in JSONB_COLS:
+                                set_parts.append(f"{k} = :{k}::jsonb")
+                                bind_params[k] = _json.dumps(v) if not isinstance(v, str) else v
+                            else:
+                                set_parts.append(f"{k} = :{k}")
+                                bind_params[k] = v
                         set_parts.append("updated_at = NOW()")
                         with _pg_conn() as _wr_conn:
                             _wr_conn.execute(
                                 _text(f"UPDATE leads SET {', '.join(set_parts)} WHERE lead_id = :lead_id"),
-                                {**updates, "lead_id": lid},
+                                bind_params,
                             )
                             _wr_conn.commit()
 

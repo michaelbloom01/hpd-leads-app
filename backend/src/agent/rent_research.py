@@ -18,7 +18,7 @@ from typing import Optional
 
 import requests
 
-from src.storage.database import get_database
+from src.agent.tools import _pg_conn, _pg_lead_by_id
 from src.score.revenue import AVG_MONTHLY_RENT, DEFAULT_RENTS, MGMT_FEE_RATE
 
 logger = logging.getLogger(__name__)
@@ -90,16 +90,18 @@ def research_rents_for_leads(lead_ids: list[str]) -> dict:
 
     Returns comparisons showing current vs. refined estimates.
     """
-    db = get_database()
     comparisons = []
 
+    with _pg_conn() as conn:
+        lead_rows = {lid: _pg_lead_by_id(conn, lid) for lid in lead_ids}
+
     for lid in lead_ids:
-        row = db.get_lead_by_id(lid)
+        row = lead_rows.get(lid)
         if not row:
             continue
 
-        company_name = row.get("company_name") or row.get("agent_name") or "Unknown"
-        boro = (row.get("boro") or "").upper()
+        company_name = row.get("company_name") or "Unknown"
+        boro = (row.get("primary_borough") or "").upper()
         total_units = row.get("total_units") or 0
         current_annual = row.get("estimated_annual_revenue") or 0.0
 
