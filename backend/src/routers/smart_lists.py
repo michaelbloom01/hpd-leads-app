@@ -10,8 +10,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +22,7 @@ from src.auth.auth import AuthUser, get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/smart-lists", tags=["smart-lists"])
+limiter = Limiter(key_func=get_remote_address)
 
 ENSURE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS smart_lists (
@@ -40,9 +43,17 @@ CREATE INDEX IF NOT EXISTS idx_smart_lists_user ON smart_lists(user_id);
 
 
 class SmartListCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=200)
+    name: str = Field(..., min_length=1, max_length=100)
     description: str = ""
     filters: dict = Field(default_factory=dict)
+
+    @field_validator("filters")
+    @classmethod
+    def filters_not_empty(cls, v: dict) -> dict:
+        if not v:
+            raise ValueError("filters cannot be empty")
+        return v
+
     pinned: bool = False
 
 
@@ -136,7 +147,9 @@ async def _ensure_table():
 
 
 @router.get("")
+@limiter.limit("60/minute")
 async def list_smart_lists(
+    request: Request,
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
@@ -158,7 +171,9 @@ async def list_smart_lists(
 
 
 @router.post("")
+@limiter.limit("30/minute")
 async def create_smart_list(
+    request: Request,
     body: SmartListCreate,
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
@@ -183,7 +198,9 @@ async def create_smart_list(
 
 
 @router.get("/{list_id}")
+@limiter.limit("60/minute")
 async def get_smart_list(
+    request: Request,
     list_id: str,
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
@@ -202,7 +219,9 @@ async def get_smart_list(
 
 
 @router.patch("/{list_id}")
+@limiter.limit("30/minute")
 async def update_smart_list(
+    request: Request,
     list_id: str,
     body: SmartListUpdate,
     session: AsyncSession = Depends(get_session),
@@ -239,7 +258,9 @@ async def update_smart_list(
 
 
 @router.delete("/{list_id}")
+@limiter.limit("30/minute")
 async def delete_smart_list(
+    request: Request,
     list_id: str,
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
@@ -255,7 +276,9 @@ async def delete_smart_list(
 
 
 @router.post("/{list_id}/evaluate")
+@limiter.limit("20/minute")
 async def evaluate_smart_list(
+    request: Request,
     list_id: str,
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),

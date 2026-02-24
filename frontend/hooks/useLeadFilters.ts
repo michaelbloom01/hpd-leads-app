@@ -57,7 +57,7 @@ const INITIAL_STATE: FilterState = {
 };
 
 type Action =
-  | { type: 'SET_FIELD'; field: keyof FilterState; value: any }
+  | { type: 'SET_FIELD'; field: keyof FilterState; value: FilterState[keyof FilterState] }
   | { type: 'TOGGLE_ARRAY'; field: 'boroughs' | 'entityTypes' | 'outreachStatuses' | 'pipelineStages' | 'enrichmentStatuses' | 'buildingTypes'; value: string }
   | { type: 'CLEAR_ALL' }
   | { type: 'APPLY_PRESET'; preset: Partial<FilterState> };
@@ -125,7 +125,7 @@ export function useLeadFilters() {
   /** Build the query params object for the API call. */
   const toApiParams = useCallback(
     (sortField: string, sortDir: string, pageSize: number, currentPage: number) => {
-      const params: Record<string, any> = {
+      const params: Record<string, string | number | boolean | undefined> = {
         limit: pageSize,
         offset: currentPage * pageSize,
         sort_by: sortField === 'agent_name' ? 'company_name' : sortField,

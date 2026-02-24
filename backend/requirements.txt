@@ -1,14 +1,14 @@
 # Core
-requests>=2.31.0
-pydantic>=2.5.0
-pydantic-settings>=2.1.0
+requests~=2.31.0
+pydantic~=2.5.0
+pydantic-settings~=2.1.0
 python-dotenv>=1.0.0
 PyYAML>=6.0.0
 
 # API Server
-fastapi>=0.109.0
-uvicorn[standard]>=0.27.0
-gunicorn>=21.2.0
+fastapi~=0.109.0
+uvicorn[standard]~=0.27.0
+gunicorn~=21.2.0
 sse-starlette>=1.6.0
 
 # Data processing
@@ -33,7 +33,7 @@ googlesearch-python==1.2.5
 anthropic>=0.18.0
 
 # Database (PostgreSQL + SQLAlchemy 2.0)
-sqlalchemy>=2.0.0
+sqlalchemy~=2.0.0
 asyncpg>=0.29.0
 psycopg[binary]>=3.1.0
 alembic>=1.13.0

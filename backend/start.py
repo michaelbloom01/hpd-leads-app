@@ -14,7 +14,7 @@ logger.info(f"Starting server on port {port}")
 cmd = [
     "gunicorn",
     "api:app",
-    "--workers", "1",
+    "--workers", "2",
     "--worker-class", "uvicorn.workers.UvicornWorker",
     "--bind", f"0.0.0.0:{port}",
     "--timeout", "300",

@@ -6,7 +6,9 @@ probability, understand why, and do outreach.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,11 +17,14 @@ from src.auth.auth import AuthUser, get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/buildings", tags=["buildings"])
+limiter = Limiter(key_func=get_remote_address)
 
 
 @router.get("")
+@limiter.limit("60/minute")
 async def list_buildings(
-    borough: Optional[str] = None,
+    request: Request,
+    borough: Optional[str] = Query(None, max_length=100),
     building_type: Optional[str] = None,
     min_units: Optional[int] = None,
     max_units: Optional[int] = None,
@@ -28,12 +33,13 @@ async def list_buildings(
     churn_category: Optional[str] = None,
     outreach_status: Optional[str] = None,
     lead_id: Optional[str] = None,
-    search: Optional[str] = None,
+    search: Optional[str] = Query(None, max_length=200),
     sort_by: str = "churn_score",
     sort_dir: str = "desc",
-    limit: int = Query(default=50, le=500),
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
 ):
     wheres = []
     params: dict = {"limit": limit, "offset": offset}
@@ -102,7 +108,12 @@ async def list_buildings(
 
 
 @router.get("/stats")
-async def building_stats(session: AsyncSession = Depends(get_session)):
+@limiter.limit("60/minute")
+async def building_stats(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
     result = await session.execute(text("""
         SELECT
             COUNT(*) AS total,
@@ -138,9 +149,12 @@ async def building_stats(session: AsyncSession = Depends(get_session)):
 
 
 @router.get("/hot")
+@limiter.limit("60/minute")
 async def hot_buildings(
+    request: Request,
     limit: int = Query(default=20, le=100),
     session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
 ):
     result = await session.execute(
         text("""
@@ -157,7 +171,13 @@ async def hot_buildings(
 
 
 @router.get("/{bbl}")
-async def get_building(bbl: str, session: AsyncSession = Depends(get_session)):
+@limiter.limit("60/minute")
+async def get_building(
+    request: Request,
+    bbl: str,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
     result = await session.execute(
         text("""
             SELECT b.*, bm.lead_id AS current_lead_id
@@ -174,7 +194,13 @@ async def get_building(bbl: str, session: AsyncSession = Depends(get_session)):
 
 
 @router.get("/{bbl}/timeline")
-async def building_timeline(bbl: str, session: AsyncSession = Depends(get_session)):
+@limiter.limit("60/minute")
+async def building_timeline(
+    request: Request,
+    bbl: str,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
     """Chronological event feed merging all signal sources."""
     events = []
 
@@ -213,7 +239,13 @@ async def building_timeline(bbl: str, session: AsyncSession = Depends(get_sessio
 
 
 @router.get("/{bbl}/score-history")
-async def building_score_history(bbl: str, session: AsyncSession = Depends(get_session)):
+@limiter.limit("60/minute")
+async def building_score_history(
+    request: Request,
+    bbl: str,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
     result = await session.execute(
         text("""
             SELECT churn_score, churn_category, churn_breakdown, scored_at
@@ -228,7 +260,9 @@ async def building_score_history(bbl: str, session: AsyncSession = Depends(get_s
 
 
 @router.post("/{bbl}/pipeline")
+@limiter.limit("30/minute")
 async def add_to_pipeline(
+    request: Request,
     bbl: str,
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
@@ -243,11 +277,14 @@ async def add_to_pipeline(
         text("UPDATE buildings SET outreach_status = 'pipeline', updated_at = now() WHERE bbl = :bbl"),
         {"bbl": bbl},
     )
+    await session.commit()
     return {"bbl": bbl, "status": "added_to_pipeline"}
 
 
 @router.patch("/{bbl}/pipeline")
+@limiter.limit("30/minute")
 async def update_pipeline_status(
+    request: Request,
     bbl: str,
     outreach_status: str,
     outreach_priority: Optional[int] = None,
@@ -272,11 +309,14 @@ async def update_pipeline_status(
     await session.execute(
         text(f"UPDATE buildings SET {', '.join(sets)} WHERE bbl = :bbl"), params
     )
+    await session.commit()
     return {"bbl": bbl, "outreach_status": outreach_status}
 
 
 @router.post("/{bbl}/outreach-event")
+@limiter.limit("30/minute")
 async def log_building_outreach_event(
+    request: Request,
     bbl: str,
     stage: str,
     method: Optional[str] = None,
@@ -313,14 +353,18 @@ async def log_building_outreach_event(
         update_params["nod"] = next_follow_up
     update_sql += " WHERE bbl = :bbl"
     await session.execute(text(update_sql), update_params)
+    await session.commit()
 
     return {"status": "success", "bbl": bbl, "stage": stage}
 
 
 @router.get("/{bbl}/outreach-events")
+@limiter.limit("60/minute")
 async def get_building_outreach_events(
+    request: Request,
     bbl: str,
     session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
 ):
     """Get outreach event history for a building."""
     result = await session.execute(

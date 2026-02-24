@@ -8,8 +8,10 @@ import io
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,10 +20,13 @@ from src.auth.auth import AuthUser, get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/export", tags=["export-v1"])
+limiter = Limiter(key_func=get_remote_address)
 
 
 @router.get("/buildings/csv")
+@limiter.limit("10/minute")
 async def export_buildings_csv(
+    request: Request,
     churn_category: Optional[str] = None,
     min_churn: Optional[float] = None,
     borough: Optional[str] = None,
@@ -78,7 +83,9 @@ async def export_buildings_csv(
 
 
 @router.get("/buildings/json")
+@limiter.limit("10/minute")
 async def export_buildings_json(
+    request: Request,
     churn_category: Optional[str] = None,
     min_churn: Optional[float] = None,
     limit: int = Query(default=1000, le=10000),
@@ -108,7 +115,9 @@ async def export_buildings_json(
 
 
 @router.get("/leads/csv")
+@limiter.limit("10/minute")
 async def export_leads_csv(
+    request: Request,
     min_score: Optional[int] = None,
     pipeline_stage: Optional[str] = None,
     session: AsyncSession = Depends(get_session),

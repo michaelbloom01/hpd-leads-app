@@ -7,7 +7,9 @@ import time
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,10 +18,13 @@ from src.auth.auth import AuthUser, get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["admin"])
+limiter = Limiter(key_func=get_remote_address)
 
 
 @router.post("/admin/recalculate-categories")
+@limiter.limit("20/minute")
 async def recalculate_categories(
+    request: Request,
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
@@ -56,7 +61,9 @@ async def recalculate_categories(
 
 
 @router.post("/admin/recompute-lead-units")
+@limiter.limit("20/minute")
 async def recompute_lead_units(
+    request: Request,
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
@@ -153,7 +160,8 @@ async def recompute_lead_units(
 
 
 @router.get("/health")
-async def health_check(session: AsyncSession = Depends(get_session)):
+@limiter.limit("20/minute")
+async def health_check(request: Request, session: AsyncSession = Depends(get_session)):
     lead_count = (await session.execute(text("SELECT COUNT(*) FROM leads"))).scalar() or 0
     building_count = (await session.execute(text("SELECT COUNT(*) FROM buildings"))).scalar() or 0
     return {
@@ -164,7 +172,9 @@ async def health_check(session: AsyncSession = Depends(get_session)):
 
 
 @router.get("/health/detailed")
+@limiter.limit("20/minute")
 async def health_detailed(
+    request: Request,
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
@@ -251,10 +261,13 @@ def _normalize_address_for_search(query: str) -> list[str]:
 
 
 @router.get("/buildings/search")
+@limiter.limit("20/minute")
 async def search_buildings(
+    request: Request,
     address: str = Query(..., min_length=3),
     limit: int = Query(20, le=100),
     session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
 ):
     """Search buildings by address with fuzzy normalization."""
     patterns = _normalize_address_for_search(address)

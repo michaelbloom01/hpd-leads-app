@@ -6,7 +6,7 @@ import os
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from starlette.responses import HTMLResponse
 from sse_starlette.sse import EventSourceResponse
 
@@ -14,6 +14,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from src.agent.types import AgentChatRequest
+from src.auth.auth import AuthUser, get_current_user
 from src.agent.orchestrator import run_agent
 from src.agent import memory as agent_memory
 from src.agent.email_service import get_briefing, send_briefing_email
@@ -26,7 +27,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 @router.post("/chat")
 @limiter.limit("20/minute")
-async def agent_chat(request: Request, body: AgentChatRequest):
+async def agent_chat(request: Request, body: AgentChatRequest, user: AuthUser = Depends(get_current_user)):
     """SSE streaming endpoint for agent chat."""
     has_msg = bool(body.message and body.message.strip())
     has_conf = body.confirmation is not None
@@ -54,14 +55,14 @@ async def agent_chat(request: Request, body: AgentChatRequest):
 
 
 @router.get("/conversations")
-async def list_agent_conversations():
+async def list_agent_conversations(user: AuthUser = Depends(get_current_user)):
     """Returns list of past conversations."""
     conversations = agent_memory.list_conversations(limit=20)
     return {"conversations": conversations}
 
 
 @router.get("/conversations/{conversation_id}")
-async def get_agent_conversation(conversation_id: str):
+async def get_agent_conversation(conversation_id: str, user: AuthUser = Depends(get_current_user)):
     """Returns full message history for a conversation."""
     if not agent_memory.conversation_exists(conversation_id):
         raise HTTPException(404, "Conversation not found")
@@ -70,7 +71,7 @@ async def get_agent_conversation(conversation_id: str):
 
 
 @router.delete("/conversations/{conversation_id}")
-async def delete_agent_conversation(conversation_id: str):
+async def delete_agent_conversation(conversation_id: str, user: AuthUser = Depends(get_current_user)):
     """Delete a conversation and all its messages."""
     deleted = agent_memory.delete_conversation(conversation_id)
     if not deleted:
@@ -79,7 +80,7 @@ async def delete_agent_conversation(conversation_id: str):
 
 
 @router.get("/briefing/{briefing_id}")
-async def get_agent_briefing(briefing_id: str):
+async def get_agent_briefing(briefing_id: str, user: AuthUser = Depends(get_current_user)):
     """Serve a saved HTML briefing for download."""
     html = get_briefing(briefing_id)
     if not html:
@@ -88,7 +89,7 @@ async def get_agent_briefing(briefing_id: str):
 
 
 @router.post("/briefing/{briefing_id}/send")
-async def send_agent_briefing(briefing_id: str, recipient: Optional[str] = Query(None)):
+async def send_agent_briefing(briefing_id: str, recipient: Optional[str] = Query(None), user: AuthUser = Depends(get_current_user)):
     """Send a saved briefing via email."""
     html = get_briefing(briefing_id)
     if not html:

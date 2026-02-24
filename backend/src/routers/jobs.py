@@ -19,6 +19,7 @@ async def list_jobs(
     job_type: Optional[str] = None,
     limit: int = Query(default=20, le=100),
     session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
 ):
     wheres = []
     params: dict = {"limit": limit}
@@ -44,7 +45,7 @@ async def list_jobs(
 
 
 @router.get("/{job_id}")
-async def get_job(job_id: int, session: AsyncSession = Depends(get_session)):
+async def get_job(job_id: int, session: AsyncSession = Depends(get_session), user: AuthUser = Depends(get_current_user)):
     result = await session.execute(
         text("SELECT * FROM ingestion_jobs WHERE id = :id"), {"id": job_id}
     )

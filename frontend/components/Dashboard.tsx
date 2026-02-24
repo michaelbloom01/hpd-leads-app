@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'react-hot-toast';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
@@ -76,6 +76,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
   const [drawerLeads, setDrawerLeads] = useState<ApiLead[]>([]);
   const [drawerLoading, setDrawerLoading] = useState(false);
 
+  const isMounted = useRef(true);
+  useEffect(() => {
+    return () => { isMounted.current = false; };
+  }, []);
+
   const loadData = useCallback(async () => {
     try {
       const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> => {
@@ -98,19 +103,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
       
       if (leadsResult.status === 'fulfilled') {
         const sortedByScore = [...leadsResult.value.leads].sort((a, b) => b.score - a.score);
-        setTopLeads(sortedByScore);
-        
-        const contactable = sortedByScore.filter(l => 
-          (l.phone || l.email) && 
-          l.outreach_status === 'new' &&
-          l.portfolio_size >= 10
-        );
-        setReadyToContactLeads(contactable);
+        if (isMounted.current) {
+          setTopLeads(sortedByScore);
+          const contactable = sortedByScore.filter(l =>
+            (l.phone || l.email) &&
+            l.outreach_status === 'new' &&
+            l.portfolio_size >= 10
+          );
+          setReadyToContactLeads(contactable);
+        }
       } else {
         console.error('Failed to load leads:', leadsResult.reason);
       }
       
-      if (statsResult.status === 'fulfilled') {
+      if (statsResult.status === 'fulfilled' && isMounted.current) {
         const statsData = statsResult.value;
         setStatus({
           total_leads: statsData.total_leads,
@@ -119,53 +125,52 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
           top_score: statsData.top_score || 0,
         });
         setStats(statsData);
-      } else {
+      } else if (statsResult.status !== 'fulfilled') {
         console.error('Failed to load stats:', statsResult.reason);
       }
       
-      if (enrichResult.status === 'fulfilled') {
+      if (enrichResult.status === 'fulfilled' && isMounted.current) {
         setEnrichmentStatus(enrichResult.value);
       }
 
-      if (followUpsResult.status === 'fulfilled') {
+      if (followUpsResult.status === 'fulfilled' && isMounted.current) {
         setFollowUpsDue(followUpsResult.value);
       }
 
-      if (dataStatusResult.status === 'fulfilled') {
+      if (dataStatusResult.status === 'fulfilled' && isMounted.current) {
         setDataStatus(dataStatusResult.value);
       }
 
-      if (gapsResult.status === 'fulfilled') {
+      if (gapsResult.status === 'fulfilled' && isMounted.current) {
         setEnrichmentGaps(gapsResult.value);
       }
 
-      if (healthResult.status === 'fulfilled') {
+      if (healthResult.status === 'fulfilled' && isMounted.current) {
         setDataHealth(healthResult.value);
-      } else {
+      } else if (healthResult.status !== 'fulfilled') {
         console.error('Failed to load data health:', healthResult.reason);
       }
 
-      if (bldgStatsResult.status === 'fulfilled') {
+      if (bldgStatsResult.status === 'fulfilled' && isMounted.current) {
         setBuildingStats(bldgStatsResult.value);
       }
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
-      setLoadError('Failed to load dashboard data. Check your connection and try again.');
+      if (isMounted.current) setLoadError('Failed to load dashboard data. Check your connection and try again.');
     } finally {
-      setLoading(false);
+      if (isMounted.current) setLoading(false);
     }
   }, []);
 
   // Health check before first data load
   useEffect(() => {
-    let cancelled = false;
     let timerId: ReturnType<typeof setTimeout>;
     let errorRetries = 0;
     const MAX_ERROR_RETRIES = 24; // ~2 minutes of polling at 5s intervals
     
     const pollHealth = async () => {
       const health = await checkHealth();
-      if (cancelled) return;
+      if (!isMounted.current) return;
       if (health.status === 'starting') {
         setBackendStarting(true);
         errorRetries = 0; // Reset error counter when we get a proper 'starting' response
@@ -182,7 +187,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
     };
     
     pollHealth();
-    return () => { cancelled = true; clearTimeout(timerId); };
+    return () => { clearTimeout(timerId); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -195,13 +200,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
           getEnrichmentProgress(),
           new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Poll timeout')), 8000)),
         ]);
+        if (!isMounted.current) return;
         setEnrichmentStatus(enrichData);
         
         if (enrichData.finished_at && !enrichData.running) {
           loadData();
         }
       } catch {
-        // Silently ignore poll failures
+        if (isMounted.current) toast.error('Failed to load dashboard data');
       }
     }, 30000);
     
@@ -213,12 +219,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
     try {
       await startBatchEnrichment(500);
       const enrichData = await getEnrichmentProgress();
-      setEnrichmentStatus(enrichData);
-      toast.success('Enrichment started for top 500 leads');
+      if (isMounted.current) {
+        setEnrichmentStatus(enrichData);
+        toast.success('Enrichment started for top 500 leads');
+      }
     } catch {
-      toast.error('Failed to start enrichment');
+      if (isMounted.current) toast.error('Failed to start enrichment');
     } finally {
-      setStartingEnrichment(false);
+      if (isMounted.current) setStartingEnrichment(false);
     }
   };
 
@@ -234,11 +242,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
     setDrawerLoading(true);
     try {
       const result = await fetchLeads({ pipeline_stage: stageKey, limit: 50, sort_by: 'score', sort_dir: 'desc' });
-      setDrawerLeads(result.leads);
+      if (isMounted.current) setDrawerLeads(result.leads);
     } catch {
-      setDrawerLeads([]);
+      if (isMounted.current) setDrawerLeads([]);
     } finally {
-      setDrawerLoading(false);
+      if (isMounted.current) setDrawerLoading(false);
     }
   };
 
@@ -620,7 +628,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
       {/* ── Section 4: Analytics Charts ────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Borough Distribution */}
-        <div className="bg-white shadow-sm border border-gray-200 rounded-2xl p-5">
+        <div className="bg-white shadow-sm border border-gray-200 rounded-2xl p-5" role="img" aria-label="Bar chart showing lead count by borough">
           <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Leads by Borough</h3>
           {boroughData.length > 0 ? (
             <ResponsiveContainer width="100%" height={200}>
@@ -644,7 +652,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
         </div>
 
         {/* Score Distribution */}
-        <div className="bg-white shadow-sm border border-gray-200 rounded-2xl p-5">
+        <div className="bg-white shadow-sm border border-gray-200 rounded-2xl p-5" role="img" aria-label="Bar chart showing lead count by score range (0-20, 20-40, 40-60, 60-80, 80-100)">
           <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Score Distribution</h3>
           {scoreData.length > 0 ? (
             <ResponsiveContainer width="100%" height={200}>
@@ -671,7 +679,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
       {/* ── Section 5: Outreach & Enrichment ───────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Outreach Progress */}
-        <div className="bg-white shadow-sm border border-gray-200 rounded-2xl p-5">
+        <div className="bg-white shadow-sm border border-gray-200 rounded-2xl p-5" role="img" aria-label="Pie chart showing outreach status breakdown (New, Contacted, Interested, Not Interested, Closed)">
           <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Outreach Progress</h3>
           {outreachData.length > 0 ? (
             <div className="flex items-center">
@@ -712,7 +720,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
         </div>
 
         {/* Enrichment Coverage */}
-        <div className="bg-white shadow-sm border border-gray-200 rounded-2xl p-5">
+        <div className="bg-white shadow-sm border border-gray-200 rounded-2xl p-5" role="img" aria-label="Pie chart showing enrichment status breakdown (Enriched, Partial, No Data, Not Enriched)">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Enrichment Coverage</h3>
             {enrichmentGaps && enrichmentGaps.unenriched > 0 && !enrichmentStatus?.running && (

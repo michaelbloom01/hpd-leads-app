@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useEffect, Suspense, lazy } from 'react';
+import React, { Component, useState, useCallback, useEffect, Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster, toast } from 'react-hot-toast';
@@ -19,6 +19,32 @@ const BuildingsPage = lazy(() => import('./components/BuildingsPage'));
 const BuildingDetailPage = lazy(() => import('./components/BuildingDetailPage'));
 const SettingsPage = lazy(() => import('./components/SettingsPage'));
 const SmartListsPage = lazy(() => import('./components/SmartListsPage'));
+
+class RouteErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  state = { hasError: false };
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center h-64 gap-4">
+          <p className="text-gray-600">Something went wrong loading this page.</p>
+          <button
+            onClick={() => {
+              this.setState({ hasError: false });
+              window.location.reload();
+            }}
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -144,6 +170,8 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
         className="lg:hidden fixed top-3 left-3 z-50 p-3 bg-white rounded-xl border border-gray-200 shadow-sm"
         aria-label={isMobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
+        aria-expanded={isMobileMenuOpen}
+        aria-controls="mobile-nav"
       >
         <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           {isMobileMenuOpen ? (
@@ -195,24 +223,44 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
               <div className="transition-all duration-500 ease-out" key={refreshKey}>
                 <Routes>
                   <Route path="/" element={
-                    <Dashboard
-                      onSelectLead={setSelectedLead}
-                      onNavigateToLeads={(filters) => {
-                        if (filters) setLeadFilterPreset(filters);
-                      }}
-                    />
+                    <RouteErrorBoundary>
+                      <Dashboard
+                        onSelectLead={setSelectedLead}
+                        onNavigateToLeads={(filters) => {
+                          if (filters) setLeadFilterPreset(filters);
+                        }}
+                      />
+                    </RouteErrorBoundary>
                   } />
                   <Route path="/leads" element={
-                    <LeadTable
-                      onSelectLead={setSelectedLead}
-                      filterPreset={leadFilterPreset}
-                      onFilterPresetConsumed={() => setLeadFilterPreset(null)}
-                    />
+                    <RouteErrorBoundary>
+                      <LeadTable
+                        onSelectLead={setSelectedLead}
+                        filterPreset={leadFilterPreset}
+                        onFilterPresetConsumed={() => setLeadFilterPreset(null)}
+                      />
+                    </RouteErrorBoundary>
                   } />
-                  <Route path="/buildings" element={<BuildingsPage />} />
-                  <Route path="/buildings/:bbl" element={<BuildingDetailPage />} />
-                  <Route path="/smart-lists" element={<SmartListsPage />} />
-                  <Route path="/settings" element={<SettingsPage />} />
+                  <Route path="/buildings" element={
+                    <RouteErrorBoundary>
+                      <BuildingsPage />
+                    </RouteErrorBoundary>
+                  } />
+                  <Route path="/buildings/:bbl" element={
+                    <RouteErrorBoundary>
+                      <BuildingDetailPage />
+                    </RouteErrorBoundary>
+                  } />
+                  <Route path="/smart-lists" element={
+                    <RouteErrorBoundary>
+                      <SmartListsPage />
+                    </RouteErrorBoundary>
+                  } />
+                  <Route path="/settings" element={
+                    <RouteErrorBoundary>
+                      <SettingsPage />
+                    </RouteErrorBoundary>
+                  } />
                   <Route path="*" element={
                     <div className="flex flex-col items-center justify-center py-32 text-center">
                       <div className="text-6xl font-bold text-gray-200 mb-4">404</div>
@@ -229,24 +277,28 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       </div>
 
       <Suspense fallback={null}>
-        <AgentPanel
-          isOpen={isAgentOpen}
-          onClose={() => setIsAgentOpen(false)}
-          onSelectLead={(leadId) => {
-            fetchLead(leadId)
-              .then(lead => { if (lead) setSelectedLead(lead); })
-              .catch(err => { console.error('Failed to fetch lead:', err); toast.error('Could not load lead details'); });
-          }}
-        />
+        <RouteErrorBoundary>
+          <AgentPanel
+            isOpen={isAgentOpen}
+            onClose={() => setIsAgentOpen(false)}
+            onSelectLead={(leadId) => {
+              fetchLead(leadId)
+                .then(lead => { if (lead) setSelectedLead(lead); })
+                .catch(err => { console.error('Failed to fetch lead:', err); toast.error('Could not load lead details'); });
+            }}
+          />
+        </RouteErrorBoundary>
       </Suspense>
 
       {selectedLead && (
         <Suspense fallback={null}>
-          <LeadDetail 
-            lead={selectedLead} 
-            onClose={() => setSelectedLead(null)}
-            onLeadUpdated={handleLeadUpdated}
-          />
+          <RouteErrorBoundary>
+            <LeadDetail 
+              lead={selectedLead} 
+              onClose={() => setSelectedLead(null)}
+              onLeadUpdated={handleLeadUpdated}
+            />
+          </RouteErrorBoundary>
         </Suspense>
       )}
     </div>

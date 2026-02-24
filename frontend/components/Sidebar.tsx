@@ -56,7 +56,7 @@ const Sidebar: React.FC<Props> = ({ isMobileOpen = false, onToggleAgent, onLogou
         </div>
       </div>
 
-      <nav className="flex-1 space-y-1">
+      <nav id="mobile-nav" className="flex-1 space-y-1">
         {navItems.map((item) => (
           <button
             key={item.path}

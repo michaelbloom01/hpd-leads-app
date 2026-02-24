@@ -106,6 +106,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
         if (!cancelled) {
           setRevenueEstimateFailed(true);
           console.error('Failed to estimate lead revenue:', err);
+          toast.error('Revenue estimation failed. Try "Enrich Lead" or reopen.');
         }
       } finally {
         if (!cancelled) setIsEstimatingRevenue(false);
@@ -133,7 +134,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     return () => window.clearTimeout(timeout);
   }, [isEstimatingRevenue, enrichedLead.lead_id]);
 
-  const fallbackAnnualRevenue = ((enrichedLead.revenue_breakdown || []).reduce((sum: number, item: any) => {
+  const fallbackAnnualRevenue = ((enrichedLead.revenue_breakdown || []).reduce((sum: number, item: Record<string, number>) => {
     const monthlyGross = Number(item?.monthly_gross || 0);
     const feeRate = Number(item?.fee_rate || 0.05);
     return sum + (monthlyGross * feeRate * 12);
@@ -258,7 +259,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
 
   // Deduplicate HPD contacts by name
   const uniqueContacts = enrichedLead.contacts ? 
-    enrichedLead.contacts.filter((c: any, i: number, arr: any[]) => 
+    enrichedLead.contacts.filter((c: { name?: string }, i: number, arr: { name?: string }[]) => 
       arr.findIndex(x => (x.name || '').toLowerCase() === (c.name || '').toLowerCase()) === i
     ) : [];
 
@@ -420,7 +421,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                           {enrichedLead.total_units?.toLocaleString()} units × avg rent × 5% fee — View Breakdown
                         </summary>
                         <div className="mt-2 space-y-1">
-                          {(enrichedLead as any).revenue_breakdown?.map((item: any, i: number) => (
+                          {enrichedLead.revenue_breakdown?.map((item: { label?: string; estimated_units?: number; rent_per_unit?: number; monthly_gross: number }, i: number) => (
                             <div key={i} className="flex items-center justify-between text-xs">
                               <span className="text-gray-500">{item.label}: <span className="text-gray-700 font-mono">{item.estimated_units?.toLocaleString()}</span> units @ <span className="text-gray-700 font-mono">${item.rent_per_unit?.toLocaleString()}</span>/mo</span>
                               <span className="text-emerald-600 font-mono">{formatCurrency(item.monthly_gross * 0.05 * 12)}/yr</span>
@@ -443,9 +444,12 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                       <div className="text-[10px] text-gray-400 mt-2">Live estimate shown; saving to lead record...</div>
                     </div>
                   ) : isEstimatingRevenue ? (
-                    <div className="text-gray-400 text-sm">Estimating revenue...</div>
+                    <div className="flex items-center gap-2 text-gray-500 text-sm">
+                      <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                      Estimating revenue...
+                    </div>
                   ) : revenueEstimateFailed ? (
-                    <div className="text-amber-600 text-sm">Revenue estimate unavailable right now. Try "Enrich Lead" or reopen this lead.</div>
+                    <div className="text-amber-600 text-sm font-medium">Revenue estimation failed. Try "Enrich Lead" or reopen this lead.</div>
                   ) : (
                     <div className="text-gray-400 text-sm">{(enrichedLead.total_units || 0) > 0 ? 'Revenue not available yet' : 'No unit data available'}</div>
                   )}

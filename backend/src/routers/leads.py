@@ -8,7 +8,9 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +20,7 @@ from src.schemas.requests import UpdateLeadRequest, OutreachEventRequest, Outrea
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["leads"])
+limiter = Limiter(key_func=get_remote_address)
 
 ALLOWED_SORT_COLS = {
     "score", "portfolio_size", "total_units", "pipeline_stage",
@@ -95,30 +98,33 @@ def _row_to_response(r: dict) -> dict:
 
 
 @router.get("/leads")
+@limiter.limit("60/minute")
 async def get_leads(
+    request: Request,
     min_score: Optional[float] = Query(None),
-    max_score: Optional[float] = Query(None),
-    min_portfolio: Optional[int] = Query(None),
-    max_portfolio: Optional[int] = Query(None),
-    boro: Optional[str] = Query(None),
+    max_score: Optional[float] = Query(None, le=100),
+    min_portfolio: Optional[int] = Query(None, le=10000),
+    max_portfolio: Optional[int] = Query(None, le=10000),
+    boro: Optional[str] = Query(None, max_length=100),
     has_phone: Optional[bool] = Query(None),
     has_email: Optional[bool] = Query(None),
     has_website: Optional[bool] = Query(None),
-    entity_type: Optional[str] = Query(None),
+    entity_type: Optional[str] = Query(None, max_length=200),
     enrichment_status: Optional[str] = Query(None),
     outreach_status: Optional[str] = Query(None),
     pipeline_stage: Optional[str] = Query(None),
-    search: Optional[str] = Query(None),
+    search: Optional[str] = Query(None, max_length=200),
     sort_by: str = Query("score"),
     sort_dir: str = Query("desc"),
-    min_units: Optional[int] = Query(None),
-    max_units: Optional[int] = Query(None),
+    min_units: Optional[int] = Query(None, le=1000000),
+    max_units: Optional[int] = Query(None, le=1000000),
     min_units_per_bldg: Optional[float] = Query(None),
     max_units_per_bldg: Optional[float] = Query(None),
     building_type_has: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=1000),
+    limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
 ):
     wheres: list[str] = []
     params: dict = {"limit": limit, "offset": offset}
@@ -215,7 +221,8 @@ async def get_leads(
 
 
 @router.get("/leads/{lead_id}")
-async def get_lead(lead_id: str, session: AsyncSession = Depends(get_session)):
+@limiter.limit("60/minute")
+async def get_lead(request: Request, lead_id: str, session: AsyncSession = Depends(get_session), user: AuthUser = Depends(get_current_user)):
     result = await session.execute(
         text("SELECT * FROM leads WHERE lead_id = :lid"), {"lid": lead_id}
     )
@@ -226,7 +233,9 @@ async def get_lead(lead_id: str, session: AsyncSession = Depends(get_session)):
 
 
 @router.post("/leads/{lead_id}/estimate-revenue")
+@limiter.limit("30/minute")
 async def estimate_lead_revenue(
+    request: Request,
     lead_id: str,
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
@@ -277,9 +286,11 @@ async def estimate_lead_revenue(
 
 
 @router.patch("/leads/{lead_id}")
+@limiter.limit("30/minute")
 async def update_lead(
+    request: Request,
     lead_id: str,
-    request: UpdateLeadRequest,
+    body: UpdateLeadRequest,
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
@@ -289,11 +300,11 @@ async def update_lead(
         "meeting_done", "loi", "due_diligence", "closed",
     }
 
-    if request.outreach_status and request.outreach_status not in valid_statuses:
+    if body.outreach_status and body.outreach_status not in valid_statuses:
         raise HTTPException(400, f"Invalid status. Must be one of: {', '.join(valid_statuses)}")
-    if request.pipeline_stage and request.pipeline_stage not in valid_stages:
+    if body.pipeline_stage and body.pipeline_stage not in valid_stages:
         raise HTTPException(400, f"Invalid pipeline stage. Must be one of: {', '.join(valid_stages)}")
-    if request.priority_rank is not None and not (0 <= request.priority_rank <= 5):
+    if body.priority_rank is not None and not (0 <= body.priority_rank <= 5):
         raise HTTPException(400, "priority_rank must be 0-5")
 
     exists = (await session.execute(
@@ -304,21 +315,21 @@ async def update_lead(
 
     sets: list[str] = ["updated_at = NOW()"]
     params: dict = {"lid": lead_id}
-    if request.outreach_status is not None:
+    if body.outreach_status is not None:
         sets.append("outreach_status = :os")
-        params["os"] = request.outreach_status
-    if request.notes is not None:
+        params["os"] = body.outreach_status
+    if body.notes is not None:
         sets.append("notes = :notes")
-        params["notes"] = request.notes
-    if request.pipeline_stage is not None:
+        params["notes"] = body.notes
+    if body.pipeline_stage is not None:
         sets.append("pipeline_stage = :ps")
-        params["ps"] = request.pipeline_stage
-    if request.next_follow_up is not None:
+        params["ps"] = body.pipeline_stage
+    if body.next_follow_up is not None:
         sets.append("next_follow_up = :nfu")
-        params["nfu"] = request.next_follow_up
-    if request.priority_rank is not None:
+        params["nfu"] = body.next_follow_up
+    if body.priority_rank is not None:
         sets.append("priority_rank = :pr")
-        params["pr"] = request.priority_rank
+        params["pr"] = body.priority_rank
 
     if len(sets) > 1:
         await session.execute(
@@ -342,9 +353,11 @@ async def update_lead(
 
 
 @router.post("/leads/{lead_id}/outreach-event")
+@limiter.limit("30/minute")
 async def log_outreach_event(
+    request: Request,
     lead_id: str,
-    request: OutreachEventRequest,
+    body: OutreachEventRequest,
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
@@ -361,19 +374,19 @@ async def log_outreach_event(
             RETURNING id
         """),
         {
-            "lid": lead_id, "stage": request.stage,
-            "method": request.method, "outcome": request.outcome,
-            "notes": request.notes, "nfu": request.next_follow_up,
+            "lid": lead_id, "stage": body.stage,
+            "method": body.method, "outcome": body.outcome,
+            "notes": body.notes, "nfu": body.next_follow_up,
             "ts": datetime.now(timezone.utc),
         },
     )
     eid = result_insert.scalar_one()
 
-    update_params: dict = {"lid": lead_id, "ps": request.stage}
+    update_params: dict = {"lid": lead_id, "ps": body.stage}
     update_sql = "UPDATE leads SET pipeline_stage = :ps, updated_at = NOW()"
-    if request.next_follow_up:
+    if body.next_follow_up:
         update_sql += ", next_follow_up = :nfu"
-        update_params["nfu"] = request.next_follow_up
+        update_params["nfu"] = body.next_follow_up
     update_sql += " WHERE lead_id = :lid"
     await session.execute(text(update_sql), update_params)
     await session.commit()
@@ -382,9 +395,12 @@ async def log_outreach_event(
 
 
 @router.get("/leads/{lead_id}/outreach-events")
+@limiter.limit("60/minute")
 async def get_lead_outreach_events(
+    request: Request,
     lead_id: str,
     session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
 ):
     result = await session.execute(
         text("""
@@ -405,9 +421,11 @@ async def get_lead_outreach_events(
 
 
 @router.post("/leads/{lead_id}/outreach")
+@limiter.limit("30/minute")
 async def add_outreach_attempt(
+    request: Request,
     lead_id: str,
-    request: OutreachAttemptRequest,
+    body: OutreachAttemptRequest,
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
@@ -425,8 +443,8 @@ async def add_outreach_attempt(
         """),
         {
             "lid": lead_id,
-            "method": request.method, "outcome": request.outcome,
-            "notes": request.notes, "ts": datetime.now(timezone.utc),
+            "method": body.method, "outcome": body.outcome,
+            "notes": body.notes, "ts": datetime.now(timezone.utc),
         },
     )
     eid = result_insert.scalar_one()
@@ -434,17 +452,20 @@ async def add_outreach_attempt(
     return {
         "status": "success",
         "attempt": {
-            "id": eid, "method": request.method,
-            "outcome": request.outcome, "notes": request.notes,
+            "id": eid, "method": body.method,
+            "outcome": body.outcome, "notes": body.notes,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     }
 
 
 @router.get("/leads/{lead_id}/outreach")
+@limiter.limit("60/minute")
 async def get_outreach_attempts(
+    request: Request,
     lead_id: str,
     session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
 ):
     exists = (await session.execute(
         text("SELECT 1 FROM leads WHERE lead_id = :lid"), {"lid": lead_id}
@@ -469,7 +490,9 @@ async def get_outreach_attempts(
 
 
 @router.post("/leads/{lead_id}/enrich-all")
+@limiter.limit("30/minute")
 async def enrich_lead_all(
+    request: Request,
     lead_id: str,
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
@@ -654,9 +677,12 @@ async def enrich_lead_all(
 
 
 @router.get("/follow-ups")
+@limiter.limit("60/minute")
 async def get_follow_ups_due(
+    request: Request,
     before: Optional[str] = None,
     session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
 ):
     if before:
         result = await session.execute(
@@ -683,7 +709,8 @@ async def get_follow_ups_due(
 
 
 @router.get("/stats")
-async def get_stats(session: AsyncSession = Depends(get_session)):
+@limiter.limit("60/minute")
+async def get_stats(request: Request, session: AsyncSession = Depends(get_session), user: AuthUser = Depends(get_current_user)):
     """Aggregate stats for the dashboard — full structure expected by the frontend."""
     core = dict((await session.execute(text("""
         SELECT

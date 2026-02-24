@@ -60,7 +60,7 @@ class RecalculateResponse(BaseModel):
 
 
 @router.get("/configs")
-async def list_configs(session: AsyncSession = Depends(get_session)):
+async def list_configs(session: AsyncSession = Depends(get_session), user: AuthUser = Depends(get_current_user)):
     rows = await session.execute(
         text("SELECT id, name, is_active, is_preset, weights, created_by, created_at FROM scoring_configs ORDER BY id")
     )
@@ -72,7 +72,7 @@ async def list_configs(session: AsyncSession = Depends(get_session)):
 
 
 @router.get("/configs/active")
-async def get_active_config(session: AsyncSession = Depends(get_session)):
+async def get_active_config(session: AsyncSession = Depends(get_session), user: AuthUser = Depends(get_current_user)):
     row = await session.execute(
         text("SELECT id, name, is_active, is_preset, weights, created_by FROM scoring_configs WHERE is_active = true LIMIT 1")
     )

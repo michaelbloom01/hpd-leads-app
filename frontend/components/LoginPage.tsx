@@ -5,16 +5,30 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
+const MIN_PASSWORD_LENGTH = 6;
+
 const LoginPage: React.FC = () => {
   const { login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [emailError, setEmailError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  const isValidEmail = (val: string) => val.includes('@');
+  const isValidPassword = (val: string) => val.length >= MIN_PASSWORD_LENGTH;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setEmailError('');
+    setPasswordError('');
+    const emailValid = isValidEmail(email);
+    const passwordValid = isValidPassword(password);
+    if (!emailValid) setEmailError('Please enter a valid email address');
+    if (!passwordValid) setPasswordError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+    if (!emailValid || !passwordValid) return;
     setIsLoading(true);
     try {
       await login(email, password);
@@ -54,12 +68,18 @@ const LoginPage: React.FC = () => {
                 autoComplete="email"
                 required
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-lg border border-gray-300 text-gray-900 text-sm
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (emailError) setEmailError('');
+                }}
+                className={`w-full px-4 py-2.5 rounded-lg border text-gray-900 text-sm
                   focus:ring-2 focus:ring-gray-900 focus:border-transparent outline-none transition-all
-                  placeholder:text-gray-400"
+                  placeholder:text-gray-400 ${emailError ? 'border-red-400' : 'border-gray-300'}`}
                 placeholder="you@company.com"
               />
+              {emailError && (
+                <p className="mt-1 text-sm text-red-600">{emailError}</p>
+              )}
             </div>
 
             <div>
@@ -72,12 +92,18 @@ const LoginPage: React.FC = () => {
                 autoComplete="current-password"
                 required
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-lg border border-gray-300 text-gray-900 text-sm
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  if (passwordError) setPasswordError('');
+                }}
+                className={`w-full px-4 py-2.5 rounded-lg border text-gray-900 text-sm
                   focus:ring-2 focus:ring-gray-900 focus:border-transparent outline-none transition-all
-                  placeholder:text-gray-400"
+                  placeholder:text-gray-400 ${passwordError ? 'border-red-400' : 'border-gray-300'}`}
                 placeholder="Enter your password"
               />
+              {passwordError && (
+                <p className="mt-1 text-sm text-red-600">{passwordError}</p>
+              )}
             </div>
 
             {error && (

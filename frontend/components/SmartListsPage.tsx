@@ -14,10 +14,16 @@ const SmartListsPage: React.FC = () => {
   const [lists, setLists] = useState<SmartList[]>([]);
   const [loading, setLoading] = useState(true);
   const [evaluating, setEvaluating] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  const MIN_NAME_LENGTH = 2;
+  const isNameValid = newName.trim().length >= MIN_NAME_LENGTH;
 
   const loadLists = useCallback(async () => {
     try {
@@ -25,6 +31,7 @@ const SmartListsPage: React.FC = () => {
       setLists(data.smart_lists);
     } catch (err) {
       console.error('Failed to load smart lists:', err);
+      toast.error('Failed to load smart lists');
     } finally {
       setLoading(false);
     }
@@ -34,6 +41,12 @@ const SmartListsPage: React.FC = () => {
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
+    if (newName.trim().length < MIN_NAME_LENGTH) {
+      setNameError(`Name must be at least ${MIN_NAME_LENGTH} characters`);
+      return;
+    }
+    setNameError(null);
+    setCreating(true);
     try {
       await createSmartList({ name: newName.trim(), description: newDesc.trim(), filters: {}, pinned: false });
       toast.success(`Smart List "${newName}" created`);
@@ -43,17 +56,22 @@ const SmartListsPage: React.FC = () => {
       loadLists();
     } catch (err) {
       toast.error('Failed to create smart list');
+    } finally {
+      setCreating(false);
     }
   };
 
   const handleDelete = async (list: SmartList) => {
     if (!window.confirm(`Delete "${list.name}"? This cannot be undone.`)) return;
+    setDeletingId(list.id);
     try {
       await deleteSmartList(list.id);
       toast.success('Deleted');
       loadLists();
     } catch (err) {
       toast.error('Failed to delete');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -112,8 +130,9 @@ const SmartListsPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="space-y-4 animate-pulse">
-        {[...Array(3)].map((_, i) => <div key={i} className="h-24 bg-gray-100 rounded-xl" />)}
+      <div className="flex flex-col items-center justify-center py-12 space-y-4">
+        <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        <p className="text-sm text-gray-500">Loading smart lists...</p>
       </div>
     );
   }
@@ -138,12 +157,18 @@ const SmartListsPage: React.FC = () => {
           <input
             type="text"
             placeholder="List name (e.g., Bronx 100+ units)"
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            className={`w-full px-3 py-2 border rounded-lg text-sm ${nameError ? 'border-red-400' : 'border-gray-300'}`}
             value={newName}
-            onChange={(e) => setNewName(e.target.value)}
+            onChange={(e) => {
+              setNewName(e.target.value);
+              if (nameError) setNameError(null);
+            }}
             onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
             autoFocus
           />
+          {nameError && (
+            <p className="text-sm text-red-600">{nameError}</p>
+          )}
           <input
             type="text"
             placeholder="Description (optional)"
@@ -155,8 +180,17 @@ const SmartListsPage: React.FC = () => {
             Tip: Create the list first, then use "Save Current Filters" from the Leads page to populate it with your active filter set.
           </p>
           <div className="flex gap-2">
-            <button onClick={handleCreate} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-500">Create</button>
-            <button onClick={() => setShowCreate(false)} className="px-4 py-2 bg-gray-100 text-gray-700 text-sm rounded-lg">Cancel</button>
+            <button onClick={handleCreate} disabled={creating || !isNameValid} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-500 disabled:opacity-50 flex items-center gap-2">
+              {creating ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                'Create'
+              )}
+            </button>
+            <button onClick={() => { setShowCreate(false); setNameError(null); }} className="px-4 py-2 bg-gray-100 text-gray-700 text-sm rounded-lg">Cancel</button>
           </div>
         </div>
       )}
@@ -228,12 +262,17 @@ const SmartListsPage: React.FC = () => {
                 </button>
                 <button
                   onClick={() => handleDelete(list)}
-                  className="p-1.5 text-gray-300 hover:text-rose-500 rounded-lg transition-colors"
+                  disabled={deletingId === list.id}
+                  className="p-1.5 text-gray-300 hover:text-rose-500 rounded-lg transition-colors disabled:opacity-50"
                   title="Delete this smart list"
                 >
+                  {deletingId === list.id ? (
+                    <div className="w-4 h-4 border-2 border-rose-400 border-t-transparent rounded-full animate-spin" />
+                  ) : (
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                   </svg>
+                  )}
                 </button>
               </div>
             </div>

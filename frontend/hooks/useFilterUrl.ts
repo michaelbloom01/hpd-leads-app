@@ -63,13 +63,13 @@ function paramsToPartial(params: URLSearchParams): Partial<FilterState> {
     if (raw === null) continue;
 
     if (ARRAY_FIELDS.has(field)) {
-      (partial as any)[field] = raw.split(',').filter(Boolean);
+      (partial as Record<string, unknown>)[field] = raw.split(',').filter(Boolean);
     } else if (BOOL_FIELDS.has(field)) {
-      (partial as any)[field] = raw === '1' ? true : null;
+      (partial as Record<string, unknown>)[field] = raw === '1' ? true : null;
     } else if (field === 'searchMode') {
-      (partial as any)[field] = raw === 'address' ? 'address' : 'leads';
+      (partial as Record<string, unknown>)[field] = raw === 'address' ? 'address' : 'leads';
     } else {
-      (partial as any)[field] = raw;
+      (partial as Record<string, unknown>)[field] = raw;
     }
   }
   return partial;

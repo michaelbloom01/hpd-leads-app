@@ -22,6 +22,7 @@ async def list_alerts(
     dismissed: bool = False,
     limit: int = Query(default=50, le=200),
     session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
 ):
     wheres = ["dismissed = :dismissed"]
     params: dict = {"dismissed": dismissed, "limit": limit}
@@ -43,7 +44,7 @@ async def list_alerts(
 
 
 @router.get("/count")
-async def alert_count(session: AsyncSession = Depends(get_session)):
+async def alert_count(session: AsyncSession = Depends(get_session), user: AuthUser = Depends(get_current_user)):
     result = await session.execute(
         text("SELECT COUNT(*) FROM change_alerts WHERE dismissed = false")
     )

@@ -23,6 +23,7 @@ data/
 *_cache.json
 *.sql.bak
 backend/scripts/pluto_updates.sql
+backend/scripts/_diagnose*
 
 # Node/Frontend
 node_modules/

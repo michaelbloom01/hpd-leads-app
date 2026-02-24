@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'react-hot-toast';
 import { fetchLeads, ApiLead, enrichLeads, API_BASE_URL, checkHealth, searchBuildings, BuildingSearchResult, createSmartList } from '../services/api';
 import { getAuthHeaders } from '../services/auth';
@@ -53,6 +53,11 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [enriching, setEnriching] = useState(false);
 
+  const isMounted = useRef(true);
+  useEffect(() => {
+    return () => { isMounted.current = false; };
+  }, []);
+
   // Fetch leads from server with current filters, sort, and search
   // This is called explicitly by the "Go" button, sort clicks, page changes, etc.
   // It reads directly from current filter state — no debouncing needed.
@@ -64,13 +69,15 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     try {
       const params = toApiParams(sortField, sortDir, pageSize, currentPage);
       const response = await fetchLeads(params);
-      setLeads(response.leads);
-      setTotalLeads(response.total);
+      if (isMounted.current) {
+        setLeads(response.leads);
+        setTotalLeads(response.total);
+      }
     } catch (err) {
       console.error('Failed to fetch leads:', err);
-      setError('Failed to load leads. Make sure the backend is running.');
+      if (isMounted.current) setError('Failed to load leads. Make sure the backend is running.');
     } finally {
-      setLoading(false);
+      if (isMounted.current) setLoading(false);
     }
   }, [toApiParams, pageSize, sortField, sortDir]);
 
@@ -79,14 +86,13 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
 
   // R4: Health check on initial mount — show cold-start banner if backend is booting
   useEffect(() => {
-    let cancelled = false;
     let timerId: ReturnType<typeof setTimeout>;
     let errorRetries = 0;
     const MAX_ERROR_RETRIES = 24; // ~2 minutes of polling at 5s intervals
     
     const pollHealth = async () => {
       const health = await checkHealth();
-      if (cancelled) return;
+      if (!isMounted.current) return;
       if (health.status === 'starting') {
         setBackendStarting(true);
         errorRetries = 0; // Reset error counter when we get a proper 'starting' response
@@ -104,7 +110,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     };
     
     pollHealth();
-    return () => { cancelled = true; clearTimeout(timerId); };
+    return () => { clearTimeout(timerId); };
     // Only run once on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -143,11 +149,12 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     if (term && looksLikeAddress(term)) {
       setAddressSearching(true);
       searchBuildings(term).then(res => {
+        if (!isMounted.current) return;
         setAddressResults(res.buildings || []);
         if ((res.buildings || []).length > 0) {
           setField('searchMode', 'address');
         }
-      }).catch(() => setAddressResults([])).finally(() => setAddressSearching(false));
+      }).catch(() => { if (isMounted.current) setAddressResults([]); }).finally(() => { if (isMounted.current) setAddressSearching(false); });
     } else {
       setAddressResults([]);
       if (filters.searchMode === 'address' && !term) setField('searchMode', 'leads');
@@ -212,6 +219,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
       setSelectedIds(new Set());
     } catch (err) {
       console.error('Enrichment failed:', err);
+      toast.error('Enrichment failed. Please try again.');
     } finally {
       setEnriching(false);
     }
@@ -664,36 +672,36 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                     className="rounded bg-white border-gray-300"
                   />
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors" onClick={() => handleSort('agent_name')}>
+                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors" onClick={() => handleSort('agent_name')} aria-sort={sortField === 'agent_name' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>
                   Company <SortIcon field="agent_name" />
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors" onClick={() => handleSort('boro')}>
+                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors" onClick={() => handleSort('boro')} aria-sort={sortField === 'boro' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>
                   Borough <SortIcon field="boro" />
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors text-right" onClick={() => handleSort('portfolio_size')}>
+                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors text-right" onClick={() => handleSort('portfolio_size')} aria-sort={sortField === 'portfolio_size' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>
                   Bldgs <SortIcon field="portfolio_size" />
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors text-right" onClick={() => handleSort('total_units')}>
+                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors text-right" onClick={() => handleSort('total_units')} aria-sort={sortField === 'total_units' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>
                   Units <SortIcon field="total_units" />
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors text-right" onClick={() => handleSort('units_per_bldg')} title="Average residential units per building">
+                <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors text-right" onClick={() => handleSort('units_per_bldg')} title="Average residential units per building" aria-sort={sortField === 'units_per_bldg' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>
                   U/Bldg <SortIcon field="units_per_bldg" />
                 </th>
                 <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors text-right" onClick={() => handleSort('score')}
-                  title="Lead quality score (0–100) based on portfolio size, building types, registration status, and data completeness. Higher = stronger acquisition target.">
+                  title="Lead quality score (0–100) based on portfolio size, building types, registration status, and data completeness. Higher = stronger acquisition target." aria-sort={sortField === 'score' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>
                   Score <SortIcon field="score" />
                 </th>
                 <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors text-right" onClick={() => handleSort('estimated_annual_revenue')}
-                  title="Estimated annual management fee revenue = Total Units × Average Rent (by borough & building type) × 5% management fee rate">
+                  title="Estimated annual management fee revenue = Total Units × Average Rent (by borough & building type) × 5% management fee rate" aria-sort={sortField === 'estimated_annual_revenue' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>
                   Mgmt Fee <SortIcon field="estimated_annual_revenue" />
                 </th>
                 <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors text-right" onClick={() => handleSort('violations_per_unit')}
-                  title="Open HPD violations per residential unit — higher = more maintenance issues, potential distressed asset opportunity">
+                  title="Open HPD violations per residential unit — higher = more maintenance issues, potential distressed asset opportunity" aria-sort={sortField === 'violations_per_unit' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>
                   Violations <SortIcon field="violations_per_unit" />
                 </th>
                 <th className="px-4 py-3">Contact</th>
                 <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors" onClick={() => handleSort('enrichment_status')}
-                  title="Enrichment status: Enriched = phone/email + website + AI summary found; Partial = some data found; No Data = enrichment attempted, nothing found; Not Enriched = not yet run">
+                  title="Enrichment status: Enriched = phone/email + website + AI summary found; Partial = some data found; No Data = enrichment attempted, nothing found; Not Enriched = not yet run" aria-sort={sortField === 'enrichment_status' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>
                   Info <SortIcon field="enrichment_status" />
                 </th>
               </tr>
