@@ -413,25 +413,116 @@ async def get_follow_ups_due(
 
 @router.get("/stats")
 async def get_stats(session: AsyncSession = Depends(get_session)):
-    """Aggregate stats for the dashboard."""
-    result = await session.execute(text("""
+    """Aggregate stats for the dashboard — full structure expected by the frontend."""
+    core = dict((await session.execute(text("""
         SELECT
             COUNT(*) AS total_leads,
+            COALESCE(SUM(portfolio_size), 0) AS total_buildings,
+            COALESCE(SUM(total_units), 0) AS total_units,
             COALESCE(MAX(score), 0) AS top_score,
+            COALESCE(AVG(score), 0) AS avg_score,
             COALESCE(SUM(CASE WHEN phone IS NOT NULL AND phone != '' THEN 1 ELSE 0 END), 0) AS with_phone,
             COALESCE(SUM(CASE WHEN email IS NOT NULL AND email != '' THEN 1 ELSE 0 END), 0) AS with_email,
-            COALESCE(SUM(CASE WHEN website IS NOT NULL AND website != '' THEN 1 ELSE 0 END), 0) AS with_website,
-            COALESCE(AVG(portfolio_size), 0) AS avg_portfolio,
-            COALESCE(AVG(total_units), 0) AS avg_units
+            COALESCE(SUM(CASE WHEN website IS NOT NULL AND website != '' THEN 1 ELSE 0 END), 0) AS with_website
         FROM leads
-    """))
-    row = dict(result.first()._mapping)
+    """))).first()._mapping)
 
-    refresh_result = await session.execute(text("""
+    # Borough distribution
+    by_borough = {
+        r[0] or "Unknown": r[1]
+        for r in (await session.execute(text(
+            "SELECT primary_borough, COUNT(*) FROM leads GROUP BY primary_borough"
+        ))).fetchall()
+    }
+
+    # Enrichment status distribution
+    by_enrichment = {
+        r[0] or "none": r[1]
+        for r in (await session.execute(text(
+            "SELECT enrichment_status, COUNT(*) FROM leads GROUP BY enrichment_status"
+        ))).fetchall()
+    }
+
+    # Outreach status distribution
+    by_outreach = {
+        r[0] or "new": r[1]
+        for r in (await session.execute(text(
+            "SELECT outreach_status, COUNT(*) FROM leads GROUP BY outreach_status"
+        ))).fetchall()
+    }
+
+    # Entity type distribution
+    by_entity = {
+        r[0] or "unknown": r[1]
+        for r in (await session.execute(text(
+            "SELECT entity_type, COUNT(*) FROM leads GROUP BY entity_type"
+        ))).fetchall()
+    }
+
+    # Pipeline stage distribution
+    by_pipeline = {
+        r[0] or "research": r[1]
+        for r in (await session.execute(text(
+            "SELECT pipeline_stage, COUNT(*) FROM leads GROUP BY pipeline_stage"
+        ))).fetchall()
+    }
+
+    # Score distribution (buckets)
+    score_dist = {
+        r[0]: r[1]
+        for r in (await session.execute(text("""
+            SELECT
+                CASE
+                    WHEN score < 20 THEN '0-20'
+                    WHEN score < 40 THEN '20-40'
+                    WHEN score < 60 THEN '40-60'
+                    WHEN score < 80 THEN '60-80'
+                    ELSE '80-100'
+                END AS bucket,
+                COUNT(*) AS cnt
+            FROM leads GROUP BY bucket
+        """))).fetchall()
+    }
+
+    # Portfolio size distribution
+    portfolio_dist = {
+        r[0]: r[1]
+        for r in (await session.execute(text("""
+            SELECT
+                CASE
+                    WHEN portfolio_size <= 5 THEN '1-5'
+                    WHEN portfolio_size <= 10 THEN '6-10'
+                    WHEN portfolio_size <= 25 THEN '11-25'
+                    WHEN portfolio_size <= 50 THEN '26-50'
+                    WHEN portfolio_size <= 100 THEN '51-100'
+                    ELSE '100+'
+                END AS bucket,
+                COUNT(*) AS cnt
+            FROM leads GROUP BY bucket
+        """))).fetchall()
+    }
+
+    refresh_row = (await session.execute(text("""
         SELECT started_at FROM ingestion_jobs
         WHERE job_type = 'buildings' AND status = 'completed'
         ORDER BY started_at DESC LIMIT 1
-    """))
-    refresh_row = refresh_result.first()
-    row["last_refresh"] = refresh_row[0].isoformat() if refresh_row else None
-    return row
+    """))).first()
+
+    return {
+        "total_leads": core["total_leads"],
+        "total_buildings": core["total_buildings"],
+        "total_units": core["total_units"],
+        "top_score": round(float(core["top_score"]), 1),
+        "avg_score": round(float(core["avg_score"]), 1),
+        "with_phone": core["with_phone"],
+        "with_email": core["with_email"],
+        "with_website": core["with_website"],
+        "by_borough": by_borough,
+        "by_enrichment_status": by_enrichment,
+        "by_outreach_status": by_outreach,
+        "by_entity_type": by_entity,
+        "by_pipeline_stage": by_pipeline,
+        "score_distribution": score_dist,
+        "portfolio_distribution": portfolio_dist,
+        "last_refresh": refresh_row[0].isoformat() if refresh_row else None,
+    }
