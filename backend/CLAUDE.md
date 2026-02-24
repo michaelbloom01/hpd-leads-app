@@ -1,203 +1,221 @@
-# HPD Leads Backend — Agent Context
+# HPD Leads App — Agent Context
 
 ## What This Project Does
 
-Full-stack lead generation platform for acquiring Property Management companies in NYC:
+Enterprise-grade lead generation platform for acquiring Property Management businesses in NYC.
+Two distinct use cases / personas:
 
-1. **Ingest** - Pull 200k+ buildings from HPD + PLUTO classification data
-2. **Transform** - Group by management company, create ~100k leads
-3. **Score** - Rank by portfolio size, building types, professional indicators
-4. **Enrich** - Auto-find phone, email, website via web search + NY DOS
-5. **Revenue** - Estimate mgmt fee revenue per lead (Units x Avg Rent x 5%)
-6. **Violations** - Aggregate HPD violations per lead (auto-computed at startup)
-7. **Serve** - REST API for React frontend with filtering, pagination, export
+1. **Leads tab (PE Searcher)** — Find PM companies to acquire based on deal criteria (portfolio size, units, revenue, borough, entity type)
+2. **Buildings tab (Existing PM Operator)** — Find buildings ripe for high-value outreach based on churn signals
 
 ## Live Deployment
 
-- **Backend:** https://hpd-leads-app-production.up.railway.app
-- **Frontend:** https://frontend-nine-psi-58.vercel.app
-- **Database:** SQLite with Railway persistent storage
+| Layer | URL | Platform |
+|-------|-----|----------|
+| Frontend | https://frontend-nine-psi-58.vercel.app | Vercel (auto-deploy from GitHub) |
+| Backend API | https://hpd-leads-app-production.up.railway.app | Railway (auto-deploy from GitHub) |
+| Database | Railway managed PostgreSQL 16 | Railway |
+| Branch | `feature/enterprise-rearchitecture` | GitHub |
 
-## Quick Start
+## Architecture
 
-```bash
-cd backend
-pip install -r requirements.txt
-python -m uvicorn api:app --reload --port 8000
-# API at http://localhost:8000
-# Docs at http://localhost:8000/docs
+```
+frontend/          React + TypeScript + Vite + shadcn/ui + TanStack Table/Query
+backend/
+  src/
+    routers/       FastAPI routers (leads.py, buildings.py, agent.py, quality.py, scoring.py, ...)
+    agent/         AI Agent: orchestrator.py, tools.py, memory.py, types.py, system_prompt.py
+    db/            session.py — SQLAlchemy 2.0 async engine + get_sync_url()
+    storage/       database.py — LEGACY SQLite wrapper (DO NOT USE for new code)
+    tasks/         score.py — Celery task (no-op fallback for local dev)
+    enrich/        contact_sources.py, ai_summary.py, web_crawl.py
+  scripts/
+    run_ingestion.py   — NYC Open Data ingest (HPD + PLUTO)
+    run_scoring.py     — Churn scoring runner
+    score_buildings.sql — Pure SQL scoring implementation
+  alembic/         Database migrations
 ```
 
-## Key Files
+## Database: PostgreSQL via SQLAlchemy 2.0
 
-| File | Purpose |
-|------|---------|
-| `api.py` | FastAPI app (~3,200 lines) - REST endpoints + startup tasks |
-| `src/score/revenue.py` | Revenue estimation (Units x Avg Rent x 5% fee) |
-| `src/score/scorer.py` | Lead scoring algorithm |
-| `src/ingest/hpd_client.py` | HPD Buildings & Contacts API client |
-| `src/ingest/pluto_client.py` | PLUTO building classification lookup |
-| `src/ingest/hpd_violations.py` | HPD violations API client |
-| `src/transform/aggregate.py` | Group buildings into leads |
-| `src/enrich/enricher.py` | Sequential enrichment orchestration |
-| `src/enrich/web_crawl.py` | DuckDuckGo/Bing/Google search + scraping |
-| `src/enrich/ny_dos.py` | NY DOS corporation registry lookup |
-| `src/enrich/ai_summary.py` | Claude AI company descriptions |
-| `src/storage/database.py` | SQLite persistence (leads + enrichment jobs + settings) |
-| `start.py` | Gunicorn startup (300s timeout for long startup) |
-
-## Critical: Revenue Calculation (revenue.py)
-
-**building_types fields are BUILDING COUNTS, not unit counts.**
-
-The `building_types.condo`, `.rental_elevator`, etc. count how many buildings of each type, NOT how many units. Revenue estimation distributes `total_units` proportionally across building types using the largest-remainder method to ensure exact unit sums.
-
-Formula: `Total Units x Avg Rent (by borough & building type) x 5% mgmt fee`
-
-- Borough rents: StreetEasy + Census ACS averages
-- Condo/co-op adjustment: 60% of rental rate
-- Revenue breakdown per-type is returned in API for auditability
-
-## Startup Behavior
-
-On startup, `api.py` runs:
-1. Load all leads from SQLite (~100k leads, ~10s)
-2. Compute revenue estimates if `revenue_formula_version != '2'` (batch update, ~10s)
-3. Auto-compute violations in **background thread** if not yet done (HPD API calls)
-4. Resume incomplete enrichment jobs
-
-**Important:** Violations run in `asyncio.to_thread()` to avoid blocking the event loop. The gunicorn timeout is 300s to handle the long startup.
-
-## API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/leads` | GET | Filtered lead list (multi-borough via `boro=MAN,BKLYN`) |
-| `/api/leads/{id}` | GET | Single lead detail with revenue_breakdown |
-| `/api/leads/{id}` | PUT | Update lead (notes, status, pipeline) |
-| `/api/status` | GET | Pipeline status |
-| `/api/stats` | GET | Aggregate statistics |
-| `/api/enrich/status` | GET | Current enrichment progress |
-| `/api/enrich/batch` | POST | Start batch enrichment |
-| `/api/violations/refresh` | POST | Refresh violations from HPD |
-| `/api/export/csv` | GET | CSV export |
-
-### Multi-Borough Filter
-
-The `boro` parameter accepts comma-separated values (e.g., `?boro=MANHATTAN,BROOKLYN`). Backend uses `WHERE boro IN (?,?)` SQL query.
-
-## Persistent Settings (app_settings table)
-
-| Key | Purpose |
-|-----|---------|
-| `revenue_computed_at` | When revenue was last calculated |
-| `revenue_formula_version` | Current formula version (`2` = fixed) |
-| `violations_computed_at` | When violations were last fetched |
-| `enrichment_completed_at` | When enrichment batch last finished |
-
-## Data Model
-
-### Lead Fields
+### Connection
 
 ```python
-lead_id: str           # Unique hash
-agent_name: str        # Management company name
-owner_name: str        # Building owner
-portfolio_size: int    # Number of buildings
-total_units: int       # Total residential units
-buildings: List[str]   # Building addresses
-boros: List[str]       # Boroughs served
-building_types: {      # PLUTO classification (BUILDING COUNTS, not unit counts!)
-    condo, coop, rental_elevator, rental_walkup, ...
-}
-score: float           # 0-100 lead score
-phone, email, website  # Contact info
-estimated_monthly_revenue: float   # Monthly mgmt fee estimate
-estimated_annual_revenue: float    # Annual mgmt fee estimate
-violation_count: int               # Total HPD violations
-violations_per_unit: float         # Violations density metric
-pipeline_stage: str    # research, first_contact, follow_up, meeting_scheduled, etc.
-enrichment_status      # none, partial, complete, failed
+# Async (FastAPI endpoints)
+from src.db.session import get_session
+async def endpoint(session: AsyncSession = Depends(get_session)): ...
+
+# Sync (agent tools, Alembic)
+from src.db.session import get_sync_url
+engine = create_engine(get_sync_url(), ...)
 ```
 
-## Frontend Components
+### Key Tables
 
-| Component | Purpose |
-|-----------|---------|
-| `Dashboard.tsx` | Overview metrics, enrichment status, top leads |
-| `LeadTable.tsx` | Filterable/sortable lead list with multi-borough toggles |
-| `LeadDetail.tsx` | 5-tab detail view (Overview, Contacts, Pipeline, Buildings, DD) |
+| Table | Rows | Purpose |
+|-------|------|---------|
+| `leads` | 38,494 | PM company leads (aggregated from buildings) |
+| `buildings` | 179,985 | Individual buildings with PLUTO data + churn scores |
+| `hpd_complaints` | ~200K | Raw HPD complaint signals |
+| `hpd_violations` | ~150K | Raw HPD violation signals |
+| `scoring_configs` | 1 | Configurable scoring weights |
+| `building_score_history` | — | Historical score snapshots |
+| `data_quality_log` | — | Ingestion audit log |
+| `ingestion_jobs` | — | Job tracking |
 
-### Key UX Decisions
-- Violations column shows **per-unit density** (not raw count) - sortable
-- Score shows A/B/C tier labels alongside number
-- Data quality shown as visual dots (not text jargon)
-- Revenue breakdown expandable with actual per-lead numbers
-- Interactive Leaflet/OpenStreetMap maps (lazy-loaded)
-- Pipeline uses dropdown selector (not tiny button bar)
-- Borough filter is multi-select toggle buttons
+### IMPORTANT: Never use `src/storage/database.py` for new code
+That file is the legacy SQLite wrapper. All new endpoints use `src.db.session.get_session`.
+
+## Key API Endpoints
+
+### Leads (PE Searcher Persona)
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/leads` | GET | Filtered/sorted leads with pagination |
+| `/api/v1/leads/{id}` | GET | Single lead detail |
+| `/api/v1/leads/{id}` | PATCH | Update pipeline stage, status, notes, priority |
+| `/api/v1/leads/{id}/outreach-events` | GET/POST | Pipeline event log |
+
+### Buildings (PM Operator Persona)
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/buildings` | GET | Buildings sorted by churn_score |
+| `/api/v1/buildings/{bbl}` | GET | Single building detail |
+| `/api/v1/buildings/{bbl}/score` | POST | Rescore single building |
+
+### Agent (AI Assistant)
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/agent/chat` | POST | SSE streaming chat (Claude tool-use) |
+| `/api/agent/conversations` | GET | List past conversations |
+| `/api/agent/conversations/{id}` | GET/DELETE | Conversation history |
+
+### Quality & Scoring
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/quality/summary` | GET | Ingestion job summary |
+| `/api/v1/quality/coverage` | GET | Signal coverage per borough/type |
+| `/api/v1/quality/data-health` | GET | Data health badge (used in footer) |
+| `/api/v1/scoring/configs` | GET/POST | Scoring weight configurations |
+
+## AI Agent Architecture
+
+```
+AgentPanel.tsx (slide-out panel, Cmd+K)
+  → AgentChat.tsx (SSE message loop, safety 90s timeout)
+    → AgentMessage.tsx (renders leads table, scripts, briefing, confirmation cards)
+
+POST /api/agent/chat
+  → orchestrator.py (async generator, Claude tool-use loop)
+    → asyncio.to_thread(execute_tool, ...) ← IMPORTANT: tools are blocking I/O
+      → tools.py (query_leads, get_lead_details, update_leads_batch, ...)
+        → _pg_conn() → PostgreSQL ← All tools use PostgreSQL, NOT SQLite
+```
+
+### Critical: execute_tool Must Run in Thread Pool
+
+`execute_tool()` makes synchronous PostgreSQL network calls. It MUST be called with:
+```python
+result = await asyncio.to_thread(execute_tool, block.name, block.input)
+```
+Calling it directly blocks the async event loop and prevents SSE events from being flushed to the client → 90-second timeout.
+
+### Agent Tools → PostgreSQL
+
+All 7 agent tools use `_pg_conn()` in `tools.py`:
+- `query_leads` → `_pg_leads_filtered()` — PostgreSQL leads table
+- `get_lead_details` → `_pg_lead_by_id()` — PostgreSQL leads table
+- `update_leads_batch` → direct UPDATE via `_pg_conn()`
+- `enrich_leads_batch` → validates IDs via `_pg_lead_by_id()`, writes via `_pg_conn()`
+- `generate_cold_call_scripts` → loads leads via `_pg_lead_by_id()`
+- `compile_email_briefing` → loads leads via `_pg_lead_by_id()`
+- `get_stats` → aggregate SELECT from PostgreSQL
+
+**Never** wire agent tools to `get_database()` (SQLite) — that data doesn't exist.
+
+## Scoring System
+
+Churn probability score (0-100) computed per building using:
+- `complaint_spike` (w=17) — 6mo complaint rate vs prior 6mo
+- `violation_trend` (w=12) — recent violations / unit_count
+- `hpd_litigation` (w=9) — active AEP / litigation / harassment flags
+- `building_size` (w=5) — based on unit_count from PLUTO
+- `ownership_change` (w=20) — ACRIS data (not yet loaded, contributes 0)
+- Others (energy, permits, evictions, facade) — not yet loaded
+
+Weights stored in `scoring_configs` table (configurable from Settings page).
+Score categories: `hot` (≥70), `warm` (≥40), `stable` (<40).
+
+SQL implementation: `backend/scripts/score_buildings.sql`
+
+## Data in Production (Feb 2026)
+
+- 38,494 leads, all at `pipeline_stage=new`, `outreach_status=new`
+- 179,985 buildings with PLUTO unit counts and churn scores
+- 61,095 buildings with complaint data; 45,586 with violation data
+- Enrichment (phone/email/website) at 0% — not yet run against PostgreSQL dataset
+- No deal pipeline data (building_management, outreach_events tables are empty)
+
+## Local Development
+
+```bash
+# Backend
+cd backend
+python -m uvicorn src.main:app --reload --port 8000
+
+# Frontend
+cd frontend
+npm run dev
+# Proxies /api → http://localhost:8000 via vite.config.ts
+
+# Migrations
+cd backend
+alembic upgrade head
+```
+
+### Local PostgreSQL
+Default: `postgresql+asyncpg://postgres:postgres@localhost:5432/hpd_leads`
+Override via `DATABASE_URL` env var.
 
 ## Environment Variables
 
 ```bash
-# Required for AI summaries
-ANTHROPIC_API_KEY=sk-ant-...
+# Required
+DATABASE_URL=postgresql+asyncpg://...   # Set on Railway
+ANTHROPIC_API_KEY=sk-ant-...            # For AI agent + summaries
 
 # Optional
-NYC_OPEN_DATA_APP_TOKEN=...    # Higher rate limits
-CORS_ORIGINS=https://...       # Restrict CORS (default: *)
-ANTHROPIC_MODEL=...            # Default: claude-sonnet-4-20250514
-DATABASE_PATH=...              # Default: ./leads.db
+CORS_ORIGINS=https://...                # Restrict CORS
+NYC_OPEN_DATA_APP_TOKEN=...             # Higher rate limits on NYC APIs
+AGENT_MODEL=claude-3-5-sonnet-latest    # Override agent model
+SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, EMAIL_TO_DEFAULT  # Email briefings
 ```
-
-## Database
-
-SQLite with tables:
-- `leads` - All lead data
-- `metadata` - Refresh timestamps
-- `enrichment_jobs` - Persistent job tracking
-- `app_settings` - Key/value settings (revenue/violations timestamps, versions)
-
-Location: `./leads.db` (Railway persistent volume)
 
 ## Deployment
 
 ### Backend (Railway)
-1. Uses `Dockerfile` for build
-2. Persistent volume mounted at `/app`
-3. Auto-deploys from GitHub `master` branch
-4. Gunicorn with 300s timeout
+- Auto-deploys from `feature/enterprise-rearchitecture` branch push
+- Uses `Dockerfile` in `backend/`
+- `railway up` for manual force-deploy
 
 ### Frontend (Vercel)
-1. Vite + React + TypeScript
-2. Manual deploy: `cd frontend && npx vercel --prod --yes`
-3. Production URL: https://frontend-nine-psi-58.vercel.app
-4. Env vars: `VITE_API_URL`, `VITE_GOOGLE_MAPS_KEY`
+- Auto-deploys from branch push
+- Manual: `cd frontend && npx vercel --prod --yes`
+- Env: `VITE_API_URL=https://hpd-leads-app-production.up.railway.app`
 
-## Status (Feb 9, 2026)
+## Known Issues / Pending Work
 
-- 102,505 leads loaded from 200k+ buildings
-- Enrichment completed for top 500 leads
-- Revenue estimation (v2) and violations data computed
-- Robustness hardening (R1-R12) complete: startup resilience, SQLite WAL, cache TTL, CORS regex, cold-start UX, error boundary, fetchWithRetry
-- All Socrata dataset IDs and Anthropic model configurable via env vars
-- backup_db.py script available for scheduled backups
+- Enrichment (phone/email/website) hasn't been run against PostgreSQL dataset — 38K leads at 0%
+- `feature/enterprise-rearchitecture` branch not yet merged to main
+- ACRIS ownership change data not loaded → ownership_change signal always 0
+- DOB permits, eviction, energy grade, facade signals not yet loaded
+- `building_management` and `outreach_events` tables empty (no pipeline data entered yet)
+- `src/storage/database.py` (SQLite) still exists but should be treated as dead code
 
-**Final Polish (Feb 9, 2026):**
-- Server-side sort/search with debounced input
-- Leaflet/OpenStreetMap maps (replaced Google Static Maps)
-- Mobile responsive: card view, full-screen detail, responsive padding
-- Email templates with auto-logged outreach
-- DD report: key risks summary, print-to-PDF, improved comparables
-- Enrichment gaps endpoint + Dashboard indicator
-- Backup-on-startup automation
-- Bug fixes: null guards, formatCurrency safety, input validation
+## Status — Feb 23, 2026
 
-## Known Issues / Future Work
-
-- Violations take several minutes to compute on first startup (59k buildings)
-- Some leads are co-op complexes (e.g., Deepdale Gardens with 128k units) which may not be true PE targets
-- LinkedIn search gets 429'd by Google; consider alternative data sources
-- Consider upgrading to PostgreSQL for production robustness
-- CRM integration potential (link with Personal CRM v2 when built)
-- User authentication (if sharing with others)
+Agent fully functional end-to-end:
+- Lead query returns results from PostgreSQL
+- Clicking agent leads opens LeadDetail drawer correctly
+- Lead table in agent paginated (10 per page, Show More button)
+- No 90-second timeout (execute_tool runs in thread pool)
