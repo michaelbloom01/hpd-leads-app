@@ -236,7 +236,7 @@ async def trigger_recalculate(
                     breakdown[name] = {"raw": round(raw, 1), "weight": base_weight, "effective_weight": round(effective_weight, 1), "contribution": round(contribution, 1)}
 
                 churn_score = min(100.0, max(0.0, weighted_sum))
-                category = "hot" if churn_score >= 70 else "warm" if churn_score >= 40 else "stable"
+                category = "hot" if churn_score >= 35 else "warm" if churn_score >= 15 else "stable"
                 key_signal = max(((n, d["contribution"]) for n, d in breakdown.items() if d["contribution"] > 0), key=lambda x: x[1], default=("none", 0))[0]
                 sync_session.execute(sa_text("UPDATE buildings SET churn_score=:score, churn_category=:category, churn_breakdown=:breakdown, key_signal=:key, scoring_config_id=:cfg_id, signals_available=:available, coverage_ratio=:coverage, last_scored_at=:now, updated_at=:now WHERE bbl=:bbl"),
                     {"score": round(churn_score, 1), "category": category, "breakdown": json.dumps(breakdown), "key": key_signal, "cfg_id": cfg_id, "available": available, "coverage": round(available / len(SIGNAL_NAMES), 2), "now": now, "bbl": bbl})
