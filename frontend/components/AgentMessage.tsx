@@ -100,7 +100,13 @@ const AgentMessage: React.FC<AgentMessageProps> = ({ message, onSelectLead, onCo
 
 // --- Sub-components ---
 
+const PAGE_SIZE = 10;
+
 const LeadTable: React.FC<{ leads: AgentLeadRow[]; onSelectLead: (id: string) => void }> = ({ leads, onSelectLead }) => {
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const visible = leads.slice(0, visibleCount);
+  const remaining = leads.length - visibleCount;
+
   return (
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
       <div className="overflow-x-auto">
@@ -116,7 +122,7 @@ const LeadTable: React.FC<{ leads: AgentLeadRow[]; onSelectLead: (id: string) =>
             </tr>
           </thead>
           <tbody>
-            {leads.map((lead) => (
+            {visible.map((lead) => (
               <tr
                 key={lead.lead_id}
                 onClick={() => onSelectLead(lead.lead_id)}
@@ -148,8 +154,18 @@ const LeadTable: React.FC<{ leads: AgentLeadRow[]; onSelectLead: (id: string) =>
           </tbody>
         </table>
       </div>
-      <div className="px-3 py-1.5 text-[10px] text-gray-400 bg-gray-50 border-t border-gray-100">
-        {leads.length} leads shown · Click to view details
+      <div className="px-3 py-1.5 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
+        <span className="text-[10px] text-gray-400">
+          Showing {visible.length} of {leads.length} · Click row to view details
+        </span>
+        {remaining > 0 && (
+          <button
+            onClick={() => setVisibleCount(v => Math.min(v + PAGE_SIZE, leads.length))}
+            className="text-[10px] text-emerald-600 hover:text-emerald-700 font-medium"
+          >
+            Show {Math.min(remaining, PAGE_SIZE)} more ↓
+          </button>
+        )}
       </div>
     </div>
   );

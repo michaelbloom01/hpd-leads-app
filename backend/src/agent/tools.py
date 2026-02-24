@@ -2,7 +2,7 @@
 Agent tool implementations.
 
 Eight tools, each a plain Python function that returns a dict.
-No raw SQL anywhere — all queries go through database.py's validated methods.
+All database access goes through PostgreSQL (src.db.session.get_sync_url).
 """
 
 import json
@@ -10,12 +10,111 @@ import logging
 import os
 import threading
 import time
+from contextlib import contextmanager
+from functools import lru_cache
 from typing import Optional
 
-from src.storage.database import get_database
 from src.agent.types import AgentLeadRow
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# PostgreSQL sync helpers (replace legacy SQLite get_database())
+# ---------------------------------------------------------------------------
+
+@lru_cache(maxsize=1)
+def _get_pg_engine():
+    from sqlalchemy import create_engine
+    from src.db.session import get_sync_url
+    return create_engine(get_sync_url(), pool_size=3, max_overflow=5, pool_pre_ping=True)
+
+
+@contextmanager
+def _pg_conn():
+    """Synchronous PostgreSQL connection context manager for agent tools."""
+    engine = _get_pg_engine()
+    with engine.connect() as conn:
+        yield conn
+
+
+def _pg_lead_by_id(conn, lead_id: str) -> Optional[dict]:
+    """Fetch a single lead from PostgreSQL by lead_id."""
+    from sqlalchemy import text
+    row = conn.execute(text("SELECT * FROM leads WHERE lead_id = :lid"), {"lid": lead_id}).first()
+    return dict(row._mapping) if row else None
+
+
+def _pg_leads_filtered(
+    conn,
+    min_score=None, max_score=None,
+    min_units=None, max_units=None,
+    boro=None, entity_type=None, enrichment_status=None,
+    pipeline_stage=None, has_phone=None, has_email=None, has_website=None,
+    min_violations_per_unit=None, max_violations_per_unit=None,
+    min_revenue=None, max_revenue=None,
+    building_type_has=None, search=None,
+    sort_by="score", sort_dir="desc",
+    limit=20, offset=0,
+) -> tuple[list[dict], int]:
+    """Query PostgreSQL leads with filters. Returns (rows, total_count)."""
+    from sqlalchemy import text
+
+    wheres = []
+    params: dict = {"limit": limit, "offset": offset}
+
+    if min_score is not None:
+        wheres.append("score >= :min_score"); params["min_score"] = min_score
+    if max_score is not None:
+        wheres.append("score <= :max_score"); params["max_score"] = max_score
+    if min_units is not None:
+        wheres.append("total_units >= :min_units"); params["min_units"] = min_units
+    if max_units is not None:
+        wheres.append("total_units <= :max_units"); params["max_units"] = max_units
+    if boro:
+        wheres.append("UPPER(primary_borough) = UPPER(:boro)"); params["boro"] = boro
+    if entity_type:
+        wheres.append("entity_type = :entity_type"); params["entity_type"] = entity_type
+    if enrichment_status:
+        wheres.append("enrichment_status = :enr_status"); params["enr_status"] = enrichment_status
+    if pipeline_stage:
+        wheres.append("pipeline_stage = :pipeline_stage"); params["pipeline_stage"] = pipeline_stage
+    if has_phone is True:
+        wheres.append("phone IS NOT NULL AND phone != ''")
+    elif has_phone is False:
+        wheres.append("(phone IS NULL OR phone = '')")
+    if has_email is True:
+        wheres.append("email IS NOT NULL AND email != ''")
+    elif has_email is False:
+        wheres.append("(email IS NULL OR email = '')")
+    if has_website is True:
+        wheres.append("website IS NOT NULL AND website != ''")
+    elif has_website is False:
+        wheres.append("(website IS NULL OR website = '')")
+    if min_violations_per_unit is not None:
+        wheres.append("violations_per_unit >= :min_vpu"); params["min_vpu"] = min_violations_per_unit
+    if max_violations_per_unit is not None:
+        wheres.append("violations_per_unit <= :max_vpu"); params["max_vpu"] = max_violations_per_unit
+    if min_revenue is not None:
+        wheres.append("estimated_annual_revenue >= :min_rev"); params["min_rev"] = min_revenue
+    if max_revenue is not None:
+        wheres.append("estimated_annual_revenue <= :max_rev"); params["max_rev"] = max_revenue
+    if building_type_has:
+        wheres.append("building_types::text ILIKE :bth"); params["bth"] = f"%{building_type_has}%"
+    if search:
+        wheres.append("(company_name ILIKE :search OR lead_id ILIKE :search)"); params["search"] = f"%{search}%"
+
+    where_sql = " AND ".join(wheres) if wheres else "1=1"
+    allowed_sorts = {"score", "portfolio_size", "total_units", "estimated_annual_revenue", "violations_per_unit"}
+    col = sort_by if sort_by in allowed_sorts else "score"
+    direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
+
+    total = conn.execute(text(f"SELECT COUNT(*) FROM leads WHERE {where_sql}"), params).scalar() or 0
+    rows = conn.execute(
+        text(f"SELECT * FROM leads WHERE {where_sql} ORDER BY {col} {direction} NULLS LAST LIMIT :limit OFFSET :offset"),
+        params,
+    ).fetchall()
+    return [dict(r._mapping) for r in rows], total
 
 # Valid pipeline stages (used for validation)
 VALID_PIPELINE_STAGES = {
@@ -77,37 +176,27 @@ def query_leads(
     search: Optional[str] = None,
     sort_by: str = "score",
     sort_dir: str = "desc",
-    limit: int = 20,
+    limit: int = 25,
 ) -> dict:
     """Search and filter leads. Returns structured lead rows + total count."""
-    db = get_database()
+    # Hard cap at 100
+    limit = min(max(limit, 1), 100)
 
-    # Hard cap at 50
-    limit = min(max(limit, 1), 50)
-
-    rows, total_count = db.get_leads_filtered(
-        min_score=min_score,
-        max_score=max_score,
-        min_units=min_units,
-        max_units=max_units,
-        boro=boro,
-        building_type_has=building_type_has,
-        entity_type=entity_type,
-        enrichment_status=enrichment_status,
-        pipeline_stage=pipeline_stage,
-        has_phone=has_phone,
-        has_email=has_email,
-        has_website=has_website,
-        min_violations_per_unit=min_violations_per_unit,
-        max_violations_per_unit=max_violations_per_unit,
-        min_revenue=min_revenue,
-        max_revenue=max_revenue,
-        search=search,
-        sort_by=sort_by,
-        sort_dir=sort_dir,
-        limit=limit,
-        offset=0,
-    )
+    with _pg_conn() as conn:
+        rows, total_count = _pg_leads_filtered(
+            conn,
+            min_score=min_score, max_score=max_score,
+            min_units=min_units, max_units=max_units,
+            boro=boro, building_type_has=building_type_has,
+            entity_type=entity_type, enrichment_status=enrichment_status,
+            pipeline_stage=pipeline_stage, has_phone=has_phone,
+            has_email=has_email, has_website=has_website,
+            min_violations_per_unit=min_violations_per_unit,
+            max_violations_per_unit=max_violations_per_unit,
+            min_revenue=min_revenue, max_revenue=max_revenue,
+            search=search, sort_by=sort_by, sort_dir=sort_dir,
+            limit=limit, offset=0,
+        )
 
     leads = [_row_to_agent_lead(r) for r in rows]
 
@@ -166,22 +255,19 @@ def query_leads(
 
 def get_lead_details(lead_id: str) -> dict:
     """Get full details for a single lead."""
-    db = get_database()
-    row = db.get_lead_by_id(lead_id)
+    with _pg_conn() as conn:
+        row = _pg_lead_by_id(conn, lead_id)
     if not row:
         return {"error": f"Lead {lead_id} not found"}
 
-    # Return the full row data
-    result = dict(row)
-    # Parse JSON fields
     for json_field in ["buildings", "boros", "contacts", "building_types",
                        "building_classes", "enrichment_sources", "score_breakdown", "tags"]:
-        if result.get(json_field) and isinstance(result[json_field], str):
+        if row.get(json_field) and isinstance(row[json_field], str):
             try:
-                result[json_field] = json.loads(result[json_field])
+                row[json_field] = json.loads(row[json_field])
             except (json.JSONDecodeError, TypeError):
                 pass
-    return result
+    return row
 
 
 # ---------------------------------------------------------------------------
@@ -195,8 +281,6 @@ def update_leads_batch(
     next_follow_up: Optional[str] = None,
 ) -> dict:
     """Update pipeline stage, priority, or follow-up for a batch of leads."""
-    db = get_database()
-
     # Validate inputs
     if pipeline_stage and pipeline_stage not in VALID_PIPELINE_STAGES:
         return {"error": f"Invalid pipeline_stage: {pipeline_stage}. Must be one of: {', '.join(VALID_PIPELINE_STAGES)}"}
@@ -214,34 +298,35 @@ def update_leads_batch(
     if not updates:
         return {"error": "No update fields provided"}
 
+    from sqlalchemy import text
     updated = 0
     failed = []
-    for lid in lead_ids:
-        try:
-            success = db.update_lead(lid, updates)
-            if success:
-                updated += 1
-            else:
-                failed.append(lid)
-        except Exception as e:
-            logger.error(f"Failed to update lead {lid}: {e}")
-            failed.append(lid)
 
-    # Also update the in-memory cache if it exists
-    try:
-        import api as _api
-        with _api._leads_lock:
-            for i, lead in enumerate(_api._leads_cache):
-                if lead.lead_id in lead_ids:
-                    if pipeline_stage:
-                        lead.pipeline_stage = pipeline_stage
-                    if priority_rank is not None:
-                        lead.priority_rank = priority_rank
-                    if next_follow_up:
-                        lead.next_follow_up = next_follow_up
-                    _api._leads_cache[i] = lead
-    except Exception as e:
-        logger.warning(f"Could not update in-memory cache: {e}")
+    set_clauses = ["updated_at = NOW()"]
+    params_base: dict = {}
+    if pipeline_stage:
+        set_clauses.append("pipeline_stage = :pipeline_stage"); params_base["pipeline_stage"] = pipeline_stage
+    if priority_rank is not None:
+        set_clauses.append("priority_rank = :priority_rank"); params_base["priority_rank"] = priority_rank
+    if next_follow_up:
+        set_clauses.append("next_follow_up = :next_follow_up"); params_base["next_follow_up"] = next_follow_up
+
+    with _pg_conn() as conn:
+        for lid in lead_ids:
+            try:
+                result = conn.execute(
+                    text(f"UPDATE leads SET {', '.join(set_clauses)} WHERE lead_id = :lid"),
+                    {**params_base, "lid": lid},
+                )
+                conn.commit()
+                if result.rowcount > 0:
+                    updated += 1
+                else:
+                    failed.append(lid)
+            except Exception as e:
+                logger.error(f"Failed to update lead {lid}: {e}")
+                conn.rollback()
+                failed.append(lid)
 
     actions = []
     if pipeline_stage:
@@ -270,13 +355,13 @@ def enrich_leads_batch(lead_ids: list[str]) -> dict:
     if len(lead_ids) > 20:
         return {"error": "Maximum 20 leads per enrichment batch. Please narrow your selection."}
 
-    # Validate leads exist
-    db = get_database()
+    # Validate leads exist in PostgreSQL
     valid_ids = []
-    for lid in lead_ids:
-        row = db.get_lead_by_id(lid)
-        if row:
-            valid_ids.append(lid)
+    with _pg_conn() as conn:
+        for lid in lead_ids:
+            row = _pg_lead_by_id(conn, lid)
+            if row:
+                valid_ids.append(lid)
 
     if not valid_ids:
         return {"error": "No valid lead IDs found"}
@@ -293,7 +378,8 @@ def enrich_leads_batch(lead_ids: list[str]) -> dict:
 
             for lid in valid_ids:
                 try:
-                    row = db.get_lead_by_id(lid)
+                    with _pg_conn() as _conn:
+                        row = _pg_lead_by_id(_conn, lid)
                     if not row:
                         continue
                     company_name = row.get("company_name") or row.get("agent_name") or row.get("owner_name") or ""
@@ -425,39 +511,17 @@ def enrich_leads_batch(lead_ids: list[str]) -> dict:
                     if current_stage == "research" and has_contact:
                         updates["pipeline_stage"] = "first_contact"
 
-                    # === Persist: update leads table ===
+                    # === Persist: update leads table in PostgreSQL ===
                     if updates:
-                        db.update_lead(lid, updates)
-
-                    # === Persist: dual-write to enrichment_cache ===
-                    db.save_enrichment(
-                        lead_id=lid,
-                        phone=updates.get("phone") or row.get("phone"),
-                        email=updates.get("email") or row.get("email"),
-                        website=updates.get("website") or row.get("website"),
-                        business_summary=updates.get("business_summary") or row.get("business_summary"),
-                        owner_principal=updates.get("owner_principal") or row.get("owner_principal"),
-                        enrichment_status=updates.get("enrichment_status", "none"),
-                        enrichment_sources=all_sources,
-                    )
-
-                    # Update in-memory cache
-                    try:
-                        import api as _api
-                        with _api._leads_lock:
-                            for i, lead in enumerate(_api._leads_cache):
-                                if lead.lead_id == lid:
-                                    for k, v in updates.items():
-                                        if k == "enrichment_sources":
-                                            setattr(lead, k, all_sources)
-                                        elif k == "last_enriched":
-                                            setattr(lead, k, _dt.now())
-                                        else:
-                                            setattr(lead, k, v)
-                                    _api._leads_cache[i] = lead
-                                    break
-                    except Exception:
-                        pass
+                        from sqlalchemy import text as _text
+                        set_parts = [f"{k} = :{k}" for k in updates]
+                        set_parts.append("updated_at = NOW()")
+                        with _pg_conn() as _wr_conn:
+                            _wr_conn.execute(
+                                _text(f"UPDATE leads SET {', '.join(set_parts)} WHERE lead_id = :lead_id"),
+                                {**updates, "lead_id": lid},
+                            )
+                            _wr_conn.commit()
 
                     time.sleep(2)  # Rate limit between leads
                 except Exception as e:
@@ -487,38 +551,37 @@ def generate_cold_call_scripts(lead_ids: list[str]) -> dict:
     if len(lead_ids) > 10:
         return {"error": "Maximum 10 leads per script generation batch."}
 
-    db = get_database()
     leads_data = []
-    for lid in lead_ids:
-        row = db.get_lead_by_id(lid)
-        if row:
-            # Parse JSON fields
-            boros = []
-            if row.get("boros"):
-                try:
-                    boros = json.loads(row["boros"]) if isinstance(row["boros"], str) else row["boros"]
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            building_types = {}
-            if row.get("building_types"):
-                try:
-                    building_types = json.loads(row["building_types"]) if isinstance(row["building_types"], str) else row["building_types"]
-                except (json.JSONDecodeError, TypeError):
-                    pass
+    with _pg_conn() as conn:
+        for lid in lead_ids:
+            row = _pg_lead_by_id(conn, lid)
+            if row:
+                boros = row.get("boros") or []
+                if isinstance(boros, str):
+                    try:
+                        boros = json.loads(boros)
+                    except (json.JSONDecodeError, TypeError):
+                        boros = []
+                building_types = row.get("building_types") or {}
+                if isinstance(building_types, str):
+                    try:
+                        building_types = json.loads(building_types)
+                    except (json.JSONDecodeError, TypeError):
+                        building_types = {}
 
-            leads_data.append({
-                "lead_id": lid,
-                "company_name": row.get("company_name") or row.get("agent_name") or "Unknown",
-                "owner_name": row.get("owner_name") or "the owner",
-                "phone": row.get("phone"),
-                "portfolio_size": row.get("portfolio_size") or 0,
-                "total_units": row.get("total_units") or 0,
-                "boros": boros,
-                "building_types": building_types,
-                "violations_per_unit": row.get("violations_per_unit") or 0.0,
-                "business_summary": row.get("business_summary") or "",
-                "estimated_annual_revenue": row.get("estimated_annual_revenue") or 0.0,
-            })
+                leads_data.append({
+                    "lead_id": lid,
+                    "company_name": row.get("company_name") or "Unknown",
+                    "owner_name": row.get("owner_name") or "the owner",
+                    "phone": row.get("phone"),
+                    "portfolio_size": row.get("portfolio_size") or 0,
+                    "total_units": row.get("total_units") or 0,
+                    "boros": boros,
+                    "building_types": building_types,
+                    "violations_per_unit": row.get("violations_per_unit") or 0.0,
+                    "business_summary": row.get("business_summary") or "",
+                    "estimated_annual_revenue": row.get("estimated_annual_revenue") or 0.0,
+                })
 
     if not leads_data:
         return {"error": "No valid leads found for script generation."}
@@ -641,12 +704,12 @@ def compile_email_briefing(
     recipient_email: Optional[str] = None,
 ) -> dict:
     """Compile an HTML email briefing for the specified leads."""
-    db = get_database()
     leads_data = []
-    for lid in lead_ids:
-        row = db.get_lead_by_id(lid)
-        if row:
-            leads_data.append(_row_to_agent_lead(row))
+    with _pg_conn() as conn:
+        for lid in lead_ids:
+            row = _pg_lead_by_id(conn, lid)
+            if row:
+                leads_data.append(_row_to_agent_lead(row))
 
     if not leads_data:
         return {"error": "No valid leads found for briefing."}
@@ -700,9 +763,37 @@ def refine_rent_estimates(lead_ids: list[str]) -> dict:
 
 def get_stats() -> dict:
     """Get aggregate statistics about the leads database."""
-    db = get_database()
-    stats = db.get_stats_sql()
-    return stats
+    from sqlalchemy import text
+    with _pg_conn() as conn:
+        row = conn.execute(text("""
+            SELECT
+                COUNT(*) AS total_leads,
+                COALESCE(SUM(portfolio_size), 0) AS total_buildings,
+                COALESCE(SUM(total_units), 0) AS total_units,
+                COALESCE(AVG(score), 0) AS avg_score,
+                COALESCE(MAX(score), 0) AS top_score,
+                COUNT(*) FILTER (WHERE phone IS NOT NULL AND phone != '') AS with_phone,
+                COUNT(*) FILTER (WHERE email IS NOT NULL AND email != '') AS with_email,
+                COUNT(*) FILTER (WHERE outreach_status = 'contacted') AS contacted,
+                COUNT(*) FILTER (WHERE pipeline_stage != 'research' AND pipeline_stage IS NOT NULL) AS in_pipeline
+            FROM leads
+        """)).first()
+        by_boro = {r[0] or "Unknown": r[1] for r in conn.execute(
+            text("SELECT primary_borough, COUNT(*) FROM leads GROUP BY primary_borough ORDER BY 2 DESC LIMIT 10")
+        ).fetchall()}
+
+    return {
+        "total_leads": row[0],
+        "total_buildings": row[1],
+        "total_units": row[2],
+        "avg_score": round(float(row[3]), 1),
+        "top_score": round(float(row[4]), 1),
+        "with_phone": row[5],
+        "with_email": row[6],
+        "contacted": row[7],
+        "in_pipeline": row[8],
+        "by_borough": by_boro,
+    }
 
 
 # ---------------------------------------------------------------------------
