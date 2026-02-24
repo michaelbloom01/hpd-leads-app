@@ -521,29 +521,6 @@ export async function enrichLeads(leadIds: string[]): Promise<{
   return response.json();
 }
 
-/**
- * Deep research a lead
- */
-export async function researchLead(leadId: string): Promise<CompanyResearch> {
-  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/research`, { method: 'POST' }, 1, 60000);
-  if (!response.ok) throw new Error(`Failed to research lead: ${response.statusText}`);
-  return response.json();
-}
-
-/**
- * Generate AI summary for a lead
- */
-export async function generateAiSummary(leadId: string): Promise<{
-  status: string;
-  lead_id: string;
-  ai_description: string | null;
-  message?: string;
-}> {
-  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/ai-summary`, { method: 'POST' }, 1, 30000);
-  if (!response.ok) throw new Error(`Failed to generate AI summary: ${response.statusText}`);
-  return response.json();
-}
-
 /** NY DOS Corporation info */
 export interface DOSInfo {
   dos_id: string;
@@ -574,15 +551,6 @@ export interface ContactEnrichmentResult {
     hunter: { configured: boolean; calls: number; description?: string };
     web_crawl: { configured: boolean; calls: number; description?: string };
   };
-}
-
-/**
- * Enrich a lead's contact info using multiple sources
- */
-export async function enrichLeadContacts(leadId: string): Promise<ContactEnrichmentResult> {
-  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/enrich-contacts`, { method: 'POST' }, 1, 60000);
-  if (!response.ok) throw new Error(`Failed to enrich contacts: ${response.statusText}`);
-  return response.json();
 }
 
 /**

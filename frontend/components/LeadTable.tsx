@@ -404,7 +404,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error('Server export failed, falling back to client export:', err);
-      const headers = ['Company','Company Name','Entity Type','Primary Contact','Owner Name','Boroughs','Buildings','Units','Score','Est Annual Revenue','Violations/Unit','Violation Count','Phone','Email','Website','Enrichment Status','Outreach Status','Pipeline Stage','Priority','Next Follow-Up'];
+      const headers = ['Company','Company Name','Entity Type','Primary Contact','Owner Name','Boroughs','Buildings','Units','Score','Est Annual Revenue','Violations/Unit','Violation Count','Phone','Email','Company Website','Enrichment Status','Outreach Status','Pipeline Stage','Priority','Next Follow-Up'];
       const rows = displayLeads.map(lead => [
         lead.agent_name || '', lead.company_name || '', lead.entity_type || '', lead.primary_contact || '',
         lead.owner_name || '', lead.boros?.join(', ') || lead.boro || '', lead.portfolio_size, lead.total_units,
@@ -481,26 +481,37 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3 md:p-4">
         {/* Primary Filters Row */}
         <div className="flex flex-wrap items-center gap-2 md:gap-3">
-          <div className="flex-1 min-w-[160px] md:min-w-[200px] flex gap-1">
-            <input type="text" placeholder={searchMode === 'leads' ? "Search name, company, or address..." : "Search by building address (e.g., 140 E 28th St)..."}
-              className="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          <div className="flex-1 min-w-[160px] md:min-w-[280px] flex flex-col gap-1.5">
+            <div className="flex rounded-lg border border-gray-300 overflow-hidden" role="group">
+              <button
+                onClick={() => { if (searchMode !== 'leads') { setSearchMode('leads'); setAddressResults([]); } }}
+                className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors ${
+                  searchMode === 'leads'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-gray-500 hover:bg-gray-50'
+                }`}
+              >
+                PM Companies
+              </button>
+              <button
+                onClick={() => { if (searchMode !== 'address') { setSearchMode('address'); setAddressResults([]); } }}
+                className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors border-l border-gray-300 ${
+                  searchMode === 'address'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-gray-500 hover:bg-gray-50'
+                }`}
+              >
+                Address Lookup
+              </button>
+            </div>
+            <input type="text" placeholder={searchMode === 'leads' ? "Search by company name, owner, or agent..." : "Search by building address (e.g., 140 E 28th St)..."}
+              className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
               value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   applyFilters();
                 }
               }} />
-            <button
-              onClick={() => { setSearchMode(searchMode === 'leads' ? 'address' : 'leads'); setAddressResults([]); }}
-              className={`px-2 py-1.5 rounded-lg text-[10px] font-medium border transition-colors whitespace-nowrap ${
-                searchMode === 'address'
-                  ? 'bg-blue-50 border-blue-300 text-blue-700'
-                  : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
-              }`}
-              title={searchMode === 'leads' ? 'Switch to address search' : 'Switch to company name search'}
-            >
-              {searchMode === 'leads' ? '📍' : '👤'}
-            </button>
           </div>
           {/* Borough multi-select toggles — horizontally scrollable on mobile */}
           <div className="flex gap-1 overflow-x-auto flex-shrink-0 scrollbar-hide">
@@ -592,8 +603,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                 <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMaxUnitsPerBldg} onChange={(e) => setFilterMaxUnitsPerBldg(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
               </div>
               <button onClick={() => setFilterHasWebsite(filterHasWebsite === true ? null : true)}
+                title="Filter leads where a company website was found via enrichment"
                 className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasWebsite === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
-                {filterHasWebsite === true && <span className="text-emerald-600">✓</span>}Website
+                {filterHasWebsite === true && <span className="text-emerald-600">✓</span>}Has Website
               </button>
             </div>
             {/* Row 2: Building types */}
@@ -808,7 +820,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                 </th>
                 <th className="px-4 py-3">Contact</th>
                 <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors" onClick={() => handleSort('enrichment_status')}
-                  title="How much contact data we have: green dots = phone/email found, website found, full research complete">
+                  title="Enrichment progress: green dots = phone/email found, company website found, full research complete">
                   Info <SortIcon field="enrichment_status" />
                 </th>
               </tr>
@@ -927,7 +939,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                         </a>
                       )}
                       {lead.website && (
-                        <a href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`} target="_blank" rel="noopener noreferrer" title={`Website: ${lead.website}`} className="p-1.5 hover:bg-purple-50 rounded transition-colors">
+                        <a href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`} target="_blank" rel="noopener noreferrer" title={`Company website: ${lead.website}`} className="p-1.5 hover:bg-purple-50 rounded transition-colors">
                           <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>
                           </svg>
@@ -938,12 +950,12 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-1.5" title={`Enrichment: ${
-                        lead.enrichment_status === 'complete' ? 'Complete — contacts, website, and summary found' :
-                        lead.enrichment_status === 'partial' ? 'Partial — some data found' :
-                        lead.enrichment_status === 'failed' ? 'Enriched but no data found' :
-                        'Not yet enriched'
-                      }\nPhone: ${lead.phone || 'None'}\nEmail: ${lead.email || 'None'}\nWebsite: ${lead.website || 'None'}${lead.business_summary ? '\nAI Summary: Yes' : ''}`}>
+                      <div className="flex items-center gap-1.5" title={`Enrichment status: ${
+                        lead.enrichment_status === 'complete' ? 'Complete — phone, email, company website, and AI summary all found' :
+                        lead.enrichment_status === 'partial' ? 'Partial — some contact info found, click lead to see details' :
+                        lead.enrichment_status === 'failed' ? 'Attempted — no public contact data could be found' :
+                        'Not yet enriched — open lead and click "Enrich Lead" to search for contact info'
+                      }\n\nPhone: ${lead.phone || 'Not found'}\nEmail: ${lead.email || 'Not found'}\nCompany Website: ${lead.website || 'Not found'}${lead.business_summary ? '\nAI Summary: Available' : ''}`}>
                         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
                           lead.enrichment_status === 'complete' ? 'bg-emerald-50 text-emerald-700' :
                           lead.enrichment_status === 'partial' ? 'bg-amber-50 text-amber-700' :

@@ -55,6 +55,72 @@ async def recalculate_categories(
     return {"status": "started", "message": "Recalculating categories in background"}
 
 
+@router.post("/admin/recompute-lead-units")
+async def recompute_lead_units(
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Recompute total_units for all leads from building_contacts + buildings.
+
+    Uses the same normalization as generate_leads_from_buildings.py:
+    lead.normalized_name = UPPER(TRIM(contact_name)).
+    """
+    result = await session.execute(text("""
+        UPDATE leads l
+        SET total_units = sub.units, updated_at = NOW()
+        FROM (
+            SELECT norm_name, COALESCE(SUM(unit_count), 0) AS units
+            FROM (
+                SELECT DISTINCT
+                    UPPER(TRIM(
+                        CASE WHEN bc.corporation_name IS NOT NULL AND TRIM(bc.corporation_name) != ''
+                             THEN bc.corporation_name
+                             ELSE CONCAT(COALESCE(bc.first_name,''), ' ', COALESCE(bc.last_name,''))
+                        END
+                    )) AS norm_name,
+                    bc.bbl,
+                    b.unit_count
+                FROM building_contacts bc
+                JOIN buildings b ON bc.bbl = b.bbl
+                WHERE bc.contact_type IN ('Agent','Owner','CorporateOwner','IndividualOwner',
+                                          'HeadOfficer','Officer','Shareholder')
+            ) deduped
+            GROUP BY norm_name
+        ) sub
+        WHERE l.normalized_name = sub.norm_name
+          AND (l.total_units IS NULL OR l.total_units = 0)
+          AND sub.units > 0
+    """))
+    await session.commit()
+    updated = result.rowcount
+
+    sample = await session.execute(text("""
+        SELECT normalized_name, total_units, portfolio_size
+        FROM leads WHERE total_units > 0
+        ORDER BY total_units DESC LIMIT 5
+    """))
+    top = [{"name": r[0], "units": r[1], "buildings": r[2]} for r in sample]
+
+    stats = await session.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE total_units > 0) AS with_units,
+            COUNT(*) FILTER (WHERE total_units = 0 OR total_units IS NULL) AS without_units,
+            MAX(total_units) AS max_units,
+            ROUND(AVG(CASE WHEN total_units > 0 THEN total_units END)::numeric, 1) AS avg_units
+        FROM leads
+    """))
+    s = stats.first()
+
+    return {
+        "updated": updated,
+        "with_units": s[0],
+        "without_units": s[1],
+        "max_units": s[2],
+        "avg_units": float(s[3]) if s[3] else 0,
+        "top_leads": top,
+    }
+
+
 @router.get("/health")
 async def health_check(session: AsyncSession = Depends(get_session)):
     lead_count = (await session.execute(text("SELECT COUNT(*) FROM leads"))).scalar() or 0

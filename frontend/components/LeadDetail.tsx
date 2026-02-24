@@ -157,7 +157,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   const handleGenerateDD = async () => {
     setIsLoadingDD(true);
     try { const result = await getDueDiligence(lead.lead_id); setDdReport(result); } 
-    catch (err) { console.error('DD report failed:', err); toast.error('Failed to generate DD report'); } 
+    catch (err) { console.error('DD report failed:', err); toast.error('Due diligence report is not yet available'); } 
     finally { setIsLoadingDD(false); }
   };
 
@@ -324,12 +324,12 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 {showEmailMenu && (
                 <div className="absolute top-full left-0 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-xl z-50 py-1">
                   <a href={`mailto:${enrichedLead.email}?subject=Property Management Services — ${enrichedLead.company_name || enrichedLead.agent_name || 'Introduction'}&body=Hi ${enrichedLead.primary_contact || 'there'},%0D%0A%0D%0AI noticed your portfolio of ${enrichedLead.portfolio_size} buildings across ${(enrichedLead.boros || [enrichedLead.boro]).join(', ')} and wanted to introduce our property management services.%0D%0A%0D%0AWould you have time for a brief call this week?%0D%0A%0D%0ABest regards`}
-                    onClick={() => { setShowEmailMenu(false); addOutreachAttempt(lead.lead_id, { method: 'email', outcome: 'sent_email', notes: 'Intro template sent' }).catch(() => {}); }}
+                    onClick={() => { setShowEmailMenu(false); addOutreachAttempt(lead.lead_id, { method: 'email', outcome: 'sent_email', notes: 'Intro template sent' }).catch(() => toast.error('Failed to log outreach')); }}
                     className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors">
                     Intro Template
                   </a>
                   <a href={`mailto:${enrichedLead.email}?subject=Following up — ${enrichedLead.company_name || enrichedLead.agent_name || ''}&body=Hi ${enrichedLead.primary_contact || 'there'},%0D%0A%0D%0AI wanted to follow up on my previous message regarding your ${enrichedLead.portfolio_size}-building portfolio.%0D%0A%0D%0AWe specialize in portfolios like yours in ${(enrichedLead.boros || [enrichedLead.boro]).join(' and ')} and believe we can add value.%0D%0A%0D%0AWould you be open to a brief conversation?%0D%0A%0D%0ABest regards`}
-                    onClick={() => { setShowEmailMenu(false); addOutreachAttempt(lead.lead_id, { method: 'email', outcome: 'sent_email', notes: 'Follow-up template sent' }).catch(() => {}); }}
+                    onClick={() => { setShowEmailMenu(false); addOutreachAttempt(lead.lead_id, { method: 'email', outcome: 'sent_email', notes: 'Follow-up template sent' }).catch(() => toast.error('Failed to log outreach')); }}
                     className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors">
                     Follow-Up Template
                   </a>
@@ -343,7 +343,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
               </div>
             )}
             <button onClick={openWebsite} className="px-3 py-2 sm:py-1.5 bg-purple-600 text-white text-xs font-bold rounded-lg hover:bg-purple-500 transition-colors">
-              {enrichedLead.website ? 'Website' : 'Search'}
+              {enrichedLead.website ? 'Company Website' : 'Search'}
             </button>
             <button onClick={handleEnrichAll} disabled={isEnriching} className="px-3 py-2 sm:py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors" title="Find contacts, scrape website, and generate AI summary — all in one step">
               {isEnriching ? 'Enriching...' : 'Enrich Lead'}
@@ -580,10 +580,10 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                    enrichedLead.enrichment_status === 'partial' ? '◐' :
                    enrichedLead.enrichment_status === 'failed' ? '●' : '○'}
                 </span>
-                {enrichedLead.enrichment_status === 'complete' ? 'Fully enriched — contacts, website, and AI summary found' :
+                {enrichedLead.enrichment_status === 'complete' ? 'Fully enriched — contacts, company website, and AI summary found' :
                  enrichedLead.enrichment_status === 'partial' ? 'Partially enriched — some data found. Click "Re-enrich" to try again.' :
                  enrichedLead.enrichment_status === 'failed' ? 'No contact matches found yet — try "Re-enrich" or search manually' :
-                 'Not yet enriched — click "Enrich Lead" to find contacts, website, and generate a summary'}
+                 'Not yet enriched — click "Enrich Lead" to find contacts, company website, and generate a summary'}
               </div>
 
               {/* Single Enrich Action */}
@@ -593,7 +593,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 )}
                 <button onClick={handleEnrichAll} disabled={isEnriching}
                   className={`${!enrichedLead.phone && !enrichedLead.email ? 'px-6 py-2.5' : 'px-4 py-2'} bg-emerald-600 text-white text-sm font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors`}
-                  title="Finds contacts (phone, email, website) via Google Places, NY DOS, web scraping, and Hunter.io — then generates an AI summary">
+                  title="Finds contacts (phone, email, company website) via Google Places, NY DOS, web scraping, and Hunter.io — then generates an AI summary">
                   {isEnriching ? 'Enriching...' : enrichedLead.enrichment_status === 'none' ? 'Enrich Lead' : 'Re-enrich Lead'}
                 </button>
                 <p className="text-[10px] text-gray-400 mt-1.5">Searches Google Places, NY DOS, web, and Hunter.io for contacts, then generates an AI summary.</p>
@@ -636,7 +636,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 {/* Website */}
                 {enrichedLead.website && (
                   <div>
-                    <label className="text-[10px] text-gray-400 uppercase">Website</label>
+                    <label className="text-[10px] text-gray-400 uppercase">Company Website</label>
                     <a href={enrichedLead.website.startsWith('http') ? enrichedLead.website : `https://${enrichedLead.website}`} target="_blank" rel="noopener" className="text-purple-600 text-sm hover:underline block truncate">{enrichedLead.website}</a>
                   </div>
                 )}
