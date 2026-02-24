@@ -263,7 +263,7 @@ async def _tool_use_loop(
                 yield _sse_event(SSEEventType.tool_call, {"name": block.name, "input": block.input})
 
                 try:
-                    result = execute_tool(block.name, block.input)
+                    result = await asyncio.to_thread(execute_tool, block.name, block.input)
                     is_error = "error" in result and len(result) == 1
                 except Exception as e:
                     result = {"error": str(e)}
@@ -468,7 +468,7 @@ async def _handle_confirmation_flow(
         # Execute the pending tool
         yield _sse_event(SSEEventType.status, f"Executing {action['tool_name']}...")
         try:
-            result = execute_tool(action["tool_name"], action["tool_input"])
+            result = await asyncio.to_thread(execute_tool, action["tool_name"], action["tool_input"])
         except Exception as e:
             result = {"error": str(e)}
 

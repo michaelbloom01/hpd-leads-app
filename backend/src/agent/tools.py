@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 def _get_pg_engine():
     from sqlalchemy import create_engine
     from src.db.session import get_sync_url
-    return create_engine(get_sync_url(), pool_size=3, max_overflow=5, pool_pre_ping=True)
+    return create_engine(get_sync_url(), pool_size=2, max_overflow=3, pool_pre_ping=True, pool_timeout=20)
 
 
 @contextmanager
