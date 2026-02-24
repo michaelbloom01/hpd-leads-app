@@ -18,6 +18,32 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["admin"])
 
 
+@router.post("/admin/recalculate-categories")
+async def recalculate_categories(
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Quick fix: recalculate churn_category based on current score thresholds (35/15)."""
+    result = await session.execute(text("""
+        UPDATE buildings SET
+            churn_category = CASE
+                WHEN churn_score >= 35 THEN 'hot'
+                WHEN churn_score >= 15 THEN 'warm'
+                ELSE 'stable'
+            END
+        WHERE churn_score IS NOT NULL
+    """))
+    await session.commit()
+
+    stats = await session.execute(text("""
+        SELECT churn_category, COUNT(*) FROM buildings
+        WHERE churn_score IS NOT NULL
+        GROUP BY churn_category
+    """))
+    counts = {r[0]: r[1] for r in stats}
+    return {"updated": result.rowcount, "categories": counts}
+
+
 @router.get("/health")
 async def health_check(session: AsyncSession = Depends(get_session)):
     lead_count = (await session.execute(text("SELECT COUNT(*) FROM leads"))).scalar() or 0
