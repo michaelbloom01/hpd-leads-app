@@ -196,7 +196,13 @@ def run_buildings(session):
     pluto_data = socrata_fetch(DATASETS["pluto"], {
         "$select": "bbl,cd,council,ct2010,assesstot,unitsres,yearbuilt,bldgclass",
     }, "PLUTO")
-    pluto_by_bbl = {str(p.get("bbl", "")).strip(): p for p in pluto_data if p.get("bbl")}
+    # PLUTO returns BBLs as floats e.g. "1000050010.00000000" — normalize to integer string
+    def _norm_bbl(v):
+        try:
+            return str(int(float(v)))
+        except (ValueError, TypeError):
+            return str(v).strip()
+    pluto_by_bbl = {_norm_bbl(p.get("bbl", "")): p for p in pluto_data if p.get("bbl")}
 
     inserted = matched = rejected = 0
     buildings_seen = set()
@@ -218,9 +224,14 @@ def run_buildings(session):
                         :bldg_class, :units, :year_built, :assessed_value,
                         :council, :cd, :census, :nta, now(), now()
                     ) ON CONFLICT (bbl) DO UPDATE SET
-                        address = EXCLUDED.address, assessed_value = EXCLUDED.assessed_value,
-                        council_district = EXCLUDED.council_district,
-                        community_board = EXCLUDED.community_board, updated_at = now()"""),
+                        address = EXCLUDED.address,
+                        unit_count = COALESCE(EXCLUDED.unit_count, buildings.unit_count),
+                        building_class = COALESCE(EXCLUDED.building_class, buildings.building_class),
+                        year_built = COALESCE(EXCLUDED.year_built, buildings.year_built),
+                        assessed_value = COALESCE(EXCLUDED.assessed_value, buildings.assessed_value),
+                        council_district = COALESCE(EXCLUDED.council_district, buildings.council_district),
+                        community_board = COALESCE(EXCLUDED.community_board, buildings.community_board),
+                        updated_at = now()"""),
             batch,
         )
 
