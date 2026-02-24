@@ -23,25 +23,36 @@ async def recalculate_categories(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
-    """Quick fix: recalculate churn_category based on current score thresholds (35/15)."""
-    result = await session.execute(text("""
-        UPDATE buildings SET
-            churn_category = CASE
-                WHEN churn_score >= 35 THEN 'hot'
-                WHEN churn_score >= 15 THEN 'warm'
-                ELSE 'stable'
-            END
-        WHERE churn_score IS NOT NULL
-    """))
-    await session.commit()
+    """Recalculate churn_category in batches (35/15 thresholds). Returns immediately."""
+    import threading
+    from src.db.session import get_sync_url
 
-    stats = await session.execute(text("""
-        SELECT churn_category, COUNT(*) FROM buildings
-        WHERE churn_score IS NOT NULL
-        GROUP BY churn_category
-    """))
-    counts = {r[0]: r[1] for r in stats}
-    return {"updated": result.rowcount, "categories": counts}
+    def _run():
+        from sqlalchemy import create_engine, text as sa_text
+        from sqlalchemy.orm import Session as SyncSession
+        try:
+            engine = create_engine(get_sync_url())
+            s = SyncSession(engine)
+            batch = 20000
+            for i in range(0, 200000, batch):
+                s.execute(sa_text(f"""
+                    UPDATE buildings SET churn_category = CASE
+                        WHEN churn_score >= 35 THEN 'hot'
+                        WHEN churn_score >= 15 THEN 'warm'
+                        ELSE 'stable' END
+                    WHERE bbl IN (
+                        SELECT bbl FROM buildings WHERE churn_score IS NOT NULL
+                        ORDER BY bbl LIMIT {batch} OFFSET {i}
+                    )
+                """))
+                s.commit()
+            s.close()
+            engine.dispose()
+        except Exception as e:
+            logger.error(f"Category recalculation failed: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"status": "started", "message": "Recalculating categories in background"}
 
 
 @router.get("/health")
