@@ -9,6 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.90.21",
+    "@tanstack/react-table": "^8.21.3",
     "@types/dompurify": "^3.0.5",
     "@types/leaflet": "^1.9.21",
     "dompurify": "^3.3.1",
@@ -18,6 +20,7 @@
     "react-hot-toast": "^2.6.0",
     "react-leaflet": "^4.2.1",
     "react-markdown": "^10.1.0",
+    "react-router-dom": "^7.13.1",
     "recharts": "^2.12.0",
     "remark-gfm": "^4.0.1"
   },

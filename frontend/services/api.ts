@@ -1036,7 +1036,7 @@ export async function searchBuildings(address: string, limit: number = 20): Prom
  * Get data health metrics for the dashboard badge.
  */
 export async function fetchDataHealth(): Promise<DataHealthResponse> {
-  const response = await fetchWithRetry(`${API_BASE_URL}/api/data-health`);
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/v1/quality/data-health`);
   if (!response.ok) throw new Error(`Failed to fetch data health: ${response.statusText}`);
   return response.json();
 }

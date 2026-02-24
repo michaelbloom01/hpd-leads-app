@@ -1,5 +1,7 @@
 
 import React, { useState, useCallback, useEffect, Suspense, lazy } from 'react';
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster, toast } from 'react-hot-toast';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
@@ -13,11 +15,30 @@ const Dashboard = lazy(() => import('./components/Dashboard'));
 const LeadTable = lazy(() => import('./components/LeadTable'));
 const LeadDetail = lazy(() => import('./components/LeadDetail'));
 const AgentPanel = lazy(() => import('./components/AgentPanel'));
+const BuildingsPage = lazy(() => import('./components/BuildingsPage'));
+const BuildingDetailPage = lazy(() => import('./components/BuildingDetailPage'));
+const SettingsPage = lazy(() => import('./components/SettingsPage'));
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30000,
+      retry: 2,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+
+const PAGE_TITLES: Record<string, string> = {
+  '/': 'Lead Dashboard',
+  '/leads': 'All Leads',
+  '/buildings': 'Buildings',
+  '/settings': 'Settings',
+};
 
 const AppContent: React.FC = () => {
   const { isAuthenticated, isLoading, logout } = useAuth();
 
-  // Show loading spinner while checking auth
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -32,7 +53,6 @@ const AppContent: React.FC = () => {
     );
   }
 
-  // Show login page if not authenticated
   if (!isAuthenticated) {
     return <LoginPage />;
   }
@@ -42,7 +62,7 @@ const AppContent: React.FC = () => {
 
 const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'leads'>('dashboard');
+  const location = useLocation();
   const [selectedLead, setSelectedLead] = useState<ApiLead | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -50,13 +70,11 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const [isAgentOpen, setIsAgentOpen] = useState(false);
   const [leadFilterPreset, setLeadFilterPreset] = useState<LeadFilterPreset | null>(null);
 
-  // Called when LeadDetail enriches or updates a lead — refreshes both the detail and the table
   const handleLeadUpdated = useCallback((updatedLead: ApiLead) => {
-    setSelectedLead(updatedLead);       // Update the detail modal with fresh data
-    setRefreshKey(k => k + 1);          // Trigger table reload so it reflects changes
+    setSelectedLead(updatedLead);
+    setRefreshKey(k => k + 1);
   }, []);
 
-  // Cmd/Ctrl + K shortcut to toggle agent panel
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -91,35 +109,33 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     <div className="py-16 text-center text-sm text-gray-500">Loading section...</div>
   );
 
+  const basePath = '/' + location.pathname.split('/').filter(Boolean)[0] || '/';
+  const pageTitle = PAGE_TITLES[basePath] || PAGE_TITLES[location.pathname] || 'HPD Leads';
+  const pageDescription = basePath === '/' 
+    ? 'NYC property management companies ranked by portfolio size and acquisition potential.'
+    : basePath === '/leads'
+    ? 'Browse, filter, and take action on property management leads.'
+    : basePath === '/buildings'
+    ? 'Find buildings with high churn probability for PM operator outreach.'
+    : basePath === '/settings'
+    ? 'Configure scoring weights and monitor data health.'
+    : '';
+
+  const showRefresh = basePath === '/' || basePath === '/leads';
+
   return (
     <ErrorBoundary>
     <div className="flex h-screen bg-white text-gray-800 overflow-hidden font-sans">
-      {/* Toast Notifications */}
       <Toaster 
         position="top-right"
         toastOptions={{
           duration: 4000,
-          style: {
-            background: '#ffffff',
-            color: '#111827',
-            border: '1px solid #e5e7eb',
-            boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)',
-          },
-          success: {
-            iconTheme: {
-              primary: '#059669',
-              secondary: '#ffffff',
-            },
-          },
-          error: {
-            iconTheme: {
-              primary: '#ef4444',
-              secondary: '#ffffff',
-            },
-          },
+          style: { background: '#ffffff', color: '#111827', border: '1px solid #e5e7eb', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' },
+          success: { iconTheme: { primary: '#059669', secondary: '#ffffff' } },
+          error: { iconTheme: { primary: '#ef4444', secondary: '#ffffff' } },
         }}
       />
-      {/* Mobile Menu Button */}
+
       <button
         onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
         className="lg:hidden fixed top-3 left-3 z-50 p-3 bg-white rounded-xl border border-gray-200 shadow-sm"
@@ -134,28 +150,17 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         </svg>
       </button>
 
-      {/* Mobile Menu Overlay */}
       {isMobileMenuOpen && (
-        <div 
-          className="lg:hidden fixed inset-0 bg-black/40 z-40"
-          onClick={() => setIsMobileMenuOpen(false)}
-        />
+        <div className="lg:hidden fixed inset-0 bg-black/40 z-40" onClick={() => setIsMobileMenuOpen(false)} />
       )}
 
-      {/* Sidebar Navigation */}
       <Sidebar 
-        activeTab={activeTab} 
         onLogout={onLogout}
         userEmail={user?.email}
-        onTabChange={(tab) => {
-          setActiveTab(tab);
-          setIsMobileMenuOpen(false);
-        }}
         isMobileOpen={isMobileMenuOpen}
         onToggleAgent={() => setIsAgentOpen(prev => !prev)}
       />
 
-      {/* Primary Application Interface */}
       <div className="flex-1 flex flex-col min-w-0">
         <Header />
         
@@ -164,48 +169,52 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
             <header className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4 sm:gap-6 pl-12 sm:pl-0">
               <div className="space-y-1">
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">
-                  {activeTab === 'dashboard' ? 'Lead Dashboard' : 'All Leads'}
+                  {pageTitle}
                 </h1>
                 <p className="text-gray-500 text-xs sm:text-sm max-w-xl leading-relaxed">
-                  {activeTab === 'dashboard' 
-                    ? 'NYC property management companies ranked by portfolio size and acquisition potential.' 
-                    : 'Browse, filter, and take action on property management leads.'}
+                  {pageDescription}
                 </p>
               </div>
-              <button 
-                onClick={handleRefresh}
-                disabled={isRefreshing}
-                className="flex items-center gap-2 px-4 sm:px-5 py-2 sm:py-2.5 bg-white hover:bg-gray-50 text-gray-700 rounded-lg font-medium text-sm transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed border border-gray-200 self-start sm:self-auto"
-              >
-                <svg className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                {isRefreshing ? 'Refreshing...' : 'Refresh Data'}
-              </button>
+              {showRefresh && (
+                <button 
+                  onClick={handleRefresh}
+                  disabled={isRefreshing}
+                  className="flex items-center gap-2 px-4 sm:px-5 py-2 sm:py-2.5 bg-white hover:bg-gray-50 text-gray-700 rounded-lg font-medium text-sm transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed border border-gray-200 self-start sm:self-auto"
+                >
+                  <svg className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                  {isRefreshing ? 'Refreshing...' : 'Refresh Data'}
+                </button>
+              )}
             </header>
 
             <Suspense fallback={sectionLoader}>
               <div className="transition-all duration-500 ease-out" key={refreshKey}>
-                {activeTab === 'dashboard' ? (
-                  <Dashboard
-                    onSelectLead={setSelectedLead}
-                    onNavigateToLeads={(filters) => {
-                      if (filters) setLeadFilterPreset(filters);
-                      setActiveTab('leads');
-                    }}
-                  />
-                ) : (
-                  <LeadTable
-                    onSelectLead={setSelectedLead}
-                    filterPreset={leadFilterPreset}
-                    onFilterPresetConsumed={() => setLeadFilterPreset(null)}
-                  />
-                )}
+                <Routes>
+                  <Route path="/" element={
+                    <Dashboard
+                      onSelectLead={setSelectedLead}
+                      onNavigateToLeads={(filters) => {
+                        if (filters) setLeadFilterPreset(filters);
+                      }}
+                    />
+                  } />
+                  <Route path="/leads" element={
+                    <LeadTable
+                      onSelectLead={setSelectedLead}
+                      filterPreset={leadFilterPreset}
+                      onFilterPresetConsumed={() => setLeadFilterPreset(null)}
+                    />
+                  } />
+                  <Route path="/buildings" element={<BuildingsPage />} />
+                  <Route path="/buildings/:bbl" element={<BuildingDetailPage />} />
+                  <Route path="/settings" element={<SettingsPage />} />
+                </Routes>
               </div>
             </Suspense>
           </div>
         </main>
       </div>
 
-      {/* Agent Panel */}
       <Suspense fallback={null}>
         <AgentPanel
           isOpen={isAgentOpen}
@@ -218,7 +227,6 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         />
       </Suspense>
 
-      {/* Lead Detail Modal (z-50) */}
       {selectedLead && (
         <Suspense fallback={null}>
           <LeadDetail 
@@ -234,9 +242,13 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 };
 
 const App: React.FC = () => (
-  <AuthProvider>
-    <AppContent />
-  </AuthProvider>
+  <QueryClientProvider client={queryClient}>
+    <BrowserRouter>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </BrowserRouter>
+  </QueryClientProvider>
 );
 
 export default App;

@@ -1,24 +1,37 @@
 
 import React from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 interface Props {
-  activeTab: 'dashboard' | 'leads';
-  onTabChange: (tab: 'dashboard' | 'leads') => void;
   isMobileOpen?: boolean;
   onToggleAgent?: () => void;
   onLogout?: () => void;
   userEmail?: string;
 }
 
-const Sidebar: React.FC<Props> = ({ activeTab, onTabChange, isMobileOpen = false, onToggleAgent, onLogout, userEmail }) => {
+const Sidebar: React.FC<Props> = ({ isMobileOpen = false, onToggleAgent, onLogout, userEmail }) => {
+  const location = useLocation();
+  const navigate = useNavigate();
+
   const navItems = [
-    { id: 'dashboard' as const, label: 'Dashboard', icon: (
+    { path: '/', label: 'Dashboard', icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
     )},
-    { id: 'leads' as const, label: 'Leads', icon: (
+    { path: '/leads', label: 'Leads', subtitle: 'PE Searcher', icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
     )},
+    { path: '/buildings', label: 'Buildings', subtitle: 'PM Operator', icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+    )},
+    { path: '/settings', label: 'Settings', icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+    )},
   ];
+
+  const isActive = (path: string) => {
+    if (path === '/') return location.pathname === '/';
+    return location.pathname.startsWith(path);
+  };
 
   return (
     <div 
@@ -43,20 +56,22 @@ const Sidebar: React.FC<Props> = ({ activeTab, onTabChange, isMobileOpen = false
       <nav className="flex-1 space-y-1">
         {navItems.map((item) => (
           <button
-            key={item.id}
-            onClick={() => onTabChange(item.id)}
+            key={item.path}
+            onClick={() => navigate(item.path)}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
-              activeTab === item.id 
+              isActive(item.path) 
               ? 'bg-gray-100 text-gray-900 font-semibold' 
               : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
             }`}
           >
-            <div className={`${activeTab === item.id ? 'text-emerald-600' : 'text-gray-400'}`}>{item.icon}</div>
-            {item.label}
+            <div className={`${isActive(item.path) ? 'text-emerald-600' : 'text-gray-400'}`}>{item.icon}</div>
+            <div className="flex flex-col items-start">
+              <span>{item.label}</span>
+              {item.subtitle && <span className="text-[9px] text-gray-400 leading-tight">{item.subtitle}</span>}
+            </div>
           </button>
         ))}
         
-        {/* Agent toggle */}
         {onToggleAgent && (
           <button
             onClick={onToggleAgent}

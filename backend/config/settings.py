@@ -8,6 +8,9 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application settings with defaults and env var loading."""
     
+    # Database
+    database_url: str = ""
+    
     # NYC Open Data
     nyc_open_data_app_token: str = ""
     
@@ -38,6 +41,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"  # Ignore extra env vars (e.g. ADMIN_EMAIL, JWT_SECRET) not in this model
 
 
 def get_settings() -> Settings:
