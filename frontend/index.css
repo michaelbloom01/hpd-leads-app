@@ -3,7 +3,14 @@
 @tailwind components;
 @tailwind utilities;
 
-/* HPD Leads - Global Styles (Light Mode) */
+/* Double Edge - Global Styles (Light Mode) */
+
+/* Keyboard focus indicators */
+*:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
 
 body {
   background-color: #ffffff;

@@ -1,10 +1,10 @@
-# HPD Leads App — Full Project Context
+# Double Edge — Full Project Context
 
-> Paste this entire document into Claude to give it full context about the project. Last updated: Feb 10, 2026.
+> Paste this entire document into Claude to give it full context about the project. Last updated: Feb 24, 2026.
 
 ## What This Project Is
 
-Full-stack lead generation platform for acquiring **Property Management companies** in NYC. Built for PE deal sourcing — identifies management companies from the HPD database, scores them, enriches with contact info, estimates revenue, tracks violations, and provides a full sourcing workflow.
+Double Edge (formerly HPD Leads) is a dual-purpose NYC housing intelligence platform. **PE acquisition sourcing** (find and evaluate PM companies as acquisition targets) and **PM operator lead generation** (find buildings with high churn probability for outreach). Built on HPD public data — identifies management companies, scores them, enriches with contact info, estimates revenue, tracks violations, and provides a full sourcing workflow.
 
 - **Live App:** https://frontend-nine-psi-58.vercel.app
 - **Backend API:** https://hpd-leads-app-production.up.railway.app

@@ -96,5 +96,5 @@ async def send_agent_briefing(briefing_id: str, recipient: Optional[str] = Query
     to = recipient or os.environ.get("EMAIL_TO_DEFAULT", "")
     if not to:
         raise HTTPException(400, "No recipient email provided and no default configured")
-    result = send_briefing_email("HPD Leads Briefing", html, to)
+    result = send_briefing_email("Double Edge Briefing", html, to)
     return result

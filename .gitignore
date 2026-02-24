@@ -21,6 +21,8 @@ data/
 *.db
 *.sqlite
 *_cache.json
+*.sql.bak
+backend/scripts/pluto_updates.sql
 
 # Node/Frontend
 node_modules/

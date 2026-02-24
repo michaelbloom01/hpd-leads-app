@@ -1,5 +1,5 @@
 {
-  "name": "Copy of HPD Leads - NYC Housing Data Intelligence",
+  "name": "Double Edge - NYC Housing Intelligence",
   "description": "A high-performance real estate lead management system for NYC HPD data. Track building violations, analyze property risks using Gemini AI, and manage your real estate investment pipeline with precision.",
   "requestFramePermissions": [
     "geolocation"

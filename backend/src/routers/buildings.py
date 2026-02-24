@@ -74,8 +74,8 @@ async def list_buildings(
 
     where_sql = " AND ".join(wheres) if wheres else "1=1"
 
-    allowed_sorts = {"churn_score", "unit_count", "borough", "address", "assessed_value"}
-    sort_col = sort_by if sort_by in allowed_sorts else "churn_score"
+    ALLOWED_BUILDING_SORTS = {"churn_score", "unit_count", "borough", "address", "assessed_value"}
+    sort_col = sort_by if sort_by in ALLOWED_BUILDING_SORTS else "churn_score"
     direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
 
     count_result = await session.execute(

@@ -1,4 +1,4 @@
-# HPD Leads Project — Overview Memo
+# Double Edge — Overview Memo
 
 **Author:** Michael Bloom
 **Date:** February 2026
@@ -7,7 +7,7 @@
 
 ## What Is This Project?
 
-HPD Leads is a tool built to find **property management companies in New York City** that could be good acquisition targets. Think of it as an automated research assistant: it scans public city records, identifies who manages large numbers of apartment buildings, figures out their contact information, and ranks them so the most promising targets float to the top.
+Double Edge (formerly HPD Leads) is a dual-purpose NYC housing intelligence platform. It serves as both a **PE acquisition sourcing tool** (finding PM companies to acquire) and a **lead generation tool for operators** (finding buildings ripe for outreach). It scans public city records, identifies who manages large numbers of apartment buildings, figures out their contact information, and ranks them so the most promising targets float to the top.
 
 The end result is a searchable list of roughly **102,000 management companies and operators**, scored and sorted so you can focus outreach on the ones that matter most.
 

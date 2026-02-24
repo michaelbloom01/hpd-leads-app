@@ -1,4 +1,4 @@
-"""SQLAlchemy 2.0 models for HPD Leads Platform.
+"""SQLAlchemy 2.0 models for Double Edge Platform.
 
 Import all models here so Alembic's `target_metadata = Base.metadata`
 discovers every table.

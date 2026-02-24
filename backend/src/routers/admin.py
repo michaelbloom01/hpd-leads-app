@@ -60,7 +60,8 @@ async def recompute_lead_units(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
-    """Recompute total_units for all leads from building_contacts + buildings.
+    """Recompute total_units for all leads from building_contacts + buildings,
+    then recalculate scores using the updated unit counts.
 
     Uses the same normalization as generate_leads_from_buildings.py:
     lead.normalized_name = UPPER(TRIM(contact_name)).
@@ -88,11 +89,40 @@ async def recompute_lead_units(
             GROUP BY norm_name
         ) sub
         WHERE l.normalized_name = sub.norm_name
-          AND (l.total_units IS NULL OR l.total_units = 0)
           AND sub.units > 0
     """))
     await session.commit()
-    updated = result.rowcount
+    units_updated = result.rowcount
+
+    score_result = await session.execute(text("""
+        UPDATE leads SET
+            score = LEAST(100.0, ROUND((
+                CASE
+                    WHEN portfolio_size >= 50 THEN 40
+                    WHEN portfolio_size >= 20 THEN 30
+                    WHEN portfolio_size >= 10 THEN 20
+                    WHEN portfolio_size >= 5 THEN 10
+                    ELSE portfolio_size * 2
+                END
+                +
+                CASE
+                    WHEN COALESCE(total_units, 0) >= 500 THEN 30
+                    WHEN COALESCE(total_units, 0) >= 200 THEN 20
+                    WHEN COALESCE(total_units, 0) >= 100 THEN 15
+                    WHEN COALESCE(total_units, 0) >= 50 THEN 10
+                    ELSE LEAST(COALESCE(total_units, 0) / 5.0, 10)
+                END
+                +
+                CASE WHEN COALESCE(violation_count, 0) > 0 AND COALESCE(total_units, 0) > 0
+                     THEN LEAST(COALESCE(violation_count, 0)::float / total_units * 10, 30)
+                     ELSE 0
+                END
+            )::numeric, 2)),
+            updated_at = NOW()
+        WHERE total_units > 0
+    """))
+    await session.commit()
+    scores_updated = score_result.rowcount
 
     sample = await session.execute(text("""
         SELECT normalized_name, total_units, portfolio_size
@@ -112,7 +142,8 @@ async def recompute_lead_units(
     s = stats.first()
 
     return {
-        "updated": updated,
+        "units_updated": units_updated,
+        "scores_updated": scores_updated,
         "with_units": s[0],
         "without_units": s[1],
         "max_units": s[2],

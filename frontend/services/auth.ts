@@ -1,5 +1,5 @@
 /**
- * Authentication service for HPD Leads frontend.
+ * Authentication service for Double Edge frontend.
  * Manages JWT tokens in localStorage and provides login/logout/token helpers.
  */
 

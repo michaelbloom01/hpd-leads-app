@@ -1,1 +1,1 @@
-# HPD Leads AI Agent
+# Double Edge AI Agent

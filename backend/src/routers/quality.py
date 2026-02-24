@@ -183,8 +183,9 @@ async def building_coverage(session: AsyncSession = Depends(get_session)):
     except Exception:
         pass
 
+    allowed_tables = set(signal_tables.values())
     for key, table in signal_tables.items():
-        if table not in existing_tables:
+        if table not in existing_tables or table not in allowed_tables:
             coverage[key] = None
             continue
         try:

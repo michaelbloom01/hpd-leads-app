@@ -1,4 +1,4 @@
-# HPD Leads Frontend
+# Double Edge Frontend
 
 This folder will contain the frontend code exported from Google AI Studio.
 

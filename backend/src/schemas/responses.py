@@ -1,4 +1,4 @@
-"""Pydantic response models for the HPD Leads API."""
+"""Pydantic response models for the Double Edge API."""
 from typing import List, Optional, Dict
 from pydantic import BaseModel
 

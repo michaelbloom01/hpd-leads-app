@@ -23,6 +23,11 @@ ALLOWED_SORT_COLS = {
     "score", "portfolio_size", "total_units", "pipeline_stage",
     "outreach_status", "priority_rank", "company_name", "owner_name",
     "estimated_annual_revenue", "violation_count", "created_at", "updated_at",
+    "violations_per_unit",
+}
+
+SORT_COL_EXPRESSIONS = {
+    "units_per_bldg": "CASE WHEN portfolio_size > 0 THEN total_units::float / portfolio_size ELSE 0 END",
 }
 
 
@@ -108,6 +113,9 @@ async def get_leads(
     sort_dir: str = Query("desc"),
     min_units: Optional[int] = Query(None),
     max_units: Optional[int] = Query(None),
+    min_units_per_bldg: Optional[float] = Query(None),
+    max_units_per_bldg: Optional[float] = Query(None),
+    building_type_has: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
@@ -128,8 +136,15 @@ async def get_leads(
         wheres.append("portfolio_size <= :max_portfolio")
         params["max_portfolio"] = max_portfolio
     if boro:
-        wheres.append("primary_borough = :boro")
-        params["boro"] = boro
+        boro_list = [b.strip() for b in boro.split(",") if b.strip()]
+        if len(boro_list) == 1:
+            wheres.append("primary_borough = :boro_0")
+            params["boro_0"] = boro_list[0]
+        elif boro_list:
+            placeholders = ", ".join(f":boro_{i}" for i in range(len(boro_list)))
+            wheres.append(f"primary_borough IN ({placeholders})")
+            for i, b in enumerate(boro_list):
+                params[f"boro_{i}"] = b
     if has_phone:
         wheres.append("phone IS NOT NULL AND phone != ''")
     if has_email:
@@ -154,12 +169,31 @@ async def get_leads(
     if max_units is not None:
         wheres.append("total_units <= :max_units")
         params["max_units"] = max_units
+    if min_units_per_bldg is not None:
+        wheres.append("portfolio_size > 0 AND (total_units::float / portfolio_size) >= :min_upb")
+        params["min_upb"] = min_units_per_bldg
+    if max_units_per_bldg is not None:
+        wheres.append("portfolio_size > 0 AND (total_units::float / portfolio_size) <= :max_upb")
+        params["max_upb"] = max_units_per_bldg
+    if building_type_has:
+        for i, btype in enumerate(building_type_has.split(",")):
+            btype = btype.strip()
+            if btype:
+                key = f"btype_{i}"
+                wheres.append(f"COALESCE((building_types->>:{key})::int, 0) > 0")
+                params[key] = btype
     if search:
         wheres.append("(owner_name ILIKE :search OR company_name ILIKE :search OR agent_name ILIKE :search)")
         params["search"] = f"%{search}%"
 
     where_sql = " AND ".join(wheres) if wheres else "1=1"
-    sort_col = sort_by if sort_by in ALLOWED_SORT_COLS else "score"
+
+    if sort_by in SORT_COL_EXPRESSIONS:
+        sort_col = SORT_COL_EXPRESSIONS[sort_by]
+    elif sort_by in ALLOWED_SORT_COLS:
+        sort_col = sort_by
+    else:
+        sort_col = "score"
     sort_direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
 
     count_result = await session.execute(
@@ -189,6 +223,57 @@ async def get_lead(lead_id: str, session: AsyncSession = Depends(get_session)):
     if not row:
         raise HTTPException(status_code=404, detail="Lead not found")
     return _row_to_response(dict(row._mapping))
+
+
+@router.post("/leads/{lead_id}/estimate-revenue")
+async def estimate_lead_revenue(
+    lead_id: str,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Estimate and persist revenue for a single lead based on unit count and borough rent data."""
+    result = await session.execute(
+        text("SELECT * FROM leads WHERE lead_id = :lid"), {"lid": lead_id}
+    )
+    row = result.first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    data = dict(row._mapping)
+
+    total_units = data.get("total_units") or 0
+    portfolio_size = data.get("portfolio_size") or 0
+    boro = data.get("primary_borough") or "MANHATTAN"
+
+    borough_avg_rents = {
+        "MANHATTAN": 3500, "BROOKLYN": 2800, "QUEENS": 2200,
+        "BRONX": 1800, "STATEN ISLAND": 1600,
+    }
+    avg_rent = borough_avg_rents.get(boro.upper(), 2200)
+    fee_rate = 0.05
+
+    if total_units > 0:
+        monthly_gross = total_units * avg_rent
+        monthly_revenue = monthly_gross * fee_rate
+        annual_revenue = monthly_revenue * 12
+    else:
+        monthly_revenue = 0.0
+        annual_revenue = 0.0
+
+    await session.execute(
+        text("""
+            UPDATE leads SET
+                estimated_monthly_revenue = :monthly,
+                estimated_annual_revenue = :annual,
+                updated_at = NOW()
+            WHERE lead_id = :lid
+        """),
+        {"monthly": monthly_revenue, "annual": annual_revenue, "lid": lead_id},
+    )
+    await session.commit()
+
+    data["estimated_monthly_revenue"] = monthly_revenue
+    data["estimated_annual_revenue"] = annual_revenue
+    return _row_to_response(data)
 
 
 @router.patch("/leads/{lead_id}")

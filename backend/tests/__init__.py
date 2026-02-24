@@ -1,1 +1,1 @@
-"""Test suite for HPD Leads backend."""
+"""Test suite for Double Edge backend."""

@@ -1,5 +1,5 @@
 /**
- * Authentication context for HPD Leads frontend.
+ * Authentication context for Double Edge frontend.
  * Wraps the app and provides login/logout/user state to all components.
  */
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';

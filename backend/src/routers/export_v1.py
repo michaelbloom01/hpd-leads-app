@@ -73,7 +73,7 @@ async def export_buildings_csv(
     return StreamingResponse(
         generate(),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=buildings_export.csv"},
+        headers={"Content-Disposition": "attachment; filename=double_edge_buildings_export.csv"},
     )
 
 
@@ -137,7 +137,7 @@ async def export_leads_csv(
     rows = result.fetchall()
     columns = ["lead_id", "owner_name", "company_name", "portfolio_size",
                "total_units", "score", "pipeline_stage", "outreach_status",
-               "phone", "email", "website"]
+               "phone", "email", "company_website"]
 
     def generate():
         output = io.StringIO()
@@ -155,5 +155,5 @@ async def export_leads_csv(
     return StreamingResponse(
         generate(),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=leads_export.csv"},
+        headers={"Content-Disposition": "attachment; filename=double_edge_leads_export.csv"},
     )

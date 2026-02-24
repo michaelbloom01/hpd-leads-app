@@ -728,7 +728,7 @@ def compile_email_briefing(
         return {"error": "No valid leads found for briefing."}
 
     if not subject:
-        subject = f"HPD Leads Briefing — {len(leads_data)} Leads"
+        subject = f"Double Edge Briefing — {len(leads_data)} Leads"
 
     # Build HTML briefing
     from src.agent.email_service import build_briefing_html, send_briefing_email, save_briefing

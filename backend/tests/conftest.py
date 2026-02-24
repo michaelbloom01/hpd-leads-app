@@ -1,5 +1,5 @@
 """
-Shared test fixtures for the HPD Leads backend test suite.
+Shared test fixtures for the Double Edge backend test suite.
 """
 import os
 import sys

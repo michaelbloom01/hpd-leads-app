@@ -93,7 +93,7 @@ def build_briefing_html(subject: str, leads: list[dict]) -> str:
             </table>
         </div>
         <div style="padding: 16px 32px; background: #f9fafb; text-align: center; color: #9ca3af; font-size: 12px;">
-            HPD Leads App · AI Agent Briefing
+            Double Edge · AI Agent Briefing
         </div>
     </div>
 </body>

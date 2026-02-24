@@ -81,7 +81,7 @@ def backup_database(max_backups: int = 7) -> Path:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Backup the HPD Leads SQLite database")
+    parser = argparse.ArgumentParser(description="Backup the Double Edge SQLite database")
     parser.add_argument("--max-backups", type=int, default=7, help="Max backup files to keep (default: 7)")
     args = parser.parse_args()
     

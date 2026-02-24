@@ -18,6 +18,7 @@ const AgentPanel = lazy(() => import('./components/AgentPanel'));
 const BuildingsPage = lazy(() => import('./components/BuildingsPage'));
 const BuildingDetailPage = lazy(() => import('./components/BuildingDetailPage'));
 const SettingsPage = lazy(() => import('./components/SettingsPage'));
+const SmartListsPage = lazy(() => import('./components/SmartListsPage'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -34,6 +35,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/leads': 'All Leads',
   '/buildings': 'Buildings',
   '/settings': 'Settings',
+  '/smart-lists': 'Smart Lists',
 };
 
 const AppContent: React.FC = () => {
@@ -110,13 +112,15 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   );
 
   const basePath = '/' + location.pathname.split('/').filter(Boolean)[0] || '/';
-  const pageTitle = PAGE_TITLES[basePath] || PAGE_TITLES[location.pathname] || 'HPD Leads';
+  const pageTitle = PAGE_TITLES[basePath] || PAGE_TITLES[location.pathname] || 'Double Edge';
   const pageDescription = basePath === '/' 
     ? 'NYC property management companies ranked by portfolio size and acquisition potential.'
     : basePath === '/leads'
     ? 'Browse, filter, and take action on property management leads.'
     : basePath === '/buildings'
     ? 'Find buildings with high churn probability for PM operator outreach.'
+    : basePath === '/smart-lists'
+    ? 'Saved filter segments that track lead changes over time.'
     : basePath === '/settings'
     ? 'Configure scoring weights and monitor data health.'
     : '';
@@ -207,7 +211,16 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                   } />
                   <Route path="/buildings" element={<BuildingsPage />} />
                   <Route path="/buildings/:bbl" element={<BuildingDetailPage />} />
+                  <Route path="/smart-lists" element={<SmartListsPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
+                  <Route path="*" element={
+                    <div className="flex flex-col items-center justify-center py-32 text-center">
+                      <div className="text-6xl font-bold text-gray-200 mb-4">404</div>
+                      <h2 className="text-xl font-bold text-gray-900 mb-2">Page Not Found</h2>
+                      <p className="text-sm text-gray-500 mb-6 max-w-sm">The page you're looking for doesn't exist or has been moved.</p>
+                      <a href="/" className="px-5 py-2.5 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition-colors">Back to Dashboard</a>
+                    </div>
+                  } />
                 </Routes>
               </div>
             </Suspense>

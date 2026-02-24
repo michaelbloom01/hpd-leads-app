@@ -1,4 +1,4 @@
-"""Authentication module for HPD Leads API."""
+"""Authentication module for Double Edge API."""
 from .auth import (
     get_current_user,
     get_current_admin,

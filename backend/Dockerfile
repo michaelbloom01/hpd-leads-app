@@ -1,4 +1,4 @@
-# HPD Leads API - Railway Deployment v2
+# Double Edge API - Railway Deployment v2
 FROM python:3.12-slim
 
 # Force cache invalidation

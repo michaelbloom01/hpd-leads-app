@@ -1,8 +1,11 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { fetchLeads, ApiLead, enrichLeads, API_BASE_URL, checkHealth, searchBuildings, BuildingSearchResult } from '../services/api';
+import { toast } from 'react-hot-toast';
+import { fetchLeads, ApiLead, enrichLeads, API_BASE_URL, checkHealth, searchBuildings, BuildingSearchResult, createSmartList } from '../services/api';
 import { getAuthHeaders } from '../services/auth';
 import { BOROUGHS, BOROUGH_SHORT, formatCurrency, scoreColor } from '../utils/format';
+import { useLeadFilters } from '../hooks/useLeadFilters';
+import { useFilterUrl } from '../hooks/useFilterUrl';
 
 export interface LeadFilterPreset {
   outreachStatuses?: string[];
@@ -27,100 +30,28 @@ type SortField = 'agent_name' | 'portfolio_size' | 'total_units' | 'units_per_bl
 type SortDir = 'asc' | 'desc';
 
 const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPresetConsumed }) => {
+  const { filters, setField, toggle, clearAll: clearFilterState, applyPreset, activeFiltersCount, toApiParams } = useLeadFilters();
+  useFilterUrl(filters, applyPreset);
+
   const [leads, setLeads] = useState<ApiLead[]>([]);
   const [totalLeads, setTotalLeads] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [backendStarting, setBackendStarting] = useState(false);
-  
-  // Server-side filters
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterBoroughs, setFilterBoroughs] = useState<string[]>([]);
-  const [filterMinScore, setFilterMinScore] = useState<string>('');
-  const [filterMaxScore, setFilterMaxScore] = useState<string>('');
-  const [filterMinPortfolio, setFilterMinPortfolio] = useState<string>('');
-  const [filterMaxPortfolio, setFilterMaxPortfolio] = useState<string>('');
-  const [filterHasPhone, setFilterHasPhone] = useState<boolean | null>(null);
-  const [filterHasEmail, setFilterHasEmail] = useState<boolean | null>(null);
-  const [filterHasWebsite, setFilterHasWebsite] = useState<boolean | null>(null);
-  const [filterEntityTypes, setFilterEntityTypes] = useState<string[]>([]);
-  const [filterOutreachStatuses, setFilterOutreachStatuses] = useState<string[]>([]);
-  const [filterPipelineStages, setFilterPipelineStages] = useState<string[]>([]);
-  const [filterEnrichmentStatuses, setFilterEnrichmentStatuses] = useState<string[]>([]);
-  const [filterEnrichmentStatus, setFilterEnrichmentStatus] = useState<string>('');
-  const [filterMinUnits, setFilterMinUnits] = useState<string>('');
-  const [filterMaxUnits, setFilterMaxUnits] = useState<string>('');
-  const [filterMinUnitsPerBldg, setFilterMinUnitsPerBldg] = useState<string>('');
-  const [filterMaxUnitsPerBldg, setFilterMaxUnitsPerBldg] = useState<string>('');
-  const [filterBuildingTypes, setFilterBuildingTypes] = useState<string[]>([]);
-  const [showMoreFilters, setShowMoreFilters] = useState(false);
-  // Address search mode
-  const [searchMode, setSearchMode] = useState<'leads' | 'address'>('leads');
   const [addressResults, setAddressResults] = useState<BuildingSearchResult[]>([]);
   const [addressSearching, setAddressSearching] = useState(false);
-  
-  
+
   // Sorting
   const [sortField, setSortField] = useState<SortField>('score');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
-  
+
   // Server-side pagination
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
-  
+
   // Selection for bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [enriching, setEnriching] = useState(false);
-
-  const toggleBorough = (boro: string) => {
-    setFilterBoroughs(prev => 
-      prev.includes(boro) ? prev.filter(b => b !== boro) : [...prev, boro]
-    );
-  };
-
-  const toggleBuildingType = (type: string) => {
-    setFilterBuildingTypes(prev =>
-      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
-    );
-  };
-  const toggleEntityType = (type: string) => {
-    setFilterEntityTypes(prev =>
-      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
-    );
-  };
-
-  const toggleOutreachStatus = (status: string) => {
-    setFilterOutreachStatuses(prev =>
-      prev.includes(status) ? prev.filter(s => s !== status) : [...prev, status]
-    );
-  };
-
-  const togglePipelineStage = (stage: string) => {
-    setFilterPipelineStages(prev =>
-      prev.includes(stage) ? prev.filter(s => s !== stage) : [...prev, stage]
-    );
-  };
-
-  const toggleEnrichmentStatus = (status: string) => {
-    setFilterEnrichmentStatuses(prev =>
-      prev.includes(status) ? prev.filter(s => s !== status) : [...prev, status]
-    );
-  };
-
-
-  // Count of secondary filters active (for badge)
-  const activeFiltersCount = [
-    filterEntityTypes.length > 0 ? 'yes' : '',
-    filterOutreachStatuses.length > 0 ? 'yes' : '',
-    filterEnrichmentStatuses.length > 0 ? 'yes' : '',
-    filterPipelineStages.length > 0 ? 'yes' : '',
-    filterMinScore, filterMaxScore,
-    filterMinUnits, filterMaxUnits,
-    filterMinPortfolio, filterMaxPortfolio,
-    filterMinUnitsPerBldg, filterMaxUnitsPerBldg,
-    filterHasWebsite === true ? 'yes' : '',
-    filterBuildingTypes.length > 0 ? 'yes' : '',
-  ].filter(Boolean).length;
 
   // Fetch leads from server with current filters, sort, and search
   // This is called explicitly by the "Go" button, sort clicks, page changes, etc.
@@ -131,44 +62,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     setLoading(true);
     setError(null);
     try {
-      const params: Record<string, any> = {
-        limit: pageSize,
-        offset: currentPage * pageSize,
-        sort_by: sortField === 'agent_name' ? 'company_name' : sortField,
-        sort_dir: sortDir,
-      };
-      
-      const minScore = parseFloat(filterMinScore);
-      if (!isNaN(minScore) && minScore > 0) params.min_score = minScore;
-      const maxScore = parseFloat(filterMaxScore);
-      if (!isNaN(maxScore) && maxScore > 0) params.max_score = maxScore;
-      
-      const minPortfolio = parseInt(filterMinPortfolio);
-      if (!isNaN(minPortfolio) && minPortfolio > 0) params.min_portfolio = minPortfolio;
-      const maxPortfolio = parseInt(filterMaxPortfolio);
-      if (!isNaN(maxPortfolio) && maxPortfolio > 0) params.max_portfolio = maxPortfolio;
-      
-      if (filterBoroughs.length > 0) params.boro = filterBoroughs.join(',');
-      if (filterHasPhone !== null) params.has_phone = filterHasPhone;
-      if (filterHasEmail !== null) params.has_email = filterHasEmail;
-      if (filterEntityTypes.length > 0) params.entity_type = filterEntityTypes.join(',');
-      if (filterOutreachStatuses.length > 0) params.outreach_status = filterOutreachStatuses.join(',');
-      if (filterPipelineStages.length > 0) params.pipeline_stage = filterPipelineStages.join(',');
-      if (filterEnrichmentStatuses.length > 0) params.enrichment_status = filterEnrichmentStatuses.join(',');
-      if (searchTerm.trim()) params.search = searchTerm.trim();
-      
-      const minUnits = parseInt(filterMinUnits);
-      if (!isNaN(minUnits) && minUnits > 0) params.min_units = minUnits;
-      const maxUnits = parseInt(filterMaxUnits);
-      if (!isNaN(maxUnits) && maxUnits > 0) params.max_units = maxUnits;
-
-      const minUpb = parseFloat(filterMinUnitsPerBldg);
-      if (!isNaN(minUpb) && minUpb > 0) params.min_units_per_bldg = minUpb;
-      const maxUpb = parseFloat(filterMaxUnitsPerBldg);
-      if (!isNaN(maxUpb) && maxUpb > 0) params.max_units_per_bldg = maxUpb;
-
-      if (filterBuildingTypes.length > 0) params.building_type_has = filterBuildingTypes.join(',');
-      
+      const params = toApiParams(sortField, sortDir, pageSize, currentPage);
       const response = await fetchLeads(params);
       setLeads(response.leads);
       setTotalLeads(response.total);
@@ -178,7 +72,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     } finally {
       setLoading(false);
     }
-  }, [filterMinScore, filterMaxScore, filterMinPortfolio, filterMaxPortfolio, filterBoroughs, filterHasPhone, filterHasEmail, filterHasWebsite, filterEntityTypes, filterOutreachStatuses, filterPipelineStages, filterEnrichmentStatuses, filterMinUnits, filterMaxUnits, filterMinUnitsPerBldg, filterMaxUnitsPerBldg, filterBuildingTypes, pageSize, sortField, sortDir, searchTerm]);
+  }, [toApiParams, pageSize, sortField, sortDir]);
 
   // Keep ref in sync so callbacks can call latest version
   loadLeadsRef.current = loadLeads;
@@ -245,39 +139,32 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     setPage(0);
     loadLeads(0);
 
-    // Auto-detect address search: if the term starts with a number, also search buildings
-    const term = searchTerm.trim();
+    const term = filters.searchTerm.trim();
     if (term && looksLikeAddress(term)) {
       setAddressSearching(true);
       searchBuildings(term).then(res => {
         setAddressResults(res.buildings || []);
-        // Auto-switch to address mode so results display
         if ((res.buildings || []).length > 0) {
-          setSearchMode('address');
+          setField('searchMode', 'address');
         }
       }).catch(() => setAddressResults([])).finally(() => setAddressSearching(false));
     } else {
-      // Clear any stale address results when doing a name search
       setAddressResults([]);
-      if (searchMode === 'address' && !term) setSearchMode('leads');
+      if (filters.searchMode === 'address' && !term) setField('searchMode', 'leads');
     }
   };
-  // Apply filter preset from Dashboard navigation
   useEffect(() => {
     if (!filterPreset) return;
-    // Set all filter state from preset
-    if (filterPreset.outreachStatuses) setFilterOutreachStatuses(filterPreset.outreachStatuses);
-    if (filterPreset.pipelineStages) setFilterPipelineStages(filterPreset.pipelineStages);
-    if (filterPreset.enrichmentStatuses) setFilterEnrichmentStatuses(filterPreset.enrichmentStatuses);
-    if (filterPreset.entityTypes) setFilterEntityTypes(filterPreset.entityTypes);
-    if (filterPreset.minPortfolio) setFilterMinPortfolio(filterPreset.minPortfolio);
-    if (filterPreset.hasPhone !== undefined) setFilterHasPhone(filterPreset.hasPhone ? true : null);
-    if (filterPreset.hasEmail !== undefined) setFilterHasEmail(filterPreset.hasEmail ? true : null);
-    // Expand "More Filters" so user can see what's active
-    setShowMoreFilters(true);
-    // Signal consumed so App.tsx can clear it
+    applyPreset({
+      outreachStatuses: filterPreset.outreachStatuses || [],
+      pipelineStages: filterPreset.pipelineStages || [],
+      enrichmentStatuses: filterPreset.enrichmentStatuses || [],
+      entityTypes: filterPreset.entityTypes || [],
+      minPortfolio: filterPreset.minPortfolio || '',
+      hasPhone: filterPreset.hasPhone ? true : null,
+      hasEmail: filterPreset.hasEmail ? true : null,
+    });
     onFilterPresetConsumed?.();
-    // Trigger load on next tick (after state updates)
     setTimeout(() => { loadLeadsRef.current?.(0); }, 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterPreset]);
@@ -331,65 +218,21 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
   };
 
   const clearFilters = async () => {
-    setSearchTerm('');
-    setSearchMode('leads');
+    clearFilterState();
     setAddressResults([]);
-    setFilterBoroughs([]);
-    setFilterMinScore('');
-    setFilterMaxScore('');
-    setFilterMinPortfolio('');
-    setFilterMaxPortfolio('');
-    setFilterHasPhone(null);
-    setFilterHasEmail(null);
-    setFilterEntityTypes([]);
-    setFilterOutreachStatuses([]);
-    setFilterPipelineStages([]);
-    setFilterEnrichmentStatuses([]);
-    setFilterHasWebsite(null);
-    setFilterMinUnits('');
-    setFilterMaxUnits('');
-    setFilterMinUnitsPerBldg('');
-    setFilterMaxUnitsPerBldg('');
-    // Reload with no filters (use ref to get latest loadLeads after state resets)
     setPage(0);
     setTimeout(() => loadLeadsRef.current?.(0), 0);
   };
 
   const exportToCsv = async () => {
-    // R5: Removed duplicate API_BASE_URL — imported from api.ts
+    const apiParams = toApiParams(sortField, sortDir, totalLeads, 0);
     const params = new URLSearchParams();
-    params.set('limit', totalLeads.toString());
-    
-    const minScore = parseFloat(filterMinScore);
-    if (!isNaN(minScore) && minScore > 0) params.set('min_score', minScore.toString());
-    const maxScore = parseFloat(filterMaxScore);
-    if (!isNaN(maxScore) && maxScore > 0) params.set('max_score', maxScore.toString());
-    
-    const minPortfolio = parseInt(filterMinPortfolio);
-    if (!isNaN(minPortfolio) && minPortfolio > 0) params.set('min_portfolio', minPortfolio.toString());
-    const maxPortfolio = parseInt(filterMaxPortfolio);
-    if (!isNaN(maxPortfolio) && maxPortfolio > 0) params.set('max_portfolio', maxPortfolio.toString());
-    
-    if (filterBoroughs.length > 0) params.set('boro', filterBoroughs.join(','));
-    if (filterHasPhone === true) params.set('has_phone', 'true');
-    if (filterEntityTypes.length > 0) params.set('entity_type', filterEntityTypes.join(','));
-    
-    const minUnits = parseInt(filterMinUnits);
-    if (!isNaN(minUnits) && minUnits > 0) params.set('min_units', minUnits.toString());
-    const maxUnits = parseInt(filterMaxUnits);
-    if (!isNaN(maxUnits) && maxUnits > 0) params.set('max_units', maxUnits.toString());
-    const minUpb = parseFloat(filterMinUnitsPerBldg);
-    if (!isNaN(minUpb) && minUpb > 0) params.set('min_units_per_bldg', minUpb.toString());
-    const maxUpb = parseFloat(filterMaxUnitsPerBldg);
-    if (!isNaN(maxUpb) && maxUpb > 0) params.set('max_units_per_bldg', maxUpb.toString());
-    if (filterOutreachStatuses.length > 0) params.set('outreach_status', filterOutreachStatuses.join(','));
-    if (filterPipelineStages.length > 0) params.set('pipeline_stage', filterPipelineStages.join(','));
-    if (filterEnrichmentStatuses.length > 0) params.set('enrichment_status', filterEnrichmentStatuses.join(','));
-    if (searchTerm.trim()) params.set('search', searchTerm.trim());
-    if (filterBuildingTypes.length > 0) params.set('building_type_has', filterBuildingTypes.join(','));
+    Object.entries(apiParams).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') params.set(k, String(v));
+    });
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/export/csv?${params.toString()}`, {
+      const response = await fetch(`${API_BASE_URL}/api/v1/export/leads/csv?${params.toString()}`, {
         headers: getAuthHeaders(),
       });
       if (!response.ok) throw new Error('Export failed');
@@ -397,7 +240,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `hpd_leads_${new Date().toISOString().slice(0, 10)}.csv`;
+      link.download = `double_edge_leads_${new Date().toISOString().slice(0, 10)}.csv`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -421,11 +264,38 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `hpd_leads_${new Date().toISOString().slice(0, 10)}.csv`;
+      link.download = `double_edge_leads_${new Date().toISOString().slice(0, 10)}.csv`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
+    }
+  };
+
+  const saveAsSmartList = async () => {
+    const name = window.prompt('Smart List name:');
+    if (!name?.trim()) return;
+    try {
+      const smartFilters: Record<string, unknown> = {};
+      if (filters.boroughs.length > 0) smartFilters.boroughs = filters.boroughs;
+      if (filters.minScore) smartFilters.min_score = filters.minScore;
+      if (filters.maxScore) smartFilters.max_score = filters.maxScore;
+      if (filters.minPortfolio) smartFilters.min_portfolio = filters.minPortfolio;
+      if (filters.maxPortfolio) smartFilters.max_portfolio = filters.maxPortfolio;
+      if (filters.minUnits) smartFilters.min_units = filters.minUnits;
+      if (filters.maxUnits) smartFilters.max_units = filters.maxUnits;
+      if (filters.entityTypes.length > 0) smartFilters.entity_types = filters.entityTypes;
+      if (filters.pipelineStages.length > 0) smartFilters.pipeline_stages = filters.pipelineStages;
+      if (filters.outreachStatuses.length > 0) smartFilters.outreach_statuses = filters.outreachStatuses;
+      if (filters.enrichmentStatuses.length > 0) smartFilters.enrichment_statuses = filters.enrichmentStatuses;
+      if (filters.hasPhone) smartFilters.has_phone = true;
+      if (filters.hasEmail) smartFilters.has_email = true;
+      if (filters.searchTerm.trim()) smartFilters.search = filters.searchTerm.trim();
+
+      await createSmartList({ name: name.trim(), filters: smartFilters });
+      toast.success(`Smart List "${name}" saved`);
+    } catch (err) {
+      toast.error('Failed to save Smart List');
     }
   };
 
@@ -478,15 +348,15 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
   return (
     <div className="space-y-4">
       {/* Filter Bar */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3 md:p-4">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3 md:p-4" role="search" aria-label="Lead filters">
         {/* Primary Filters Row */}
         <div className="flex flex-wrap items-center gap-2 md:gap-3">
           <div className="flex-1 min-w-[160px] md:min-w-[280px] flex flex-col gap-1.5">
             <div className="flex rounded-lg border border-gray-300 overflow-hidden" role="group">
               <button
-                onClick={() => { if (searchMode !== 'leads') { setSearchMode('leads'); setAddressResults([]); } }}
+                onClick={() => { if (filters.searchMode !== 'leads') { setField('searchMode', 'leads'); setAddressResults([]); } }}
                 className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors ${
-                  searchMode === 'leads'
+                  filters.searchMode === 'leads'
                     ? 'bg-blue-600 text-white'
                     : 'bg-white text-gray-500 hover:bg-gray-50'
                 }`}
@@ -494,9 +364,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                 PM Companies
               </button>
               <button
-                onClick={() => { if (searchMode !== 'address') { setSearchMode('address'); setAddressResults([]); } }}
+                onClick={() => { if (filters.searchMode !== 'address') { setField('searchMode', 'address'); setAddressResults([]); } }}
                 className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors border-l border-gray-300 ${
-                  searchMode === 'address'
+                  filters.searchMode === 'address'
                     ? 'bg-blue-600 text-white'
                     : 'bg-white text-gray-500 hover:bg-gray-50'
                 }`}
@@ -504,9 +374,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                 Address Lookup
               </button>
             </div>
-            <input type="text" placeholder={searchMode === 'leads' ? "Search by company name, owner, or agent..." : "Search by building address (e.g., 140 E 28th St)..."}
+            <input type="text" placeholder={filters.searchMode === 'leads' ? "Search by company name, owner, or agent..." : "Search by building address (e.g., 140 E 28th St)..."}
               className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
+              value={filters.searchTerm} onChange={(e) => setField('searchTerm', e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   applyFilters();
@@ -516,9 +386,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
           {/* Borough multi-select toggles — horizontally scrollable on mobile */}
           <div className="flex gap-1 overflow-x-auto flex-shrink-0 scrollbar-hide">
             {BOROUGHS.map(b => (
-              <button key={b} onClick={() => toggleBorough(b)}
+              <button key={b} onClick={() => toggle('boroughs', b)}
                 className={`px-3 py-2 sm:px-2 sm:py-1.5 rounded text-xs font-medium transition-colors flex-shrink-0 ${
-                  filterBoroughs.includes(b)
+                  filters.boroughs.includes(b)
                     ? 'bg-blue-50 text-blue-700 border border-blue-300'
                     : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'
                 }`}>
@@ -527,18 +397,18 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
             ))}
           </div>
           <div className="flex gap-1.5">
-            <button onClick={() => setFilterHasPhone(filterHasPhone === true ? null : true)}
-              className={`px-3 py-2 sm:px-2 sm:py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasPhone === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
-              {filterHasPhone === true && <span className="text-emerald-600">✓</span>}Phone
+            <button onClick={() => setField('hasPhone', filters.hasPhone === true ? null : true)}
+              className={`px-3 py-2 sm:px-2 sm:py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filters.hasPhone === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
+              {filters.hasPhone === true && <span className="text-emerald-600">✓</span>}Phone
             </button>
-            <button onClick={() => setFilterHasEmail(filterHasEmail === true ? null : true)}
-              className={`px-3 py-2 sm:px-2 sm:py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasEmail === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
-              {filterHasEmail === true && <span className="text-emerald-600">✓</span>}Email
+            <button onClick={() => setField('hasEmail', filters.hasEmail === true ? null : true)}
+              className={`px-3 py-2 sm:px-2 sm:py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filters.hasEmail === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
+              {filters.hasEmail === true && <span className="text-emerald-600">✓</span>}Email
             </button>
           </div>
-          <button onClick={() => setShowMoreFilters(!showMoreFilters)} className="px-3 py-2 sm:py-2 text-xs text-gray-500 hover:text-gray-700 transition-colors relative flex-shrink-0">
-            {showMoreFilters ? 'Less Filters' : 'More Filters'}
-            {activeFiltersCount > 0 && !showMoreFilters && (
+          <button onClick={() => setField('showMoreFilters', !filters.showMoreFilters)} className="px-3 py-2 sm:py-2 text-xs text-gray-500 hover:text-gray-700 transition-colors relative flex-shrink-0">
+            {filters.showMoreFilters ? 'Less Filters' : 'More Filters'}
+            {activeFiltersCount > 0 && !filters.showMoreFilters && (
               <span className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 text-white text-[9px] rounded-full flex items-center justify-center font-bold">{activeFiltersCount}</span>
             )}
           </button>
@@ -551,6 +421,14 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
             Export
           </button>
+          {activeFiltersCount > 0 && (
+            <button onClick={saveAsSmartList}
+              className="hidden sm:inline-flex px-3 py-2 bg-white border border-blue-200 rounded-lg text-xs text-blue-700 hover:bg-blue-50 transition-colors items-center gap-1.5"
+              title="Save current filters as a Smart List for tracking changes over time">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" /></svg>
+              Save List
+            </button>
+          )}
         </div>
         <div className="mt-3 grid grid-cols-3 gap-2 sm:hidden">
           <button
@@ -574,41 +452,39 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
           </button>
         </div>
         {/* More Filters (collapsed) */}
-        {showMoreFilters && (
+        {filters.showMoreFilters && (
           <div className="mt-3 pt-3 border-t border-gray-200 space-y-3">
-            {/* Row 1: Range filters */}
             <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 sm:gap-3 items-center">
               <div className="flex items-center gap-1" title="Filter by lead quality score (0-100)">
                 <span className="text-[10px] text-gray-400 uppercase font-bold w-12">Score</span>
-                <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMinScore} onChange={(e) => setFilterMinScore(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
+                <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filters.minScore} onChange={(e) => setField('minScore', e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
                 <span className="text-gray-400 text-xs">—</span>
-                <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMaxScore} onChange={(e) => setFilterMaxScore(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
+                <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filters.maxScore} onChange={(e) => setField('maxScore', e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
               </div>
               <div className="flex items-center gap-1" title="Filter by total residential units">
                 <span className="text-[10px] text-gray-400 uppercase font-bold w-12">Units</span>
-                <input type="number" placeholder="Min" className="w-16 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMinUnits} onChange={(e) => setFilterMinUnits(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
+                <input type="number" placeholder="Min" className="w-16 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filters.minUnits} onChange={(e) => setField('minUnits', e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
                 <span className="text-gray-400 text-xs">—</span>
-                <input type="number" placeholder="Max" className="w-16 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMaxUnits} onChange={(e) => setFilterMaxUnits(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
+                <input type="number" placeholder="Max" className="w-16 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filters.maxUnits} onChange={(e) => setField('maxUnits', e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
               </div>
               <div className="flex items-center gap-1" title="Filter by number of buildings in portfolio">
                 <span className="text-[10px] text-gray-400 uppercase font-bold w-12">Bldgs</span>
-                <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMinPortfolio} onChange={(e) => setFilterMinPortfolio(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
+                <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filters.minPortfolio} onChange={(e) => setField('minPortfolio', e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
                 <span className="text-gray-400 text-xs">—</span>
-                <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMaxPortfolio} onChange={(e) => setFilterMaxPortfolio(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
+                <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filters.maxPortfolio} onChange={(e) => setField('maxPortfolio', e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
               </div>
               <div className="flex items-center gap-1" title="Filter by average units per building">
                 <span className="text-[10px] text-gray-400 uppercase font-bold w-12">U/Bldg</span>
-                <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMinUnitsPerBldg} onChange={(e) => setFilterMinUnitsPerBldg(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
+                <input type="number" placeholder="Min" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filters.minUnitsPerBldg} onChange={(e) => setField('minUnitsPerBldg', e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
                 <span className="text-gray-400 text-xs">—</span>
-                <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filterMaxUnitsPerBldg} onChange={(e) => setFilterMaxUnitsPerBldg(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
+                <input type="number" placeholder="Max" className="w-14 px-1.5 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 text-center" value={filters.maxUnitsPerBldg} onChange={(e) => setField('maxUnitsPerBldg', e.target.value)} onKeyDown={(e) => e.key === 'Enter' && applyFilters()} />
               </div>
-              <button onClick={() => setFilterHasWebsite(filterHasWebsite === true ? null : true)}
+              <button onClick={() => setField('hasWebsite', filters.hasWebsite === true ? null : true)}
                 title="Filter leads where a company website was found via enrichment"
-                className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filterHasWebsite === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
-                {filterHasWebsite === true && <span className="text-emerald-600">✓</span>}Has Website
+                className={`px-2 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filters.hasWebsite === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
+                {filters.hasWebsite === true && <span className="text-emerald-600">✓</span>}Has Website
               </button>
             </div>
-            {/* Row 2: Building types */}
             <div className="flex flex-wrap gap-3 items-center">
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] text-gray-400 uppercase font-bold">Type</span>
@@ -619,9 +495,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                   ['rental_walkup', 'Walkup'],
                   ['small_residential', 'Small Res'],
                 ] as [string, string][]).map(([val, label]) => (
-                  <button key={val} onClick={() => toggleBuildingType(val)}
+                  <button key={val} onClick={() => toggle('buildingTypes', val)}
                     className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
-                      filterBuildingTypes.includes(val)
+                      filters.buildingTypes.includes(val)
                         ? 'bg-purple-50 text-purple-700 border border-purple-300'
                         : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'
                     }`}>
@@ -630,7 +506,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                 ))}
               </div>
             </div>
-            {/* Row 3: Pipeline stages (multi-select) */}
             <div className="flex flex-wrap gap-1.5 items-center">
               <span className="text-[10px] text-gray-400 uppercase font-bold mr-1">Stage</span>
               {([
@@ -643,9 +518,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                 ['due_diligence', 'Due Diligence'],
                 ['closed', 'Closed'],
               ] as [string, string][]).map(([val, label]) => (
-                <button key={val} onClick={() => togglePipelineStage(val)}
+                <button key={val} onClick={() => toggle('pipelineStages', val)}
                   className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
-                    filterPipelineStages.includes(val)
+                    filters.pipelineStages.includes(val)
                       ? 'bg-blue-50 text-blue-700 border border-blue-300'
                       : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'
                   }`}>
@@ -653,7 +528,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                 </button>
               ))}
             </div>
-            {/* Row 4: Outreach status (multi-select) */}
             <div className="flex flex-wrap gap-1.5 items-center">
               <span className="text-[10px] text-gray-400 uppercase font-bold mr-1">Outreach</span>
               {([
@@ -663,9 +537,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                 ['not_interested', 'Not Interested'],
                 ['closed', 'Closed'],
               ] as [string, string][]).map(([val, label]) => (
-                <button key={val} onClick={() => toggleOutreachStatus(val)}
+                <button key={val} onClick={() => toggle('outreachStatuses', val)}
                   className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
-                    filterOutreachStatuses.includes(val)
+                    filters.outreachStatuses.includes(val)
                       ? 'bg-amber-50 text-amber-700 border border-amber-300'
                       : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'
                   }`}>
@@ -673,7 +547,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                 </button>
               ))}
             </div>
-            {/* Row 5: Enrichment + Entity type (multi-select) */}
             <div className="flex flex-wrap gap-3 items-center">
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] text-gray-400 uppercase font-bold">Enrichment</span>
@@ -683,9 +556,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                   ['failed', 'No Data'],
                   ['none', 'Not Enriched'],
                 ] as [string, string][]).map(([val, label]) => (
-                  <button key={val} onClick={() => toggleEnrichmentStatus(val)}
+                  <button key={val} onClick={() => toggle('enrichmentStatuses', val)}
                     className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
-                      filterEnrichmentStatuses.includes(val)
+                      filters.enrichmentStatuses.includes(val)
                         ? 'bg-teal-50 text-teal-700 border border-teal-300'
                         : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'
                     }`}>
@@ -700,9 +573,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                   ['individual_agent', 'Individual'],
                   ['owner_operator', 'Owner-Op'],
                 ] as [string, string][]).map(([val, label]) => (
-                  <button key={val} onClick={() => toggleEntityType(val)}
+                  <button key={val} onClick={() => toggle('entityTypes', val)}
                     className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
-                      filterEntityTypes.includes(val)
+                      filters.entityTypes.includes(val)
                         ? 'bg-indigo-50 text-indigo-700 border border-indigo-300'
                         : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'
                     }`}>
@@ -734,7 +607,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
         </div>
       </div>
       {/* Address Search Results */}
-      {searchMode === 'address' && addressResults.length > 0 && (
+      {filters.searchMode === 'address' && addressResults.length > 0 && (
         <div className="bg-white shadow-sm border border-blue-200 rounded-xl p-4 mb-3">
           <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3">
             Building Address Results ({addressResults.length})
@@ -750,8 +623,8 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                   {b.agent_name ? (
                     <button
                       onClick={() => {
-                        setSearchMode('leads');
-                        setSearchTerm(b.agent_name);
+                        setField('searchMode', 'leads');
+                        setField('searchTerm', b.agent_name);
                         setAddressResults([]);
                         setTimeout(() => applyFilters(), 0);
                       }}
@@ -769,7 +642,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
         </div>
       )}
 
-      {searchMode === 'address' && addressSearching && (
+      {filters.searchMode === 'address' && addressSearching && (
         <div className="bg-white shadow-sm border border-blue-200 rounded-xl p-4 mb-3 text-center text-sm text-gray-500">
           Searching buildings...
         </div>
@@ -820,7 +693,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                 </th>
                 <th className="px-4 py-3">Contact</th>
                 <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors" onClick={() => handleSort('enrichment_status')}
-                  title="Enrichment progress: green dots = phone/email found, company website found, full research complete">
+                  title="Enrichment status: Enriched = phone/email + website + AI summary found; Partial = some data found; No Data = enrichment attempted, nothing found; Not Enriched = not yet run">
                   Info <SortIcon field="enrichment_status" />
                 </th>
               </tr>

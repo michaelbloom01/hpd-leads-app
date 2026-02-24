@@ -1,6 +1,6 @@
-# HPD Leads App
+# Double Edge
 
-NYC property management lead generation platform for PE acquisition targets. Identifies **management companies** from the HPD database, scores them with a multi-dimensional V2 algorithm, enriches with contact info, estimates revenue, tracks violations, and provides a full sourcing workflow.
+NYC property management intelligence platform with dual purpose: **PE acquisition sourcing** (identify PM companies as acquisition targets) and **PM operator lead generation** (find buildings ripe for outreach). Built on HPD public data covering 200k+ buildings.
 
 **Live App:** https://frontend-nine-psi-58.vercel.app  
 **Backend API:** https://hpd-leads-app-production.up.railway.app  
@@ -15,8 +15,9 @@ NYC property management lead generation platform for PE acquisition targets. Ide
 5. **Estimates revenue** per lead based on units, borough, and building type
 6. **Integrates HPD violations** as distress/opportunity signals
 7. **Scores leads (V2)** using 8 dimensions: portfolio, units, professional, contact, concentration, revenue, distress, deal fit
-8. **Enriches contacts** using 4-tier cascade: Google Places (address-based) -> NY DOS -> Web Crawl -> Hunter.io (with SQLite-backed caching)
-9. **Displays in a full sourcing UI** with server-side pagination, pipeline tracking, follow-up management, and due diligence reports
+8. **Enriches contacts** using 4-tier cascade: Google Places -> NY DOS -> Web Crawl -> Hunter.io
+9. **Smart Lists** — saved filter segments that track lead changes over time
+10. **Full sourcing UI** with server-side filtering, pipeline tracking, follow-ups, and bookmarkable filter URLs
 
 ## Current Status (Feb 2026)
 
@@ -26,12 +27,12 @@ NYC property management lead generation platform for PE acquisition targets. Ide
 | High-Value Leads (10+ buildings) | ~1,300 |
 | Entity Classification | Company / Individual Agent / Owner-Operator |
 | Building Type Coverage | 100% (PLUTO data) |
-| Scoring | V2: 8-dimension (portfolio, units, professional, contact, concentration, revenue, distress, deal fit) |
-| Enrichment Sources | Google Places, NY DOS, Web Crawl, Hunter.io (with SQLite caching) |
-| Revenue Estimation | Borough/type-adjusted, 5% mgmt fee assumption |
+| Scoring | V2: 8-dimension |
+| Enrichment Sources | Google Places, NY DOS, Web Crawl, Hunter.io |
+| Revenue Estimation | Borough/type-adjusted, 5% mgmt fee |
 | Violations Data | HPD Violations (Class A/B/C, per-unit normalized) |
 | Pipeline Stages | Research -> First Contact -> Follow-Up -> Meeting -> LOI -> DD -> Closed |
-| Performance | SQL-indexed queries, server-side pagination, thread-safe |
+| Smart Lists | Saved filter segments with change detection |
 
 ## Key Features
 
@@ -43,55 +44,60 @@ NYC property management lead generation platform for PE acquisition targets. Ide
 - Change alerts and follow-up reminders
 
 ### Lead Table
-- Filter by borough, score, portfolio size, entity type, pipeline stage
-- Filter for leads with phone/email/website
+- Filter by borough, score, portfolio size, units, units/building, entity type, pipeline stage, building type
+- Multi-borough selection, phone/email/website filters
+- URL-persisted filters (bookmarkable, shareable)
+- "Save as Smart List" to track filter segments over time
 - Bulk selection and export to CSV
 - Revenue and violations columns
-- Click any lead for full details
+- Server-side sorting including computed columns (units/building)
 
 ### Lead Detail Modal
-- **Contact info front and center** - phone, email, website with one-click actions
+- Contact info front and center — phone, email, website with one-click actions
 - Revenue estimate and violation summary
 - Pipeline stage management with follow-up dates
 - Portfolio composition (condos, coops, rentals breakdown)
-- HPD registered contacts
+- Quick Risk Snapshot on Due Diligence tab
 - AI-generated company summaries
-- Outreach event logging
-- One-click due diligence report generation
+- Outreach event logging with email templates
+- Keyboard accessible: ESC to close, Tab focus trapping, ARIA labels
 
-### Sourcing Pipeline (Phase 5.3)
-- Pipeline stages: Research, First Contact, Follow-Up, Meeting Scheduled, Meeting Done, LOI, Due Diligence, Closed
-- Follow-up date tracking with "due today" alerts
-- Priority ranking (1-5 stars)
-- Outreach event history per lead
+### Smart Lists
+- Save any filter combination as a named Smart List
+- Evaluate to detect which leads entered/exited since last run
+- Pin favorites to keep them at the top
+- Open in Leads page to apply saved filters instantly
+- Change alerts when list composition shifts
 
-### Due Diligence Reports (Phase 5.5)
-- One-click structured report: company overview, portfolio, financials, violations, contacts, outreach history, comparables
-- Markdown format, exportable
+### Buildings Tab
+- Building-level search and filtering
+- Churn score and outreach pipeline per building
+- CSV export
 
-### Auto-Enrichment
-- 4-tier cascade with address-first strategy
-- Google Places, NY DOS, Web Crawl, Hunter.io
-- SQLite-backed cache (survives restarts)
-- Retry logic (max 3 retries per lead)
-- Progress persists across server restarts
+### AI Agent
+- Natural language query interface (Cmd+K)
+- Lead lookups, script generation, briefing emails
+- Conversation history
 
 ## Architecture
 
 ```
 hpd-leads-app/
 ├── backend/              # Python FastAPI (Railway)
-│   ├── api.py            # REST API + enrichment scheduler
+│   ├── api.py            # REST API entry point
 │   ├── src/
+│   │   ├── routers/      # leads, buildings, smart_lists, admin, etc.
 │   │   ├── ingest/       # HPD, PLUTO, Violations API clients
 │   │   ├── transform/    # Normalize & aggregate to leads
 │   │   ├── score/        # Scoring V2 + revenue estimation
 │   │   ├── enrich/       # Google Places, NY DOS, Hunter, Web Crawl
-│   │   └── storage/      # SQLite persistence + caching
+│   │   ├── db/           # Async SQLAlchemy session (PostgreSQL)
+│   │   └── agent/        # AI Agent with tools
 │   └── config/           # Scoring weights YAML
 ├── frontend/             # React + TypeScript (Vercel)
-│   ├── components/       # Dashboard, LeadTable, LeadDetail
-│   └── services/         # API client
+│   ├── components/       # Dashboard, LeadTable, LeadDetail, SmartListsPage
+│   ├── hooks/            # useLeadFilters, useFilterUrl
+│   └── services/         # API client with retry + error classification
 └── docs/                 # Archived reviews
 ```
 
@@ -100,23 +106,24 @@ hpd-leads-app/
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/health` | GET | Health check |
-| `/api/health/detailed` | GET | Comprehensive diagnostics |
 | `/api/leads` | GET | Get leads with filtering + pagination |
-| `/api/leads/{id}` | GET | Get single lead (from DB) |
+| `/api/leads/{id}` | GET | Get single lead |
 | `/api/leads/{id}` | PATCH | Update status, pipeline, follow-up, priority |
-| `/api/leads/{id}/due-diligence` | GET | Generate due diligence report |
+| `/api/leads/{id}/estimate-revenue` | POST | Estimate and persist revenue for a lead |
+| `/api/leads/{id}/enrich-all` | POST | Unified enrichment (contacts + research + AI) |
 | `/api/leads/{id}/outreach-event` | POST | Log outreach event |
-| `/api/leads/{id}/outreach-events` | GET | Get outreach history |
-| `/api/stats` | GET | Detailed statistics (SQL aggregation) |
+| `/api/stats` | GET | Detailed statistics |
 | `/api/follow-ups` | GET | Leads with follow-ups due |
 | `/api/alerts` | GET | Change detection alerts |
+| `/api/smart-lists` | GET/POST | List or create Smart Lists |
+| `/api/smart-lists/{id}` | GET/PATCH/DELETE | CRUD for a Smart List |
+| `/api/smart-lists/{id}/evaluate` | POST | Re-run filters, detect changes |
 | `/api/enrich/batch` | POST | Start batch enrichment |
-| `/api/enrich/status` | GET | Enrichment progress |
-| `/api/estimate-revenue` | POST | Run revenue estimation |
+| `/api/estimate-revenue` | POST | Bulk revenue estimation |
 | `/api/violations/refresh` | POST | Fetch HPD violations |
 | `/api/rescore` | POST | Re-score all leads (V2) |
-| `/api/refresh` | POST | Refresh from HPD |
-| `/api/refresh/check-updates` | POST | Check for data changes |
+| `/api/v1/export/leads/csv` | GET | Export leads to CSV |
+| `/api/v1/export/buildings/csv` | GET | Export buildings to CSV |
 
 ## Local Development
 
@@ -127,7 +134,7 @@ cd backend
 pip install -r requirements.txt
 python -m uvicorn api:app --reload --port 8000
 # API at http://localhost:8000
-# Docs at http://localhost:8000/docs
+# Docs at http://localhost:8000/api/docs
 ```
 
 ### Frontend
@@ -144,17 +151,18 @@ npm run dev
 ### Backend (Railway)
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...            # AI summaries
-GOOGLE_PLACES_API_KEY=AIza...           # Google Places enrichment
-HUNTER_API_KEY=...                      # Hunter.io email finder
-CORS_ORIGINS=https://hpd-leads-app.vercel.app,http://localhost:5173
+DATABASE_URL=postgresql+asyncpg://...     # PostgreSQL connection
+JWT_SECRET=...                             # JWT signing secret
+ANTHROPIC_API_KEY=sk-ant-...              # AI summaries
+GOOGLE_PLACES_API_KEY=AIza...             # Google Places enrichment
+HUNTER_API_KEY=...                        # Hunter.io email finder
+CORS_ORIGINS=https://your-frontend.vercel.app,http://localhost:5173
 ```
 
 ### Frontend (Vercel)
 
 ```
 VITE_API_URL=https://hpd-leads-app-production.up.railway.app
-VITE_GOOGLE_MAPS_KEY=AIza...
 ```
 
 ## Data Sources

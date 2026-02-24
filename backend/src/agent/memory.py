@@ -1,5 +1,5 @@
 """
-Conversation memory for the HPD Leads AI Agent.
+Conversation memory for the Double Edge AI Agent.
 
 Provides CRUD operations for agent conversations and messages,
 plus pending action storage for the confirmation gate.

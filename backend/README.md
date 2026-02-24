@@ -1,6 +1,6 @@
-# HPD Leads App - Backend
+# Double Edge - Backend
 
-Python FastAPI backend for the HPD Leads property management lead generation platform.
+Python FastAPI backend for the Double Edge NYC housing intelligence platform.
 
 ## Quick Start
 

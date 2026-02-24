@@ -1,5 +1,5 @@
 """
-FastAPI server for HPD Leads Pipeline.
+FastAPI server for Double Edge Pipeline.
 
 Thin entry point that registers routers and handles startup/shutdown.
 All route logic lives in src/routers/.
@@ -36,6 +36,7 @@ from src.routers.jobs import router as jobs_router
 from src.routers.quality import router as quality_router
 from src.routers.alerts import router as alerts_router
 from src.routers.export_v1 import router as export_v1_router
+from src.routers.smart_lists import router as smart_lists_router
 
 # Legacy SQLite routers: only load when DATABASE_URL is absent (local dev with SQLite).
 # On Railway (PostgreSQL), these routers call get_database() which hits a nonexistent
@@ -73,11 +74,11 @@ limiter = Limiter(key_func=get_remote_address)
 # App
 # ---------------------------------------------------------------------------
 app = FastAPI(
-    title="HPD Leads API",
+    title="Double Edge API",
     description=(
         "Enterprise API for NYC property management lead generation and building churn analysis.\n\n"
-        "**Personas:**\n"
-        "- PE Searcher (Leads tab): Evaluate PM businesses for acquisition\n"
+        "**Dual-purpose platform:**\n"
+        "- PE/Acquirer (Leads tab): Source and evaluate PM businesses for acquisition\n"
         "- PM Operator (Buildings tab): Find buildings ripe for high-value outreach"
     ),
     version="3.0.0",
@@ -142,6 +143,7 @@ app.include_router(jobs_router)
 app.include_router(quality_router)
 app.include_router(alerts_router)
 app.include_router(export_v1_router)
+app.include_router(smart_lists_router)
 for r in _legacy_routers:
     app.include_router(r)
 
@@ -151,7 +153,7 @@ for r in _legacy_routers:
 # ---------------------------------------------------------------------------
 @app.get("/")
 async def root():
-    return {"status": "ok", "service": "hpd-leads-api"}
+    return {"status": "ok", "service": "double-edge-api"}
 
 
 @app.on_event("startup")
@@ -162,7 +164,7 @@ async def startup():
     ):
         logger.critical("REFUSING TO START: JWT_SECRET is not set or is the default placeholder. Set a secure random value.")
         raise RuntimeError("JWT_SECRET must be set in production")
-    logger.info(f"HPD Leads API starting (env={_env})")
+    logger.info(f"Double Edge API starting (env={_env})")
 
 
 if __name__ == "__main__":

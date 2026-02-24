@@ -1,8 +1,8 @@
-# HPD Leads App — Agent Context
+# Double Edge — Agent Context
 
 ## What This Project Does
 
-Enterprise-grade lead generation platform for acquiring Property Management businesses in NYC.
+Dual-purpose NYC housing intelligence platform (formerly HPD Leads).
 Two distinct use cases / personas:
 
 1. **Leads tab (PE Searcher)** — Find PM companies to acquire based on deal criteria (portfolio size, units, revenue, borough, entity type)

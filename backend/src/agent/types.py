@@ -1,6 +1,6 @@
 """
 Agent types — the single source of truth for all API contracts, tool schemas,
-and structured data models used by the HPD Leads AI Agent.
+and structured data models used by the Double Edge AI Agent.
 """
 
 from pydantic import BaseModel, Field

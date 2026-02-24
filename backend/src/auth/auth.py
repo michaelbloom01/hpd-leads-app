@@ -1,5 +1,5 @@
 """
-JWT authentication for HPD Leads API.
+JWT authentication for Double Edge API.
 
 Provides:
 - Password hashing (bcrypt via passlib)

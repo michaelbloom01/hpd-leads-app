@@ -1,9 +1,6 @@
-import React, { useState, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { toast } from 'react-hot-toast';
-import DOMPurify from 'dompurify';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { ApiLead, updateLead, addOutreachAttempt, enrichLeadAll, getDueDiligence, estimateLeadRevenue, OutreachAttempt } from '../services/api';
+import { ApiLead, updateLead, addOutreachAttempt, enrichLeadAll, estimateLeadRevenue, OutreachAttempt } from '../services/api';
 import { PIPELINE_STAGES, OUTREACH_STATUSES, OUTREACH_METHODS, OUTREACH_OUTCOMES, formatCurrency } from '../utils/format';
 
 // Lazy-load map to avoid large initial bundle
@@ -32,12 +29,12 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   const [pipelineStage, setPipelineStage] = useState(lead.pipeline_stage || 'research');
   const [priorityRank, setPriorityRank] = useState(lead.priority_rank || 0);
   const [nextFollowUp, setNextFollowUp] = useState(lead.next_follow_up || '');
-  const [ddReport, setDdReport] = useState<{ report_markdown: string; comparables: Record<string, unknown>[] } | null>(null);
-  const [isLoadingDD, setIsLoadingDD] = useState(false);
   const [buildingSearch, setBuildingSearch] = useState('');
   const [showEmailMenu, setShowEmailMenu] = useState(false);
   const [isEstimatingRevenue, setIsEstimatingRevenue] = useState(false);
   const [revenueEstimateFailed, setRevenueEstimateFailed] = useState(false);
+
+  const modalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setEnrichedLead(lead);
@@ -53,6 +50,39 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     setIsEstimatingRevenue(false);
     setRevenueEstimateFailed(false);
   }, [lead]);
+
+  // ESC to close
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  // Focus trap: cycle focus within modal
+  const handleFocusTrap = useCallback((e: KeyboardEvent) => {
+    if (e.key !== 'Tab' || !modalRef.current) return;
+    const focusable = modalRef.current.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }, []);
+
+  useEffect(() => {
+    document.addEventListener('keydown', handleFocusTrap);
+    modalRef.current?.focus();
+    return () => document.removeEventListener('keydown', handleFocusTrap);
+  }, [handleFocusTrap]);
 
   // Auto-estimate revenue once when a lead has units but missing persisted values.
   useEffect(() => {
@@ -154,13 +184,6 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     } catch (err) { setNextFollowUp(prev); console.error('Failed to update follow-up:', err); toast.error('Failed to update'); }
   };
 
-  const handleGenerateDD = async () => {
-    setIsLoadingDD(true);
-    try { const result = await getDueDiligence(lead.lead_id); setDdReport(result); } 
-    catch (err) { console.error('DD report failed:', err); toast.error('Due diligence report is not yet available'); } 
-    finally { setIsLoadingDD(false); }
-  };
-
   // Unified enrichment: contacts + research + AI summary in one call.
   // The backend returns the full updated lead in the response — no second API call needed.
   const handleEnrichAll = async () => {
@@ -248,8 +271,8 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   ];
 
   return (
-    <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50 flex items-center justify-center p-0 md:p-4" onClick={onClose}>
-      <div className="bg-white border border-gray-200 md:rounded-2xl max-w-3xl w-full h-full md:h-auto md:max-h-[90vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50 flex items-center justify-center p-0 md:p-4" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="lead-detail-title">
+      <div ref={modalRef} tabIndex={-1} className="bg-white border border-gray-200 md:rounded-2xl max-w-3xl w-full h-full md:h-auto md:max-h-[90vh] flex flex-col shadow-2xl outline-none" onClick={e => e.stopPropagation()}>
         
         {/* === STICKY HEADER === */}
         <div className="flex-shrink-0 border-b border-gray-200">
@@ -275,9 +298,9 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                     </span>
                   ))}
                 </div>
-                <h2 className="text-lg sm:text-xl font-bold text-gray-900 truncate">{enrichedLead.company_name || enrichedLead.agent_name || enrichedLead.owner_name}</h2>
+                <h2 id="lead-detail-title" className="text-lg sm:text-xl font-bold text-gray-900 truncate">{enrichedLead.company_name || enrichedLead.agent_name || enrichedLead.owner_name}</h2>
               </div>
-              <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-900 transition-colors ml-2 flex-shrink-0">
+              <button onClick={onClose} aria-label="Close lead detail" className="p-2 text-gray-400 hover:text-gray-900 transition-colors ml-2 flex-shrink-0">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/>
                 </svg>
@@ -796,169 +819,56 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
 
           {/* TAB: DUE DILIGENCE */}
           {activeTab === 'dd' && (
-            <>
-              <button onClick={handleGenerateDD} disabled={isLoadingDD}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-sm font-medium rounded-xl hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 transition-all">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="flex flex-col items-center justify-center py-16 text-center space-y-4">
+              <div className="w-16 h-16 rounded-full bg-indigo-50 flex items-center justify-center">
+                <svg className="w-8 h-8 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
                 </svg>
-                {isLoadingDD ? 'Generating...' : ddReport ? 'Regenerate DD Report' : 'Generate Due Diligence Report'}
-              </button>
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900 mb-1">Due Diligence Reports</h3>
+                <p className="text-sm text-gray-500 max-w-sm">
+                  Automated DD reports with portfolio analysis, financials, violation history, and comparable companies are coming soon.
+                </p>
+              </div>
 
-              {ddReport && (
-                <div className="space-y-4">
-                  {/* Key Risks Summary */}
-                  <div className="bg-rose-50 border border-rose-200 rounded-xl p-4">
-                    <h3 className="text-xs font-bold text-rose-600 uppercase tracking-wider mb-2">Key Risks</h3>
-                    <div className="space-y-1.5 text-sm">
-                      {enrichedLead.violations_per_unit > 1.0 && (
-                        <div className="flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-rose-500" />
-                          <span className="text-gray-700">High violation density ({enrichedLead.violations_per_unit.toFixed(2)}/unit) — may indicate deferred maintenance</span>
-                        </div>
-                      )}
-                      {enrichedLead.violation_class_c > 10 && (
-                        <div className="flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-rose-500" />
-                          <span className="text-gray-700">{enrichedLead.violation_class_c} Class C (immediately hazardous) violations</span>
-                        </div>
-                      )}
-                      {!enrichedLead.phone && !enrichedLead.email && (
-                        <div className="flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-amber-500" />
-                          <span className="text-gray-700">No direct contact info found — may be difficult to reach</span>
-                        </div>
-                      )}
-                      {enrichedLead.portfolio_size <= 5 && (
-                        <div className="flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-amber-500" />
-                          <span className="text-gray-700">Small portfolio ({enrichedLead.portfolio_size} buildings) — lower revenue potential</span>
-                        </div>
-                      )}
-                      {enrichedLead.violations_per_unit <= 1.0 && enrichedLead.violation_class_c <= 10 && (enrichedLead.phone || enrichedLead.email) && enrichedLead.portfolio_size > 5 && (
-                        <div className="flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                          <span className="text-gray-700">No major red flags identified</span>
-                        </div>
-                      )}
+              {/* Quick Risk Snapshot (available now) */}
+              <div className="w-full max-w-md bg-gray-50 border border-gray-200 rounded-xl p-4 text-left mt-4">
+                <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-3">Quick Risk Snapshot</h4>
+                <div className="space-y-2 text-sm">
+                  {enrichedLead.violations_per_unit > 1.0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-rose-500 flex-shrink-0" />
+                      <span className="text-gray-700">High violation density ({enrichedLead.violations_per_unit.toFixed(2)}/unit)</span>
                     </div>
-                  </div>
-
-                  <div className="flex justify-end gap-2">
-                    <button onClick={() => { navigator.clipboard.writeText(ddReport.report_markdown); toast.success('Copied to clipboard'); }}
-                      className="px-3 py-1 bg-gray-100 text-gray-700 text-xs rounded-lg hover:bg-gray-200">Copy Markdown</button>
-                    <button onClick={() => {
-                      const printWindow = window.open('', '_blank');
-                      if (printWindow) {
-                        printWindow.document.write(`<html><head><title>DD Report - ${enrichedLead.company_name || enrichedLead.agent_name}</title>
-                          <style>body{font-family:system-ui,sans-serif;max-width:800px;margin:40px auto;padding:0 20px;color:#1e293b}
-                          h1{font-size:24px;border-bottom:2px solid #e2e8f0;padding-bottom:8px}
-                          h2{font-size:18px;color:#3b82f6;margin-top:24px}
-                          h3{font-size:14px;margin-top:16px}
-                          li{margin:4px 0}p{line-height:1.6}
-                          strong{font-weight:700}
-                          a{color:#3b82f6;text-decoration:underline}
-                          table{width:100%;border-collapse:collapse;margin:16px 0}
-                          th,td{border:1px solid #e2e8f0;padding:6px 10px;text-align:left;font-size:13px}
-                          th{background:#f8fafc;font-weight:600}
-                          @media print{body{margin:20px}}</style></head><body>`);
-                        let reportHtml = ddReport.report_markdown
-                          .replace(/^# (.*)/gm, '<h1>$1</h1>')
-                          .replace(/^## (.*)/gm, '<h2>$1</h2>')
-                          .replace(/^### (.*)/gm, '<h3>$1</h3>')
-                          .replace(/^- (.*)/gm, '<li>$1</li>')
-                          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                          .replace(/\n\n/g, '<p></p>')
-                          .replace(/\n/g, '<br>');
-                        if (ddReport.comparables?.length > 0) {
-                          reportHtml += '<h2>Comparables</h2><table><tr><th>Name</th><th>Score</th><th>Buildings</th><th>Revenue</th></tr>';
-                          ddReport.comparables.forEach((c: any) => {
-                            reportHtml += `<tr><td>${c.name || c.lead_name || ''}</td><td>${c.score?.toFixed(1) || ''}</td><td>${c.portfolio_size || c.buildings || ''}</td><td>${c.estimated_annual_revenue ? formatCurrency(c.estimated_annual_revenue) : '—'}</td></tr>`;
-                          });
-                          reportHtml += '</table>';
-                        }
-                        printWindow.document.write(DOMPurify.sanitize(reportHtml));
-                        printWindow.document.write('</body></html>');
-                        printWindow.document.close();
-                        printWindow.print();
-                      }
-                    }}
-                      className="px-3 py-1 bg-indigo-700 text-white text-xs rounded-lg hover:bg-indigo-600 flex items-center gap-1">
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
-                      Print / PDF
-                    </button>
-                  </div>
-
-                  {/* Rendered Markdown Report */}
-                  <div className="text-gray-700 text-sm leading-relaxed space-y-1">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        h1: ({ children }) => <h1 className="text-xl font-bold text-gray-900 border-b border-gray-200 pb-2 mt-4 mb-2">{children}</h1>,
-                        h2: ({ children }) => <h2 className="text-lg font-semibold text-blue-600 mt-5 mb-2">{children}</h2>,
-                        h3: ({ children }) => <h3 className="text-sm font-semibold text-gray-800 mt-3 mb-1">{children}</h3>,
-                        p: ({ children }) => <p className="text-gray-600 leading-relaxed my-1">{children}</p>,
-                        strong: ({ children }) => <strong className="font-semibold text-gray-900">{children}</strong>,
-                        ul: ({ children }) => <ul className="list-disc list-inside space-y-0.5 my-1 ml-2">{children}</ul>,
-                        ol: ({ children }) => <ol className="list-decimal list-inside space-y-0.5 my-1 ml-2">{children}</ol>,
-                        li: ({ children }) => <li className="text-gray-600">{children}</li>,
-                        a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline hover:text-blue-800">{children}</a>,
-                        table: ({ children }) => <div className="overflow-x-auto my-2"><table className="w-full text-sm border-collapse">{children}</table></div>,
-                        thead: ({ children }) => <thead className="bg-gray-50">{children}</thead>,
-                        th: ({ children }) => <th className="border border-gray-200 px-2 py-1 text-left text-xs font-semibold text-gray-600 uppercase">{children}</th>,
-                        td: ({ children }) => <td className="border border-gray-200 px-2 py-1 text-gray-700">{children}</td>,
-                        hr: () => <hr className="border-gray-200 my-3" />,
-                        blockquote: ({ children }) => <blockquote className="border-l-3 border-blue-300 pl-3 italic text-gray-500 my-2">{children}</blockquote>,
-                      }}
-                    >
-                      {ddReport.report_markdown}
-                    </ReactMarkdown>
-                  </div>
-
-                  {ddReport.comparables?.length > 0 && (
-                    <div className="border-t border-gray-200 pt-3">
-                      <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Comparables</h3>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead><tr className="text-gray-500 text-xs uppercase">
-                            <th className="text-left py-1 px-2">Name</th><th className="text-right py-1 px-2">Score</th><th className="text-right py-1 px-2">Buildings</th><th className="text-right py-1 px-2">Units</th><th className="text-right py-1 px-2">Revenue</th>
-                          </tr></thead>
-                          <tbody className="divide-y divide-gray-200">
-                            {ddReport.comparables.map((comp: any, i: number) => (
-                              <tr key={i} className="text-gray-700 hover:bg-gray-50">
-                                <td className="py-1.5 px-2">{comp.name || comp.lead_name}</td>
-                                <td className="py-1.5 px-2 text-right font-mono">
-                                  <span className={comp.score >= 60 ? 'text-emerald-600' : comp.score >= 40 ? 'text-amber-600' : 'text-gray-500'}>
-                                    {comp.score?.toFixed(1)}
-                                  </span>
-                                </td>
-                                <td className="py-1.5 px-2 text-right font-mono">{comp.portfolio_size || comp.buildings}</td>
-                                <td className="py-1.5 px-2 text-right font-mono text-blue-600">{comp.total_units?.toLocaleString() || '—'}</td>
-                                <td className="py-1.5 px-2 text-right font-mono text-emerald-600">{comp.estimated_annual_revenue ? formatCurrency(comp.estimated_annual_revenue) : '—'}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                  )}
+                  {enrichedLead.violation_class_c > 10 && (
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-rose-500 flex-shrink-0" />
+                      <span className="text-gray-700">{enrichedLead.violation_class_c} Class C violations</span>
+                    </div>
+                  )}
+                  {!enrichedLead.phone && !enrichedLead.email && (
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+                      <span className="text-gray-700">No direct contact info found</span>
+                    </div>
+                  )}
+                  {enrichedLead.portfolio_size <= 5 && (
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+                      <span className="text-gray-700">Small portfolio ({enrichedLead.portfolio_size} buildings)</span>
+                    </div>
+                  )}
+                  {enrichedLead.violations_per_unit <= 1.0 && enrichedLead.violation_class_c <= 10 && (enrichedLead.phone || enrichedLead.email) && enrichedLead.portfolio_size > 5 && (
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
+                      <span className="text-gray-700">No major red flags identified</span>
                     </div>
                   )}
                 </div>
-              )}
-
-              {!ddReport && !isLoadingDD && (
-                <div className="text-center py-10">
-                  <p className="text-gray-400 text-sm">Generate a full due diligence report for this lead — includes portfolio analysis, financials, violation history, contacts, and comparison with similar companies.</p>
-                </div>
-              )}
-
-              {isLoadingDD && !ddReport && (
-                <div className="flex flex-col items-center justify-center py-16">
-                  <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
-                  <p className="text-gray-500 text-sm">Generating report...</p>
-                  <p className="text-gray-400 text-xs mt-1">This may take 15-30 seconds</p>
-                </div>
-              )}
-            </>
+              </div>
+            </div>
           )}
         </div>
       </div>

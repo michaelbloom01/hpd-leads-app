@@ -1,9 +1,10 @@
 /**
- * API service for communicating with the HPD Leads backend.
+ * API service for communicating with the Double Edge backend.
  * Updated: Phase 5 (revenue, violations, pipeline, scoring V2)
  * R4/R5: Added health check, fetchWithRetry, AbortController timeouts
  */
 
+import { toast } from 'react-hot-toast';
 import { getAuthHeaders, clearToken } from './auth';
 import { API_BASE_URL } from './config';
 
@@ -111,20 +112,37 @@ async function fetchWithRetry(
       });
       clearTimeout(timeoutId);
       
-      // If we get a 401, token is expired/invalid — clear it so login page shows
       if (response.status === 401) {
         clearToken();
         window.dispatchEvent(new Event('auth:logout'));
+        toast.error('Session expired — please log in again');
         throw new Error('Session expired — please log in again');
       }
-      
-      // Retry on 502/503/504 (transient server errors)
+
+      if (response.status === 403) {
+        toast.error('You do not have permission to perform this action.');
+        throw new Error('Forbidden');
+      }
+
+      if (response.status === 404) {
+        throw new Error(`Not found: ${url.replace(API_BASE_URL, '')}`);
+      }
+
+      if (response.status === 422) {
+        toast.error('Invalid request — please check your inputs.');
+        throw new Error('Validation error');
+      }
+
       if (response.status >= 502 && response.status <= 504 && attempt < retries) {
         lastError = new Error(`HTTP ${response.status}`);
         await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
         continue;
       }
-      
+
+      if (response.status >= 500) {
+        toast.error('Server error — please try again in a moment.');
+      }
+
       return response;
     } catch (err: unknown) {
       clearTimeout(timeoutId);
@@ -136,7 +154,13 @@ async function fetchWithRetry(
     }
   }
   
-  throw lastError || new Error('Request failed after retries');
+  const finalError = lastError || new Error('Request failed after retries');
+  if (finalError.name === 'AbortError') {
+    toast.error('Request timed out — the server may be busy.');
+  } else if (!finalError.message.includes('Session expired')) {
+    toast.error('Network error — check your connection.');
+  }
+  throw finalError;
 }
 
 /**
@@ -641,20 +665,8 @@ export async function dismissAlert(alertId: number): Promise<{ status: string }>
   return response.json();
 }
 
-/**
- * Generate due diligence report (Phase 5.5)
- */
-export async function getDueDiligence(leadId: string): Promise<{
-  lead_id: string;
-  company_name: string;
-  report_markdown: string;
-  data: Record<string, unknown>;
-  comparables: Array<Record<string, unknown>>;
-}> {
-  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/due-diligence`, {}, 1, 60000);
-  if (!response.ok) throw new Error(`Failed to generate due diligence: ${response.statusText}`);
-  return response.json();
-}
+// getDueDiligence removed — backend endpoint does not exist yet.
+// The DD tab in LeadDetail shows a "coming soon" toast instead.
 
 /**
  * Enrichment progress status
@@ -945,6 +957,59 @@ export async function getConversation(conversationId: string): Promise<{ convers
   const response = await fetchWithRetry(`${API_BASE_URL}/api/agent/conversations/${conversationId}`);
   if (!response.ok) throw new Error('Failed to fetch conversation');
   return response.json();
+}
+
+// === Smart Lists ===
+
+export interface SmartList {
+  id: string;
+  name: string;
+  description: string;
+  filters: Record<string, unknown>;
+  pinned: boolean;
+  last_evaluated_at: string | null;
+  last_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SmartListEvaluation {
+  list_id: string;
+  name: string;
+  total: number;
+  previous_total: number;
+  entered: number;
+  exited: number;
+  entered_ids: string[];
+  exited_ids: string[];
+}
+
+export async function getSmartLists(): Promise<{ smart_lists: SmartList[] }> {
+  return apiGet('/api/smart-lists');
+}
+
+export async function createSmartList(body: {
+  name: string;
+  description?: string;
+  filters: Record<string, unknown>;
+  pinned?: boolean;
+}): Promise<{ id: string; name: string; status: string }> {
+  return apiMutate('/api/smart-lists', 'POST', body);
+}
+
+export async function updateSmartList(
+  listId: string,
+  body: { name?: string; description?: string; filters?: Record<string, unknown>; pinned?: boolean },
+): Promise<{ id: string; status: string }> {
+  return apiMutate(`/api/smart-lists/${listId}`, 'PATCH', body);
+}
+
+export async function deleteSmartList(listId: string): Promise<{ id: string; status: string }> {
+  return apiMutate(`/api/smart-lists/${listId}`, 'DELETE');
+}
+
+export async function evaluateSmartList(listId: string): Promise<SmartListEvaluation> {
+  return apiMutate(`/api/smart-lists/${listId}/evaluate`, 'POST');
 }
 
 // === Data Robustness APIs (v2) ===

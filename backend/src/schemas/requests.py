@@ -1,4 +1,4 @@
-"""Pydantic request models for the HPD Leads API."""
+"""Pydantic request models for the Double Edge API."""
 from typing import List, Optional
 from pydantic import BaseModel
 

@@ -1,4 +1,4 @@
-"""System prompt for the HPD Leads AI Agent."""
+"""System prompt for the Double Edge AI Agent."""
 
 SYSTEM_PROMPT = """
 You are a PE deal sourcing associate helping acquire NYC property management companies.

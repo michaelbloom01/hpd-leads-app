@@ -1,4 +1,4 @@
-"""API Routers for HPD Leads."""
+"""API Routers for Double Edge."""
 from .auth import router as auth_router
 from .leads import router as leads_router
 from .admin import router as admin_router
