@@ -17,7 +17,7 @@ const signalLabels: Record<string, string> = {
   violation_trend: 'Violation Trend',
   energy_grade_drop: 'Energy Grade Drop',
   dob_permits: 'DOB Permits',
-  hpd_litigation: 'HPD Litigation',
+  hpd_litigation: 'Housing Litigation',
   emergency_repairs: 'Emergency Repairs',
   building_size: 'Building Size',
   eviction_activity: 'Eviction Activity',
@@ -30,6 +30,11 @@ const eventIcons: Record<string, string> = {
   transaction: 'T',
   permit: 'P',
   litigation: 'L',
+  emergency_repair: 'ER',
+  eviction: 'E',
+  energy: 'EN',
+  facade: 'F',
+  aep: 'A',
 };
 
 const BuildingDetailPage: React.FC = () => {
@@ -241,7 +246,12 @@ const BuildingDetailPage: React.FC = () => {
                   evt.type === 'violation' ? 'bg-orange-100 text-orange-600' :
                   evt.type === 'transaction' ? 'bg-blue-100 text-blue-600' :
                   evt.type === 'permit' ? 'bg-green-100 text-green-600' :
-                  'bg-purple-100 text-purple-600'
+                  evt.type === 'litigation' ? 'bg-purple-100 text-purple-600' :
+                  evt.type === 'emergency_repair' ? 'bg-rose-100 text-rose-700' :
+                  evt.type === 'eviction' ? 'bg-fuchsia-100 text-fuchsia-700' :
+                  evt.type === 'energy' ? 'bg-emerald-100 text-emerald-700' :
+                  evt.type === 'facade' ? 'bg-cyan-100 text-cyan-700' :
+                  'bg-indigo-100 text-indigo-700'
                 }`}>
                   {eventIcons[evt.type] || '?'}
                 </div>

@@ -36,8 +36,6 @@ SOURCE_REGISTRY = [
     {"source_name": "energy_grades", "dataset_id": "355w-xvp2", "table_name": "energy_grades", "job_type": "energy", "ui_surface": "churn_only"},
     {"source_name": "facade_inspections", "dataset_id": "xubg-57si", "table_name": "facade_inspections", "job_type": "facades", "ui_surface": "churn_only"},
     {"source_name": "pad", "dataset_id": "bc8t-ecyu", "table_name": "pad_addresses", "job_type": "pad", "ui_surface": "join_crosswalk"},
-    # Present in configured DATASETS but not wired to a runnable ingest job yet.
-    {"source_name": "dof_assessment", "dataset_id": "yjxr-fw8i", "table_name": "dof_assessment", "job_type": "dof_assessment", "ui_surface": "not_exposed"},
 ]
 
 

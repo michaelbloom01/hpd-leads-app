@@ -477,9 +477,32 @@ export interface DataStatus {
   last_refresh: string | null;
 }
 
+export interface SourceLineageRow {
+  source_name: string;
+  record_count: number;
+  last_updated: string | null;
+  status: 'available' | 'missing';
+  mapped_fields: string[];
+  missing_reason: string | null;
+}
+
+export interface LeadLineageResponse {
+  lead_id: string;
+  entity_name: string;
+  last_updated: string | null;
+  linked_buildings: number;
+  sources: SourceLineageRow[];
+}
+
 export async function fetchDataStatus(): Promise<DataStatus> {
   const response = await fetchWithRetry(`${API_BASE_URL}/api/data-status`);
   if (!response.ok) throw new Error(`Failed to fetch data status: ${response.statusText}`);
+  return response.json();
+}
+
+export async function fetchLeadLineage(leadId: string): Promise<LeadLineageResponse> {
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/lineage`);
+  if (!response.ok) throw new Error(`Failed to fetch lead lineage: ${response.statusText}`);
   return response.json();
 }
 
@@ -491,11 +514,20 @@ export async function refreshPipeline(full: boolean = false): Promise<{
   buildings_fetched: number;
   leads_created: number;
   timestamp: string;
+  dispatch_mode?: string;
 }> {
-  const params = full ? '?full=true' : '';
-  const response = await fetchWithRetry(`${API_BASE_URL}/api/refresh${params}`, { method: 'POST' }, 0, 120000);
-  if (!response.ok) throw new Error(`Failed to refresh pipeline: ${response.statusText}`);
-  return response.json();
+  void full;
+  // Runtime convergence: use PostgreSQL-backed jobs API instead of legacy /api/refresh.
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/v1/jobs/buildings/start`, { method: 'POST' });
+  if (!response.ok) throw new Error(`Failed to queue refresh job: ${response.statusText}`);
+  const data = await response.json();
+  return {
+    status: data.status || 'queued',
+    buildings_fetched: 0,
+    leads_created: 0,
+    timestamp: new Date().toISOString(),
+    dispatch_mode: data.dispatch_mode,
+  };
 }
 
 /**
@@ -536,13 +568,43 @@ export async function enrichLeads(leadIds: string[]): Promise<{
   enriched_count: number;
   results: EnrichmentResult[];
 }> {
-  const response = await fetchWithRetry(`${API_BASE_URL}/api/enrich`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ lead_ids: leadIds }),
-  }, 1, 60000);
-  if (!response.ok) throw new Error(`Failed to enrich leads: ${response.statusText}`);
-  return response.json();
+  // Runtime convergence: avoid legacy /api/enrich endpoint.
+  // Use PostgreSQL-native /api/leads/{id}/enrich-all endpoint per selected lead.
+  const results: EnrichmentResult[] = [];
+  let enrichedCount = 0;
+
+  const chunkSize = 5;
+  for (let i = 0; i < leadIds.length; i += chunkSize) {
+    const chunk = leadIds.slice(i, i + chunkSize);
+    const settled = await Promise.allSettled(
+      chunk.map(async (leadId) => {
+        const enriched = await enrichLeadAll(leadId);
+        return {
+          lead_id: leadId,
+          agent_name: enriched.lead.agent_name || enriched.lead.company_name || enriched.lead.owner_name || '',
+          website: enriched.lead.website,
+          phone: enriched.lead.phone,
+          email: enriched.lead.email,
+          status: enriched.enrichment_status,
+        } as EnrichmentResult;
+      })
+    );
+
+    settled.forEach((res) => {
+      if (res.status === 'fulfilled') {
+        results.push(res.value);
+        if (res.value.status === 'complete' || res.value.status === 'partial') {
+          enrichedCount += 1;
+        }
+      }
+    });
+  }
+
+  return {
+    status: 'success',
+    enriched_count: enrichedCount,
+    results,
+  };
 }
 
 /** NY DOS Corporation info */
@@ -690,13 +752,93 @@ export interface EnrichmentProgress {
   last_completed_at: string | null;
 }
 
+interface IngestionJobStatusRow {
+  id: number;
+  job_type: string;
+  source?: string;
+  status: string;
+  total?: number | null;
+  processed?: number | null;
+  succeeded?: number | null;
+  failed?: number | null;
+  error?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
+function idleEnrichmentProgress(): EnrichmentProgress {
+  return {
+    running: false,
+    phase: '',
+    progress: 0,
+    total: 0,
+    completed: 0,
+    failed: 0,
+    dos_completed: 0,
+    dos_found: 0,
+    web_completed: 0,
+    web_found: 0,
+    current_lead: null,
+    started_at: null,
+    finished_at: null,
+    error: null,
+    percent_complete: 0,
+    last_completed_at: null,
+  };
+}
+
 /**
  * Get enrichment progress status
  */
 export async function getEnrichmentProgress(): Promise<EnrichmentProgress> {
-  const response = await fetchWithRetry(`${API_BASE_URL}/api/enrich/status`);
-  if (!response.ok) throw new Error(`Failed to get enrichment status: ${response.statusText}`);
-  return response.json();
+  try {
+    const response = await fetchWithRetry(
+      `${API_BASE_URL}/api/v1/jobs?job_type=enrichment&limit=1`,
+      {},
+      1,
+      15000,
+    );
+    if (!response.ok) {
+      return idleEnrichmentProgress();
+    }
+
+    const jobs = (await response.json()) as IngestionJobStatusRow[];
+    const latest = jobs?.[0];
+    if (!latest) {
+      return idleEnrichmentProgress();
+    }
+
+    const total = Number(latest.total || 0);
+    const succeeded = Number(latest.succeeded || 0);
+    const failed = Number(latest.failed || 0);
+    const processedFromJob = Number(latest.processed || 0);
+    const processed = processedFromJob > 0 ? processedFromJob : succeeded + failed;
+    const running = latest.status === 'queued' || latest.status === 'running';
+    const percentComplete = total > 0
+      ? Math.max(0, Math.min(100, Math.round((processed / total) * 100)))
+      : 0;
+
+    return {
+      running,
+      phase: running ? latest.status : 'idle',
+      progress: processed,
+      total,
+      completed: succeeded,
+      failed,
+      dos_completed: 0,
+      dos_found: 0,
+      web_completed: 0,
+      web_found: 0,
+      current_lead: null,
+      started_at: latest.started_at || null,
+      finished_at: latest.finished_at || null,
+      error: latest.error || null,
+      percent_complete: percentComplete,
+      last_completed_at: latest.finished_at || null,
+    };
+  } catch {
+    return idleEnrichmentProgress();
+  }
 }
 
 /**
@@ -706,10 +848,28 @@ export async function startBatchEnrichment(limit: number = 100): Promise<{
   status: string;
   message: string;
   target_count: number;
+  dispatch_mode?: string;
 }> {
-  const response = await fetchWithRetry(`${API_BASE_URL}/api/enrich/batch?limit=${limit}`, { method: 'POST' });
-  if (!response.ok) throw new Error(`Failed to start batch enrichment: ${response.statusText}`);
-  return response.json();
+  const safeLimit = Math.max(0, limit);
+  const requestedLimit = Math.max(1, safeLimit || 1);
+  // Queue an enrichment job in the PostgreSQL-backed jobs API.
+  // The worker path is still being converged, but this keeps one canonical contract.
+  const response = await fetchWithRetry(
+    `${API_BASE_URL}/api/v1/jobs/enrichment/start?limit=${requestedLimit}`,
+    { method: 'POST' },
+  );
+  if (!response.ok) throw new Error(`Failed to queue enrichment job: ${response.statusText}`);
+  const data = await response.json();
+  const dispatchMode = data.dispatch_mode as string | undefined;
+  const modeSuffix = dispatchMode === 'in_process'
+    ? ' Running in local fallback mode.'
+    : '';
+  return {
+    status: data.status || 'queued',
+    message: `Queued enrichment job (target: top ${safeLimit || requestedLimit}).${modeSuffix}`,
+    target_count: safeLimit || requestedLimit,
+    dispatch_mode: dispatchMode,
+  };
 }
 
 /**
@@ -743,9 +903,8 @@ export async function rescoreLeads(): Promise<{ status: string; leads_rescored: 
  * Check for data updates (Phase 5.4)
  */
 export async function checkForUpdates(): Promise<{ status: string; alerts_created: number }> {
-  const response = await fetchWithRetry(`${API_BASE_URL}/api/refresh/check-updates`, { method: 'POST' });
-  if (!response.ok) throw new Error(`Failed to check for updates: ${response.statusText}`);
-  return response.json();
+  // Legacy refresh/check-updates endpoint is being retired.
+  return { status: 'unsupported', alerts_created: 0 };
 }
 
 /**
@@ -758,9 +917,16 @@ export interface EnrichmentGaps {
 }
 
 export async function getEnrichmentGaps(): Promise<EnrichmentGaps> {
-  const response = await fetchWithRetry(`${API_BASE_URL}/api/enrichment-gaps`);
-  if (!response.ok) throw new Error(`Failed to get enrichment gaps: ${response.statusText}`);
-  return response.json();
+  // Fallback to derived metric from stats while legacy enrichment-gaps endpoint is retired.
+  const stats = await fetchStats();
+  const breakdown = stats.by_enrichment_status || {};
+  const total = stats.total_leads || 0;
+  const unenriched = (breakdown.none || 0) + (breakdown.pending || 0);
+  return {
+    total_leads: total,
+    unenriched,
+    breakdown,
+  };
 }
 
 // ===========================================================================
@@ -771,6 +937,7 @@ export async function getEnrichmentGaps(): Promise<EnrichmentGaps> {
 
 export type AgentSSEEvent =
   | { type: 'status'; data: string }
+  | { type: 'keepalive'; data: string }
   | { type: 'tool_call'; data: { name: string; input: Record<string, unknown> } }
   | { type: 'partial'; data: string }
   | { type: 'leads'; data: AgentLeadRow[] }
