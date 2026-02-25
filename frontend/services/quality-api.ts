@@ -37,7 +37,37 @@ export interface CoverageStats {
   with_aep: number;
 }
 
+export interface SourceAuditRow {
+  source_name: string;
+  dataset_id: string;
+  table_name: string;
+  job_type: string;
+  ui_surface: string;
+  table_exists: boolean;
+  runnable_job: boolean;
+  has_quality_log: boolean;
+  last_run: string | null;
+  last_records_fetched: number;
+  last_records_inserted: number;
+  status: 'operational' | 'not_wired' | 'schema_missing' | 'no_recent_ingest';
+}
+
+export interface SourceAuditSummary {
+  total_sources: number;
+  operational: number;
+  not_wired: number;
+  schema_missing: number;
+  no_recent_ingest: number;
+}
+
+export interface SourceAuditResponse {
+  summary: SourceAuditSummary;
+  critical_gaps: SourceAuditRow[];
+  sources: SourceAuditRow[];
+}
+
 export const fetchQualitySummary = (): Promise<QualitySummary[]> => apiGet('/api/v1/quality/summary');
 export const fetchQualityHistory = (source?: string, limit = 30): Promise<QualitySummary[]> =>
   apiGet(`/api/v1/quality/history${source ? `?source=${source}&limit=${limit}` : `?limit=${limit}`}`);
 export const fetchCoverage = (): Promise<CoverageStats> => apiGet('/api/v1/quality/coverage');
+export const fetchSourceAudit = (): Promise<SourceAuditResponse> => apiGet('/api/v1/quality/source-audit');
