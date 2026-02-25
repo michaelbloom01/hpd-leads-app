@@ -112,6 +112,20 @@ export interface ScoreHistoryEntry {
   scored_at: string;
 }
 
+export interface BuildingLineageResponse {
+  bbl: string;
+  address: string | null;
+  last_updated: string | null;
+  sources: Array<{
+    source_name: string;
+    record_count: number;
+    last_updated: string | null;
+    status: 'available' | 'missing';
+    mapped_fields: string[];
+    missing_reason: string | null;
+  }>;
+}
+
 export interface BuildingsQueryParams {
   borough?: string;
   building_type?: string;
@@ -168,6 +182,10 @@ export function fetchBuildingTimeline(bbl: string): Promise<TimelineEvent[]> {
 
 export function fetchBuildingScoreHistory(bbl: string): Promise<ScoreHistoryEntry[]> {
   return apiGet(`/api/v1/buildings/${bbl}/score-history`);
+}
+
+export function fetchBuildingLineage(bbl: string): Promise<BuildingLineageResponse> {
+  return apiGet(`/api/v1/buildings/${bbl}/lineage`);
 }
 
 export function addBuildingToPipeline(bbl: string): Promise<{ bbl: string; status: string }> {

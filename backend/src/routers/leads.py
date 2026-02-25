@@ -34,11 +34,62 @@ SORT_COL_EXPRESSIONS = {
 }
 
 
+def _parse_json_list(value) -> list:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else []
+        except Exception:
+            return []
+    return []
+
+
+def _lineage_status(record_count: int, missing_reason: Optional[str]) -> str:
+    if record_count > 0:
+        return "available"
+    return "missing"
+
+
 def _row_to_response(r: dict) -> dict:
     """Convert a DB row dict to the LeadResponse shape the frontend expects."""
-    breakdown = r.get("score_breakdown") or {}
-    buildings = r.get("buildings") or []
-    boros = r.get("boros") or []
+    def _to_list(value):
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                return parsed if isinstance(parsed, list) else []
+            except Exception:
+                return []
+        return []
+
+    def _to_dict(value):
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                return parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                return {}
+        return {}
+
+    breakdown = _to_dict(r.get("score_breakdown"))
+    buildings = _to_list(r.get("buildings"))
+    boros = _to_list(r.get("boros"))
+    contacts = _to_list(r.get("contacts"))
+    tags = _to_list(r.get("tags"))
+    revenue_breakdown = _to_list(r.get("revenue_breakdown"))
+    building_classes = _to_dict(r.get("building_classes"))
+    building_types = _to_dict(r.get("building_types"))
     return {
         "lead_id": r["lead_id"],
         "agent_name": r.get("agent_name") or "",
@@ -52,12 +103,12 @@ def _row_to_response(r: dict) -> dict:
         "phones": [],
         "emails": [],
         "website": r.get("website"),
-        "business_summary": (r.get("business_summary") or "")[:200] or None,
+        "business_summary": (r.get("business_summary") or "") or None,
         "address": r.get("address"),
         "boro": r.get("primary_borough") or (boros[0] if boros else ""),
         "boros": boros if isinstance(boros, list) else [],
-        "building_types": None,
-        "building_classes": r.get("building_classes") or {},
+        "building_types": building_types if building_types else None,
+        "building_classes": building_classes,
         "score": r.get("score") or 0.0,
         "score_breakdown": {
             "portfolio": breakdown.get("portfolio", 0.0),
@@ -72,19 +123,19 @@ def _row_to_response(r: dict) -> dict:
             "distress": breakdown.get("distress", 0.0),
             "deal_fit": breakdown.get("deal_fit", 0.0),
         } if breakdown else None,
-        "tags": r.get("tags") or [],
+        "tags": tags,
         "enrichment_status": r.get("enrichment_status") or "none",
         "outreach_status": r.get("outreach_status") or "new",
         "notes": r.get("notes"),
         "outreach_attempts": [],
-        "contacts": r.get("contacts") or [],
+        "contacts": contacts,
         "entity_type": r.get("entity_type") or "unknown",
         "company_name": r.get("company_name"),
         "primary_contact": r.get("primary_contact"),
         "primary_contact_title": r.get("primary_contact_title"),
         "estimated_monthly_revenue": r.get("estimated_monthly_revenue") or 0.0,
         "estimated_annual_revenue": r.get("estimated_annual_revenue") or 0.0,
-        "revenue_breakdown": None,
+        "revenue_breakdown": revenue_breakdown if isinstance(revenue_breakdown, list) else None,
         "violation_count": r.get("violation_count") or 0,
         "violation_class_a": r.get("violation_class_a") or 0,
         "violation_class_b": r.get("violation_class_b") or 0,
@@ -202,15 +253,34 @@ async def get_leads(
         sort_col = "score"
     sort_direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
 
-    count_result = await session.execute(
-        text(f"SELECT COUNT(*) FROM leads WHERE {where_sql}"), params
-    )
+    deduped_count_sql = f"""
+        WITH ranked AS (
+            SELECT *,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY COALESCE(NULLIF(normalized_name, ''), lead_id)
+                       ORDER BY portfolio_size DESC, score DESC, updated_at DESC NULLS LAST
+                   ) AS rn
+            FROM leads
+            WHERE {where_sql}
+        )
+        SELECT COUNT(*) FROM ranked WHERE rn = 1
+    """
+    count_result = await session.execute(text(deduped_count_sql), params)
     total = count_result.scalar() or 0
 
     result = await session.execute(
         text(f"""
-            SELECT * FROM leads
-            WHERE {where_sql}
+            WITH ranked AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY COALESCE(NULLIF(normalized_name, ''), lead_id)
+                           ORDER BY portfolio_size DESC, score DESC, updated_at DESC NULLS LAST
+                       ) AS rn
+                FROM leads
+                WHERE {where_sql}
+            )
+            SELECT * FROM ranked
+            WHERE rn = 1
             ORDER BY {sort_col} {sort_direction} NULLS LAST
             LIMIT :limit OFFSET :offset
         """),
@@ -229,7 +299,439 @@ async def get_lead(request: Request, lead_id: str, session: AsyncSession = Depen
     row = result.first()
     if not row:
         raise HTTPException(status_code=404, detail="Lead not found")
-    return _row_to_response(dict(row._mapping))
+
+    lead_data = dict(row._mapping)
+
+    hydrated_from_fallback = False
+    portfolio_rows = await session.execute(
+        text("""
+            SELECT b.address, b.borough, b.unit_count, b.building_type
+            FROM building_management bm
+            JOIN buildings b ON b.bbl = bm.bbl
+            WHERE bm.lead_id = :lid AND bm.is_current = true
+            ORDER BY b.address
+        """),
+        {"lid": lead_id},
+    )
+    portfolio = [dict(r._mapping) for r in portfolio_rows]
+    if not portfolio:
+        raw_building_ids = lead_data.get("building_ids")
+        building_ids = raw_building_ids if isinstance(raw_building_ids, list) else []
+        if isinstance(raw_building_ids, str):
+            try:
+                parsed_ids = json.loads(raw_building_ids)
+                building_ids = parsed_ids if isinstance(parsed_ids, list) else []
+            except Exception:
+                building_ids = []
+        if building_ids:
+            id_params = {f"bid_{i}": bid for i, bid in enumerate(building_ids)}
+            placeholders = ", ".join(f":bid_{i}" for i in range(len(building_ids)))
+            fallback_rows = await session.execute(
+                text(f"""
+                    SELECT address, borough, unit_count, building_type
+                    FROM buildings
+                    WHERE bbl IN ({placeholders})
+                    ORDER BY address
+                """),
+                id_params,
+            )
+            portfolio = [dict(r._mapping) for r in fallback_rows]
+            hydrated_from_fallback = bool(portfolio)
+    if not portfolio:
+        normalized_name = str(lead_data.get("normalized_name") or "").strip()
+        if normalized_name:
+            # Some deduped/canonical leads do not carry direct building links, but
+            # sibling lead_ids with the same normalized_name do. Hydrate from the
+            # entity group to keep Lead Detail complete.
+            grouped_rows = await session.execute(
+                text("""
+                    SELECT DISTINCT ON (b.bbl) b.address, b.borough, b.unit_count, b.building_type
+                    FROM leads l
+                    JOIN building_management bm ON bm.lead_id = l.lead_id AND bm.is_current = true
+                    JOIN buildings b ON b.bbl = bm.bbl
+                    WHERE l.normalized_name = :normalized_name
+                    ORDER BY b.bbl, b.address
+                """),
+                {"normalized_name": normalized_name},
+            )
+            portfolio = [dict(r._mapping) for r in grouped_rows]
+            hydrated_from_fallback = bool(portfolio)
+    if not portfolio:
+        name_hint = (
+            str(lead_data.get("agent_name") or "").strip()
+            or str(lead_data.get("owner_name") or "").strip()
+            or str(lead_data.get("company_name") or "").strip()
+        )
+        if len(name_hint) >= 5:
+            # Last-resort hydration: infer current portfolio from HPD contact records
+            # when legacy/entity links are missing for this lead row.
+            contact_rows = await session.execute(
+                text("""
+                    SELECT DISTINCT ON (b.bbl) b.address, b.borough, b.unit_count, b.building_type
+                    FROM building_contacts bc
+                    JOIN buildings b ON b.bbl = bc.bbl
+                    WHERE bc.contact_type IN ('Agent', 'ManagementCompany', 'CorporateOwner')
+                      AND bc.corporation_name ILIKE :name_hint
+                    ORDER BY b.bbl, b.address
+                """),
+                {"name_hint": f"%{name_hint}%"},
+            )
+            portfolio = [dict(r._mapping) for r in contact_rows]
+            hydrated_from_fallback = bool(portfolio)
+    if portfolio:
+        addresses = [p["address"] for p in portfolio if p.get("address")]
+        linked_units = sum(int(p.get("unit_count") or 0) for p in portfolio)
+        linked_boros = sorted({str(p.get("borough")).upper() for p in portfolio if p.get("borough")})
+        type_counts = {
+            "condo": 0, "coop": 0, "rental_elevator": 0, "rental_walkup": 0,
+            "small_residential": 0, "other": 0,
+        }
+        type_units = {
+            "condo": 0, "coop": 0, "rental_elevator": 0, "rental_walkup": 0,
+            "small_residential": 0, "other": 0,
+        }
+        for p in portfolio:
+            raw_type = str(p.get("building_type") or "").lower()
+            if "condo" in raw_type:
+                t = "condo"
+            elif "coop" in raw_type or "co-op" in raw_type:
+                t = "coop"
+            elif "elevator" in raw_type:
+                t = "rental_elevator"
+            elif "walkup" in raw_type or "walk-up" in raw_type:
+                t = "rental_walkup"
+            elif "small" in raw_type:
+                t = "small_residential"
+            else:
+                t = "other"
+            type_counts[t] += 1
+            type_units[t] += int(p.get("unit_count") or 0)
+
+        if not lead_data.get("buildings"):
+            lead_data["buildings"] = addresses
+        lead_data["portfolio_size"] = len(addresses) or int(lead_data.get("portfolio_size") or 0)
+        if linked_units > 0:
+            lead_data["total_units"] = linked_units
+        if linked_boros and not lead_data.get("boros"):
+            lead_data["boros"] = linked_boros
+        if linked_boros and not lead_data.get("primary_borough"):
+            lead_data["primary_borough"] = linked_boros[0]
+        lead_data["building_types"] = {
+            **type_counts,
+            "unknown": 0,
+            "total": int(lead_data.get("portfolio_size") or 0),
+            "total_rental": type_counts["rental_elevator"] + type_counts["rental_walkup"] + type_counts["small_residential"],
+        }
+        lead_data["_type_units_for_revenue"] = type_units
+
+        existing_buildings = lead_data.get("buildings") or []
+        if isinstance(existing_buildings, str):
+            try:
+                parsed = json.loads(existing_buildings)
+                existing_buildings = parsed if isinstance(parsed, list) else []
+            except Exception:
+                existing_buildings = []
+        if not isinstance(existing_buildings, list):
+            existing_buildings = []
+
+        # Keep list and detail views consistent by persisting newly derived portfolio values.
+        needs_persist = hydrated_from_fallback or (
+            len(addresses) > 0 and (
+                len(existing_buildings) == 0
+                or int(lead_data.get("total_units") or 0) != int(linked_units)
+                or int(lead_data.get("portfolio_size") or 0) != int(len(addresses))
+                or int(lead_data.get("total_units") or 0) <= 0 < linked_units
+            )
+        )
+
+        if needs_persist:
+            await session.execute(
+                text("""
+                    UPDATE leads
+                    SET buildings = CAST(:buildings AS JSONB),
+                        portfolio_size = :portfolio_size,
+                        total_units = :total_units,
+                        boros = CAST(:boros AS JSONB),
+                        primary_borough = :primary_borough,
+                        updated_at = NOW()
+                    WHERE lead_id = :lid
+                """),
+                {
+                    "lid": lead_id,
+                    "buildings": json.dumps(addresses),
+                    "portfolio_size": int(lead_data.get("portfolio_size") or 0),
+                    "total_units": int(lead_data.get("total_units") or 0),
+                    "boros": json.dumps(lead_data.get("boros") or []),
+                    "primary_borough": lead_data.get("primary_borough"),
+                },
+            )
+            await session.commit()
+
+    annual_revenue = float(lead_data.get("estimated_annual_revenue") or 0.0)
+    if annual_revenue <= 0 and int(lead_data.get("total_units") or 0) > 0:
+        borough_avg_rents = {
+            "MANHATTAN": 3500, "BROOKLYN": 2800, "QUEENS": 2200,
+            "BRONX": 1800, "STATEN ISLAND": 1600,
+        }
+        boro = str(lead_data.get("primary_borough") or "").upper() or "MANHATTAN"
+        units = int(lead_data.get("total_units") or 0)
+        avg_rent = borough_avg_rents.get(boro, 2200)
+        fee_rate = 0.05
+        building_types = lead_data.get("building_types") or {}
+        type_units = lead_data.get("_type_units_for_revenue") or {}
+        if not isinstance(type_units, dict):
+            type_units = {}
+        type_units = {
+            "condo": int(type_units.get("condo", 0)),
+            "coop": int(type_units.get("coop", 0)),
+            "rental_elevator": int(type_units.get("rental_elevator", 0)),
+            "rental_walkup": int(type_units.get("rental_walkup", 0)),
+            "small_residential": int(type_units.get("small_residential", 0)),
+            "other": int(type_units.get("other", 0)),
+        }
+        # If building_types only has building counts (not units), fall back to one-line estimate.
+        if sum(type_units.values()) <= 0:
+            monthly_gross = float(units * avg_rent)
+            monthly_revenue = monthly_gross * fee_rate
+            annual_revenue = monthly_revenue * 12
+            revenue_breakdown = [{
+                "type": "portfolio",
+                "label": f"{boro.title()} portfolio estimate",
+                "buildings": int(lead_data.get("portfolio_size") or 0),
+                "estimated_units": units,
+                "rent_per_unit": avg_rent,
+                "monthly_gross": monthly_gross,
+                "fee_rate": fee_rate,
+                "avg_rent_per_unit": avg_rent,
+                "borough_used": boro,
+                "total_units_used": units,
+            }]
+        else:
+            rent_multiplier = {
+                "condo": 0.60,
+                "coop": 0.60,
+                "rental_elevator": 1.05,
+                "rental_walkup": 0.90,
+                "small_residential": 0.90,
+                "other": 1.00,
+            }
+            labels = {
+                "condo": "Condo",
+                "coop": "Co-op",
+                "rental_elevator": "Rental (Elevator)",
+                "rental_walkup": "Rental (Walkup)",
+                "small_residential": "Small Residential",
+                "other": "Other",
+            }
+            revenue_breakdown = []
+            annual_revenue = 0.0
+            for t, t_units in type_units.items():
+                if t_units <= 0:
+                    continue
+                rent_per_unit = float(avg_rent * rent_multiplier.get(t, 1.0))
+                monthly_gross = float(t_units * rent_per_unit)
+                annual_revenue += monthly_gross * fee_rate * 12
+                revenue_breakdown.append({
+                    "type": t,
+                    "label": f"{labels.get(t, t)} estimate",
+                    "buildings": int((lead_data.get("building_types") or {}).get(t, 0)),
+                    "estimated_units": t_units,
+                    "rent_per_unit": rent_per_unit,
+                    "monthly_gross": monthly_gross,
+                    "fee_rate": fee_rate,
+                    "avg_rent_per_unit": rent_per_unit,
+                    "borough_used": boro,
+                    "total_units_used": t_units,
+                })
+            monthly_revenue = annual_revenue / 12.0
+        lead_data["estimated_monthly_revenue"] = monthly_revenue
+        lead_data["estimated_annual_revenue"] = annual_revenue
+        lead_data["revenue_breakdown"] = revenue_breakdown
+        await session.execute(
+            text("""
+                UPDATE leads
+                SET estimated_monthly_revenue = :monthly,
+                    estimated_annual_revenue = :annual,
+                    updated_at = NOW()
+                WHERE lead_id = :lid
+            """),
+            {
+                "lid": lead_id,
+                "monthly": monthly_revenue,
+                "annual": annual_revenue,
+            },
+        )
+        await session.commit()
+
+    # Recompute violations from current linked buildings for detail accuracy.
+    violations_row = (await session.execute(
+        text("""
+            SELECT
+                COUNT(*)::int AS total,
+                COUNT(*) FILTER (WHERE COALESCE(v.violation_class, '') ILIKE 'A%')::int AS class_a,
+                COUNT(*) FILTER (WHERE COALESCE(v.violation_class, '') ILIKE 'B%')::int AS class_b,
+                COUNT(*) FILTER (WHERE COALESCE(v.violation_class, '') ILIKE 'C%')::int AS class_c
+            FROM building_management bm
+            JOIN hpd_violations v ON v.bbl = bm.bbl
+            WHERE bm.lead_id = :lid AND bm.is_current = true
+        """),
+        {"lid": lead_id},
+    )).first()
+    if violations_row:
+        v_total = int(violations_row.total or 0)
+        v_a = int(violations_row.class_a or 0)
+        v_b = int(violations_row.class_b or 0)
+        v_c = int(violations_row.class_c or 0)
+        total_units = int(lead_data.get("total_units") or 0)
+        vpu = float(v_total / total_units) if total_units > 0 else 0.0
+        lead_data["violation_count"] = v_total
+        lead_data["violation_class_a"] = v_a
+        lead_data["violation_class_b"] = v_b
+        lead_data["violation_class_c"] = v_c
+        lead_data["violations_per_unit"] = vpu
+        await session.execute(
+            text("""
+                UPDATE leads
+                SET violation_count = :vc,
+                    violation_class_a = :va,
+                    violation_class_b = :vb,
+                    violation_class_c = :vc_c,
+                    violations_per_unit = :vpu,
+                    updated_at = NOW()
+                WHERE lead_id = :lid
+            """),
+            {"lid": lead_id, "vc": v_total, "va": v_a, "vb": v_b, "vc_c": v_c, "vpu": vpu},
+        )
+        await session.commit()
+
+    return _row_to_response(lead_data)
+
+
+@router.get("/leads/{lead_id}/lineage")
+@limiter.limit("60/minute")
+async def get_lead_lineage(
+    request: Request,
+    lead_id: str,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    lead_row = (await session.execute(
+        text("""
+            SELECT lead_id, company_name, agent_name, owner_name, updated_at, enrichment_sources
+            FROM leads
+            WHERE lead_id = :lid
+        """),
+        {"lid": lead_id},
+    )).first()
+    if not lead_row:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    lead_data = dict(lead_row._mapping)
+    linked_buildings = int((await session.execute(
+        text("""
+            SELECT COUNT(DISTINCT bbl)
+            FROM building_management
+            WHERE lead_id = :lid AND is_current = true
+        """),
+        {"lid": lead_id},
+    )).scalar() or 0)
+
+    building_scope_missing = "no linked buildings for lead" if linked_buildings == 0 else None
+
+    source_rows = []
+
+    def append_source(source_name: str, record_count: int, last_updated, mapped_fields: list[str], missing_reason: Optional[str]) -> None:
+        source_rows.append({
+            "source_name": source_name,
+            "record_count": int(record_count or 0),
+            "last_updated": last_updated.isoformat() if last_updated else None,
+            "status": _lineage_status(int(record_count or 0), missing_reason),
+            "mapped_fields": mapped_fields,
+            "missing_reason": missing_reason if (record_count or 0) == 0 else None,
+        })
+
+    append_source(
+        "leads",
+        1,
+        lead_data.get("updated_at"),
+        ["score", "portfolio_size", "total_units", "pipeline_stage", "enrichment_status"],
+        None,
+    )
+
+    building_link_row = (await session.execute(
+        text("""
+            SELECT COUNT(*)::int AS cnt, MAX(updated_at) AS last_updated
+            FROM building_management
+            WHERE lead_id = :lid AND is_current = true
+        """),
+        {"lid": lead_id},
+    )).first()
+    append_source(
+        "building_management",
+        int(building_link_row.cnt or 0) if building_link_row else 0,
+        building_link_row.last_updated if building_link_row else None,
+        ["bbl", "lead_id", "is_current"],
+        "no active building links" if not building_link_row or int(building_link_row.cnt or 0) == 0 else None,
+    )
+
+    building_rows = (await session.execute(
+        text("""
+            SELECT COUNT(*)::int AS cnt, MAX(b.updated_at) AS last_updated
+            FROM building_management bm
+            JOIN buildings b ON b.bbl = bm.bbl
+            WHERE bm.lead_id = :lid AND bm.is_current = true
+        """),
+        {"lid": lead_id},
+    )).first()
+    append_source(
+        "buildings",
+        int(building_rows.cnt or 0) if building_rows else 0,
+        building_rows.last_updated if building_rows else None,
+        ["address", "borough", "unit_count", "building_type", "churn_score"],
+        building_scope_missing,
+    )
+
+    signal_tables = [
+        ("hpd_complaints", "hpd_complaints", "received_date", ["major_category", "minor_category", "status"]),
+        ("hpd_violations", "hpd_violations", "inspection_date", ["violation_class", "current_status"]),
+        ("acris_transactions", "acris_transactions", "recorded_date", ["doc_type", "doc_amount"]),
+        ("dob_permits", "dob_permits", "filing_date", ["permit_type", "job_description", "estimated_cost"]),
+        ("hpd_litigation", "hpd_litigation", "case_open_date", ["case_type", "case_status", "penalty"]),
+        ("emergency_repairs", "emergency_repairs", "order_date", ["repair_type", "amount", "status"]),
+        ("eviction_filings", "eviction_filings", "executed_date", ["case_index_number", "borough"]),
+        ("energy_grades", "energy_grades", "created_at", ["grade", "score", "year"]),
+        ("facade_inspections", "facade_inspections", "filing_date", ["filing_status", "cycle"]),
+        ("aep_designations", "aep_designations", "designation_date", ["is_active"]),
+    ]
+    for source_name, table_name, last_col, mapped_fields in signal_tables:
+        row = (await session.execute(
+            text(f"""
+                SELECT COUNT(*)::int AS cnt, MAX(t.{last_col}) AS last_updated
+                FROM building_management bm
+                JOIN {table_name} t ON t.bbl = bm.bbl
+                WHERE bm.lead_id = :lid AND bm.is_current = true
+            """),
+            {"lid": lead_id},
+        )).first()
+        count = int(row.cnt or 0) if row else 0
+        append_source(source_name, count, row.last_updated if row else None, mapped_fields, building_scope_missing)
+
+    enrichment_sources = _parse_json_list(lead_data.get("enrichment_sources"))
+    append_source(
+        "enrichment",
+        len(enrichment_sources),
+        lead_data.get("updated_at"),
+        ["phone", "email", "website", "business_summary", "owner_principal"],
+        "lead has not been enriched yet" if len(enrichment_sources) == 0 else None,
+    )
+
+    return {
+        "lead_id": lead_id,
+        "entity_name": lead_data.get("company_name") or lead_data.get("agent_name") or lead_data.get("owner_name") or "",
+        "last_updated": lead_data.get("updated_at").isoformat() if lead_data.get("updated_at") else None,
+        "linked_buildings": linked_buildings,
+        "sources": source_rows,
+    }
 
 
 @router.post("/leads/{lead_id}/estimate-revenue")
@@ -498,6 +1000,11 @@ async def enrich_lead_all(
     user: AuthUser = Depends(get_current_user),
 ):
     """PostgreSQL-native lead enrichment: multi-source contacts, web scrape, AI summary."""
+    return await enrich_lead_all_core(lead_id=lead_id, session=session)
+
+
+async def enrich_lead_all_core(lead_id: str, session: AsyncSession):
+    """Core enrichment workflow reusable by API routes and background workers."""
     row_result = await session.execute(
         text("SELECT * FROM leads WHERE lead_id = :lid"), {"lid": lead_id}
     )
@@ -634,6 +1141,7 @@ async def enrich_lead_all(
         enrichment_status = "failed"
 
     # Persist to PostgreSQL
+    dos_status = (str(dos_status).strip()[:20] if dos_status else None)
     await session.execute(text("""
         UPDATE leads SET
             phone = :phone,
@@ -644,7 +1152,7 @@ async def enrich_lead_all(
             dos_status = :dos_status,
             business_summary = :business_summary,
             enrichment_status = :enrichment_status,
-            enrichment_sources = :enrichment_sources::jsonb,
+            enrichment_sources = CAST(:enrichment_sources AS JSONB),
             last_enriched = NOW(),
             updated_at = NOW()
         WHERE lead_id = :lid
@@ -802,7 +1310,7 @@ async def get_stats(request: Request, session: AsyncSession = Depends(get_sessio
 
     refresh_row = (await session.execute(text("""
         SELECT started_at FROM ingestion_jobs
-        WHERE job_type = 'buildings' AND status = 'completed'
+        WHERE job_type = 'buildings' AND status IN ('succeeded', 'completed')
         ORDER BY started_at DESC LIMIT 1
     """))).first()
 

@@ -11,6 +11,7 @@ Each task follows the standard pattern from the plan:
 """
 import logging
 import os
+import threading
 from datetime import datetime
 from typing import Optional
 
@@ -45,7 +46,6 @@ DATASETS = {
     "eviction_filings": "6z8x-wfk4",
     "energy_grades": "355w-xvp2",
     "facade_inspections": "xubg-57si",
-    "dof_assessment": "yjxr-fw8i",
     "pad": "bc8t-ecyu",
     "hpd_violations": "wvxf-dwi5",
     "hpd_registrations": "tesw-yqqr",
@@ -141,8 +141,38 @@ def _create_job(session: Session, job_type: str, source: str) -> int:
     return result.scalar_one()
 
 
+def _ensure_or_create_job(
+    session: Session,
+    job_id: Optional[int],
+    job_type: str,
+    source: str,
+) -> int:
+    """Adopt an existing queued job row, or create a new one."""
+    if job_id is None:
+        return _create_job(session, job_type, source)
+    session.execute(
+        text("""
+            UPDATE ingestion_jobs
+            SET job_type = :job_type,
+                source = :source,
+                status = 'running',
+                started_at = COALESCE(started_at, now()),
+                total = NULL,
+                processed = 0,
+                succeeded = 0,
+                failed = 0,
+                error = NULL,
+                updated_at = now()
+            WHERE id = :job_id
+        """),
+        {"job_id": job_id, "job_type": job_type, "source": source},
+    )
+    return job_id
+
+
 def _finish_job(session: Session, job_id: int, status: str, total: int, succeeded: int,
                 failed: int, error: str | None = None):
+    normalized_status = "succeeded" if status == "completed" else status
     session.execute(
         text("""
             UPDATE ingestion_jobs
@@ -150,7 +180,7 @@ def _finish_job(session: Session, job_id: int, status: str, total: int, succeede
                 failed = :failed, error = :error, finished_at = now(), updated_at = now()
             WHERE id = :job_id
         """),
-        {"job_id": job_id, "status": status, "total": total,
+        {"job_id": job_id, "status": normalized_status, "total": total,
          "succeeded": succeeded, "failed": failed, "error": error},
     )
 
@@ -166,10 +196,28 @@ def _compute_bbl(boro_id, block, lot) -> str | None:
 
 
 @celery_app.task(bind=True, name="src.tasks.ingest.ingest_buildings_from_hpd")
-def ingest_buildings_from_hpd(self):
+def ingest_buildings_from_hpd(self, job_id: Optional[int] = None):
     """Phase 1A: Backfill buildings table from HPD registrations + contacts + PLUTO."""
     session = _get_pg_session()
-    job_id = _create_job(session, "ingest", "hpd_buildings")
+    if job_id is None:
+        job_id = _create_job(session, "buildings", "buildings")
+    else:
+        session.execute(
+            text("""
+                UPDATE ingestion_jobs
+                SET source = 'buildings',
+                    status = 'running',
+                    started_at = COALESCE(started_at, now()),
+                    total = NULL,
+                    processed = 0,
+                    succeeded = 0,
+                    failed = 0,
+                    error = NULL,
+                    updated_at = now()
+                WHERE id = :job_id
+            """),
+            {"job_id": job_id},
+        )
     session.commit()
 
     try:
@@ -295,6 +343,14 @@ def ingest_buildings_from_hpd(self):
                 )
 
             if inserted % 5000 == 0:
+                session.execute(
+                    text("""
+                        UPDATE ingestion_jobs
+                        SET processed = :processed, succeeded = :succeeded, failed = :failed, updated_at = now()
+                        WHERE id = :job_id
+                    """),
+                    {"job_id": job_id, "processed": inserted, "succeeded": inserted, "failed": rejected},
+                )
                 session.commit()
                 logger.info(f"Progress: {inserted} buildings inserted")
 
@@ -303,6 +359,27 @@ def ingest_buildings_from_hpd(self):
                      matched, rejected, inserted)
         _finish_job(session, job_id, "completed", len(registrations), inserted, rejected)
         session.commit()
+        try:
+            scoring_job_id = _create_job(session, "scoring", "churn")
+            session.commit()
+            from src.tasks.score import run_scoring_job
+            try:
+                run_scoring_job.delay(job_id=scoring_job_id)
+                logger.info("Queued follow-up scoring job %s after buildings ingestion", scoring_job_id)
+            except Exception as dispatch_exc:
+                logger.warning(
+                    "Celery dispatch failed for follow-up scoring job %s, using in-process fallback: %s",
+                    scoring_job_id,
+                    dispatch_exc,
+                )
+                t = threading.Thread(
+                    target=run_scoring_job.run,
+                    kwargs={"job_id": scoring_job_id},
+                    daemon=True,
+                )
+                t.start()
+        except Exception as score_exc:
+            logger.warning("Failed to queue follow-up scoring job after buildings ingestion: %s", score_exc)
         logger.info(f"Buildings backfill complete: {inserted} inserted, {rejected} rejected")
         return {"inserted": inserted, "rejected": rejected}
 
@@ -314,10 +391,10 @@ def ingest_buildings_from_hpd(self):
 
 
 @celery_app.task(bind=True, name="src.tasks.ingest.ingest_hpd_complaints")
-def ingest_hpd_complaints(self):
+def ingest_hpd_complaints(self, job_id: Optional[int] = None):
     """Signal Batch 1: HPD Complaints (ygpa-z7cr)."""
     session = _get_pg_session()
-    job_id = _create_job(session, "ingest", "hpd_complaints")
+    job_id = _ensure_or_create_job(session, job_id, "hpd_complaints", "hpd_complaints")
     session.commit()
 
     try:
@@ -384,10 +461,10 @@ def ingest_hpd_complaints(self):
 
 
 @celery_app.task(bind=True, name="src.tasks.ingest.ingest_acris_transactions")
-def ingest_acris_transactions(self):
+def ingest_acris_transactions(self, job_id: Optional[int] = None):
     """Signal Batch 1: ACRIS Real Property transactions."""
     session = _get_pg_session()
-    job_id = _create_job(session, "ingest", "acris")
+    job_id = _ensure_or_create_job(session, job_id, "acris", "acris")
     session.commit()
 
     try:
@@ -461,10 +538,10 @@ def ingest_acris_transactions(self):
 
 
 @celery_app.task(bind=True, name="src.tasks.ingest.ingest_hpd_violations")
-def ingest_hpd_violations(self):
+def ingest_hpd_violations(self, job_id: Optional[int] = None):
     """Signal Batch 1: HPD Violations."""
     session = _get_pg_session()
-    job_id = _create_job(session, "ingest", "hpd_violations")
+    job_id = _ensure_or_create_job(session, job_id, "hpd_violations", "hpd_violations")
     session.commit()
 
     try:
@@ -532,10 +609,10 @@ def ingest_hpd_violations(self):
 
 
 @celery_app.task(bind=True, name="src.tasks.ingest.ingest_dob_permits")
-def ingest_dob_permits(self):
+def ingest_dob_permits(self, job_id: Optional[int] = None):
     """Signal Batch 2: DOB Permits (BIS + NOW)."""
     session = _get_pg_session()
-    job_id = _create_job(session, "ingest", "dob_permits")
+    job_id = _ensure_or_create_job(session, job_id, "dob_permits", "dob_permits")
     session.commit()
 
     try:
@@ -603,10 +680,10 @@ def ingest_dob_permits(self):
 
 
 @celery_app.task(bind=True, name="src.tasks.ingest.ingest_hpd_litigation")
-def ingest_hpd_litigation(self):
+def ingest_hpd_litigation(self, job_id: Optional[int] = None):
     """Signal Batch 2: HPD Litigation."""
     session = _get_pg_session()
-    job_id = _create_job(session, "ingest", "hpd_litigation")
+    job_id = _ensure_or_create_job(session, job_id, "hpd_litigation", "hpd_litigation")
     session.commit()
 
     try:
@@ -667,10 +744,10 @@ def ingest_hpd_litigation(self):
 
 
 @celery_app.task(bind=True, name="src.tasks.ingest.ingest_emergency_repairs")
-def ingest_emergency_repairs(self):
+def ingest_emergency_repairs(self, job_id: Optional[int] = None):
     """Signal Batch 2: HPD Emergency Repair Program."""
     session = _get_pg_session()
-    job_id = _create_job(session, "ingest", "emergency_repairs")
+    job_id = _ensure_or_create_job(session, job_id, "emergency_repairs", "emergency_repairs")
     session.commit()
 
     try:
@@ -728,10 +805,10 @@ def ingest_emergency_repairs(self):
 
 
 @celery_app.task(bind=True, name="src.tasks.ingest.ingest_aep_designations")
-def ingest_aep_designations(self):
+def ingest_aep_designations(self, job_id: Optional[int] = None):
     """Signal Batch 2: AEP Designations."""
     session = _get_pg_session()
-    job_id = _create_job(session, "ingest", "aep_designations")
+    job_id = _ensure_or_create_job(session, job_id, "aep", "aep")
     session.commit()
 
     try:
@@ -782,10 +859,10 @@ def ingest_aep_designations(self):
 
 
 @celery_app.task(bind=True, name="src.tasks.ingest.ingest_eviction_filings")
-def ingest_eviction_filings(self):
+def ingest_eviction_filings(self, job_id: Optional[int] = None):
     """Signal Batch 3: Eviction Filings."""
     session = _get_pg_session()
-    job_id = _create_job(session, "ingest", "eviction_filings")
+    job_id = _ensure_or_create_job(session, job_id, "evictions", "evictions")
     session.commit()
 
     try:
@@ -850,10 +927,10 @@ def ingest_eviction_filings(self):
 
 
 @celery_app.task(bind=True, name="src.tasks.ingest.ingest_energy_grades")
-def ingest_energy_grades(self):
+def ingest_energy_grades(self, job_id: Optional[int] = None):
     """Signal Batch 3: LL33 Energy Grades."""
     session = _get_pg_session()
-    job_id = _create_job(session, "ingest", "energy_grades")
+    job_id = _ensure_or_create_job(session, job_id, "energy", "energy")
     session.commit()
 
     try:
@@ -907,10 +984,10 @@ def ingest_energy_grades(self):
 
 
 @celery_app.task(bind=True, name="src.tasks.ingest.ingest_facade_inspections")
-def ingest_facade_inspections(self):
+def ingest_facade_inspections(self, job_id: Optional[int] = None):
     """Signal Batch 3: Facade Inspection / FISP / LL11."""
     session = _get_pg_session()
-    job_id = _create_job(session, "ingest", "facade_inspections")
+    job_id = _ensure_or_create_job(session, job_id, "facades", "facades")
     session.commit()
 
     try:
@@ -974,10 +1051,10 @@ def ingest_facade_inspections(self):
 
 
 @celery_app.task(bind=True, name="src.tasks.ingest.ingest_pad_addresses")
-def ingest_pad_addresses(self):
+def ingest_pad_addresses(self, job_id: Optional[int] = None):
     """Reference data: PAD BIN-to-BBL crosswalk."""
     session = _get_pg_session()
-    job_id = _create_job(session, "ingest", "pad")
+    job_id = _ensure_or_create_job(session, job_id, "pad", "pad")
     session.commit()
 
     try:

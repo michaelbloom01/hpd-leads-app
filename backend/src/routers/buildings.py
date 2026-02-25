@@ -234,8 +234,144 @@ async def building_timeline(
     )
     events.extend([dict(r._mapping) for r in litigation])
 
+    emergency_repairs = await session.execute(
+        text("""
+            SELECT 'emergency_repair' AS type, order_date AS date,
+                   CONCAT_WS(' - ', repair_type, status) AS detail
+            FROM emergency_repairs
+            WHERE bbl = :bbl
+            ORDER BY order_date DESC
+            LIMIT 20
+        """),
+        {"bbl": bbl},
+    )
+    events.extend([dict(r._mapping) for r in emergency_repairs])
+
+    evictions = await session.execute(
+        text("""
+            SELECT 'eviction' AS type, executed_date AS date,
+                   COALESCE(case_index_number, eviction_address, 'Eviction filing') AS detail
+            FROM eviction_filings
+            WHERE bbl = :bbl
+            ORDER BY executed_date DESC
+            LIMIT 20
+        """),
+        {"bbl": bbl},
+    )
+    events.extend([dict(r._mapping) for r in evictions])
+
+    energy = await session.execute(
+        text("""
+            SELECT 'energy' AS type,
+                   TO_DATE(CAST(year AS TEXT) || '-01-01', 'YYYY-MM-DD') AS date,
+                   CONCAT_WS(' ', 'LL33 grade', grade, CASE WHEN score IS NOT NULL THEN CONCAT('(score ', score::TEXT, ')') ELSE NULL END) AS detail
+            FROM energy_grades
+            WHERE bbl = :bbl
+            ORDER BY year DESC NULLS LAST
+            LIMIT 10
+        """),
+        {"bbl": bbl},
+    )
+    events.extend([dict(r._mapping) for r in energy])
+
+    facades = await session.execute(
+        text("""
+            SELECT 'facade' AS type, filing_date AS date,
+                   CONCAT_WS(' - ', filing_status, CONCAT('Cycle ', cycle)) AS detail
+            FROM facade_inspections
+            WHERE bbl = :bbl
+            ORDER BY filing_date DESC
+            LIMIT 20
+        """),
+        {"bbl": bbl},
+    )
+    events.extend([dict(r._mapping) for r in facades])
+
+    aep = await session.execute(
+        text("""
+            SELECT 'aep' AS type, designation_date AS date,
+                   'AEP designation active' AS detail
+            FROM aep_designations
+            WHERE bbl = :bbl
+            ORDER BY designation_date DESC
+            LIMIT 10
+        """),
+        {"bbl": bbl},
+    )
+    events.extend([dict(r._mapping) for r in aep])
+
     events.sort(key=lambda e: str(e.get("date") or ""), reverse=True)
     return events
+
+
+@router.get("/{bbl}/lineage")
+@limiter.limit("60/minute")
+async def get_building_lineage(
+    request: Request,
+    bbl: str,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    building_row = (await session.execute(
+        text("SELECT bbl, address, updated_at FROM buildings WHERE bbl = :bbl"),
+        {"bbl": bbl},
+    )).first()
+    if not building_row:
+        raise HTTPException(status_code=404, detail="Building not found")
+
+    building = dict(building_row._mapping)
+
+    def build_source_row(source_name: str, count: int, last_updated, mapped_fields: list[str], missing_reason: str):
+        return {
+            "source_name": source_name,
+            "record_count": int(count or 0),
+            "last_updated": last_updated.isoformat() if last_updated else None,
+            "status": "available" if int(count or 0) > 0 else "missing",
+            "mapped_fields": mapped_fields,
+            "missing_reason": None if int(count or 0) > 0 else missing_reason,
+        }
+
+    sources = [
+        build_source_row("buildings", 1, building.get("updated_at"), ["address", "borough", "unit_count", "churn_score"], ""),
+    ]
+
+    source_specs = [
+        ("hpd_complaints", "hpd_complaints", "received_date", ["major_category", "minor_category", "status"]),
+        ("hpd_violations", "hpd_violations", "inspection_date", ["violation_class", "current_status"]),
+        ("acris_transactions", "acris_transactions", "recorded_date", ["doc_type", "doc_amount"]),
+        ("dob_permits", "dob_permits", "filing_date", ["permit_type", "job_description", "estimated_cost"]),
+        ("hpd_litigation", "hpd_litigation", "case_open_date", ["case_type", "case_status", "penalty"]),
+        ("emergency_repairs", "emergency_repairs", "order_date", ["repair_type", "amount", "status"]),
+        ("eviction_filings", "eviction_filings", "executed_date", ["case_index_number", "borough"]),
+        ("energy_grades", "energy_grades", "created_at", ["grade", "score", "year"]),
+        ("facade_inspections", "facade_inspections", "filing_date", ["filing_status", "cycle"]),
+        ("aep_designations", "aep_designations", "designation_date", ["is_active"]),
+    ]
+    for source_name, table_name, last_col, mapped_fields in source_specs:
+        row = (await session.execute(
+            text(f"""
+                SELECT COUNT(*)::int AS cnt, MAX({last_col}) AS last_updated
+                FROM {table_name}
+                WHERE bbl = :bbl
+            """),
+            {"bbl": bbl},
+        )).first()
+        sources.append(
+            build_source_row(
+                source_name,
+                int(row.cnt or 0) if row else 0,
+                row.last_updated if row else None,
+                mapped_fields,
+                f"no {source_name} records for building",
+            )
+        )
+
+    return {
+        "bbl": bbl,
+        "address": building.get("address"),
+        "last_updated": building.get("updated_at").isoformat() if building.get("updated_at") else None,
+        "sources": sources,
+    }
 
 
 @router.get("/{bbl}/score-history")

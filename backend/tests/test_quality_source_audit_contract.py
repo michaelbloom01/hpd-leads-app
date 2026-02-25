@@ -3,10 +3,9 @@
 from src.routers.quality import SOURCE_REGISTRY, _source_row_status
 
 
-def test_source_registry_contains_known_gap_for_dof_assessment():
+def test_source_registry_excludes_deprecated_dof_assessment():
     dof = next((s for s in SOURCE_REGISTRY if s["source_name"] == "dof_assessment"), None)
-    assert dof is not None
-    assert dof["job_type"] == "dof_assessment"
+    assert dof is None
 
 
 def test_source_status_reports_not_wired_before_other_conditions():
