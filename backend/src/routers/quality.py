@@ -15,6 +15,41 @@ from src.db.session import get_session
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/quality", tags=["data-quality"])
 
+RUNNABLE_JOB_TYPES = {
+    "buildings", "hpd_complaints", "acris", "hpd_violations",
+    "dob_permits", "hpd_litigation", "emergency_repairs", "aep",
+    "evictions", "energy", "facades", "pad", "scoring", "enrichment",
+}
+
+SOURCE_REGISTRY = [
+    {"source_name": "hpd_registrations", "dataset_id": "tesw-yqqr", "table_name": "buildings", "job_type": "buildings", "ui_surface": "leads+buildings"},
+    {"source_name": "hpd_contacts", "dataset_id": "feu5-w2e2", "table_name": "building_contacts", "job_type": "buildings", "ui_surface": "lead_detail_contacts"},
+    {"source_name": "pluto", "dataset_id": "64uk-42ks", "table_name": "buildings", "job_type": "buildings", "ui_surface": "lead_detail+building_detail"},
+    {"source_name": "hpd_complaints", "dataset_id": "ygpa-z7cr", "table_name": "hpd_complaints", "job_type": "hpd_complaints", "ui_surface": "building_timeline+churn"},
+    {"source_name": "hpd_violations", "dataset_id": "wvxf-dwi5", "table_name": "hpd_violations", "job_type": "hpd_violations", "ui_surface": "lead_distress+timeline"},
+    {"source_name": "acris_transactions", "dataset_id": "bnx9-e6tj|8h5j-fqxa|636b-3b5g", "table_name": "acris_transactions", "job_type": "acris", "ui_surface": "building_timeline+churn"},
+    {"source_name": "dob_permits", "dataset_id": "ipu4-2vj7|rbx6-tga4", "table_name": "dob_permits", "job_type": "dob_permits", "ui_surface": "building_timeline+churn"},
+    {"source_name": "hpd_litigation", "dataset_id": "59kj-x8nc", "table_name": "hpd_litigation", "job_type": "hpd_litigation", "ui_surface": "building_timeline+churn"},
+    {"source_name": "emergency_repairs", "dataset_id": "24cj-meh5", "table_name": "emergency_repairs", "job_type": "emergency_repairs", "ui_surface": "churn_only"},
+    {"source_name": "aep_designations", "dataset_id": "hcir-3275", "table_name": "aep_designations", "job_type": "aep", "ui_surface": "churn_only"},
+    {"source_name": "eviction_filings", "dataset_id": "6z8x-wfk4", "table_name": "eviction_filings", "job_type": "evictions", "ui_surface": "churn_only"},
+    {"source_name": "energy_grades", "dataset_id": "355w-xvp2", "table_name": "energy_grades", "job_type": "energy", "ui_surface": "churn_only"},
+    {"source_name": "facade_inspections", "dataset_id": "xubg-57si", "table_name": "facade_inspections", "job_type": "facades", "ui_surface": "churn_only"},
+    {"source_name": "pad", "dataset_id": "bc8t-ecyu", "table_name": "pad_addresses", "job_type": "pad", "ui_surface": "join_crosswalk"},
+    # Present in configured DATASETS but not wired to a runnable ingest job yet.
+    {"source_name": "dof_assessment", "dataset_id": "yjxr-fw8i", "table_name": "dof_assessment", "job_type": "dof_assessment", "ui_surface": "not_exposed"},
+]
+
+
+def _source_row_status(table_exists: bool, has_quality_log: bool, runnable_job: bool) -> str:
+    if not runnable_job:
+        return "not_wired"
+    if not table_exists:
+        return "schema_missing"
+    if not has_quality_log:
+        return "no_recent_ingest"
+    return "operational"
+
 
 @router.get("/data-health")
 async def data_health(session: AsyncSession = Depends(get_session)):
@@ -197,3 +232,66 @@ async def building_coverage(session: AsyncSession = Depends(get_session)):
             coverage[key] = None
             await session.rollback()
     return coverage
+
+
+@router.get("/source-audit")
+async def source_audit(session: AsyncSession = Depends(get_session)):
+    """Canonical source integrity matrix: configured vs runnable vs surfaced."""
+    tables_result = await session.execute(
+        text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+    )
+    existing_tables = {str(r[0]) for r in tables_result}
+
+    latest_quality_result = await session.execute(text("""
+        SELECT DISTINCT ON (source_name)
+            source_name, records_fetched, records_inserted, run_timestamp
+        FROM data_quality_log
+        ORDER BY source_name, run_timestamp DESC
+    """))
+    latest_quality = {
+        str(r._mapping["source_name"]): dict(r._mapping)
+        for r in latest_quality_result
+    }
+
+    rows = []
+    for source in SOURCE_REGISTRY:
+        source_name = source["source_name"]
+        table_name = source["table_name"]
+        job_type = source["job_type"]
+        quality = latest_quality.get(source_name)
+        table_exists = table_name in existing_tables
+        has_quality_log = quality is not None
+        runnable_job = job_type in RUNNABLE_JOB_TYPES
+        status = _source_row_status(
+            table_exists=table_exists,
+            has_quality_log=has_quality_log,
+            runnable_job=runnable_job,
+        )
+        rows.append({
+            **source,
+            "table_exists": table_exists,
+            "runnable_job": runnable_job,
+            "has_quality_log": has_quality_log,
+            "last_run": quality.get("run_timestamp").isoformat() if quality and quality.get("run_timestamp") else None,
+            "last_records_fetched": int(quality.get("records_fetched") or 0) if quality else 0,
+            "last_records_inserted": int(quality.get("records_inserted") or 0) if quality else 0,
+            "status": status,
+        })
+
+    counts = {
+        "total_sources": len(rows),
+        "operational": sum(1 for r in rows if r["status"] == "operational"),
+        "not_wired": sum(1 for r in rows if r["status"] == "not_wired"),
+        "schema_missing": sum(1 for r in rows if r["status"] == "schema_missing"),
+        "no_recent_ingest": sum(1 for r in rows if r["status"] == "no_recent_ingest"),
+    }
+
+    critical_gaps = [
+        r for r in rows if r["status"] in {"not_wired", "schema_missing"}
+    ]
+
+    return {
+        "summary": counts,
+        "critical_gaps": critical_gaps,
+        "sources": rows,
+    }

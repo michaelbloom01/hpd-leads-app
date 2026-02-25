@@ -9,11 +9,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'react-hot-toast';
 import {
   fetchConfigs, fetchActiveConfig, activateConfig, triggerRecalculate,
-  createConfig, updateConfig, deleteConfig,
-  type ScoringConfig, type ScoringWeights,
+  createConfig,
+  type ScoringWeights,
 } from '../services/scoring-api';
-import { fetchQualitySummary, fetchCoverage, type QualitySummary, type CoverageStats } from '../services/quality-api';
-import { fetchJobs, startJob, type Job } from '../services/jobs-api';
+import { fetchQualitySummary, fetchCoverage, fetchSourceAudit } from '../services/quality-api';
+import { fetchJobs, fetchJobsSummary, startJob } from '../services/jobs-api';
 
 const SIGNAL_LABELS: Record<string, string> = {
   ownership_change: 'Ownership Change',
@@ -21,7 +21,7 @@ const SIGNAL_LABELS: Record<string, string> = {
   violation_trend: 'Violation Trend',
   energy_grade_drop: 'Energy Grade Drop',
   dob_permits: 'DOB Permits',
-  hpd_litigation: 'HPD Litigation',
+  hpd_litigation: 'Housing Litigation',
   emergency_repairs: 'Emergency Repairs',
   building_size: 'Building Size',
   eviction_activity: 'Eviction Activity',
@@ -60,7 +60,13 @@ const ScoringSection: React.FC = () => {
 
   const recalcMut = useMutation({
     mutationFn: triggerRecalculate,
-    onSuccess: (data) => toast.success(`Recalculation queued (Job #${data.job_id})`),
+    onSuccess: (data) => {
+      if (data.dispatch_mode === 'in_process') {
+        toast(`Recalculation queued (Job #${data.job_id}) in local fallback mode.`);
+      } else {
+        toast.success(`Recalculation queued (Job #${data.job_id})`);
+      }
+    },
     onError: () => toast.error('Failed to trigger recalculation'),
   });
 
@@ -159,11 +165,19 @@ const ScoringSection: React.FC = () => {
 const DataHealthSection: React.FC = () => {
   const { data: quality } = useQuery({ queryKey: ['quality-summary'], queryFn: fetchQualitySummary, staleTime: 30000 });
   const { data: coverage } = useQuery({ queryKey: ['quality-coverage'], queryFn: fetchCoverage, staleTime: 30000 });
+  const { data: sourceAudit } = useQuery({ queryKey: ['quality-source-audit'], queryFn: fetchSourceAudit, staleTime: 30000 });
   const { data: jobs } = useQuery({ queryKey: ['jobs'], queryFn: () => fetchJobs(undefined, 10), refetchInterval: 10000 });
+  const { data: jobsSummary } = useQuery({ queryKey: ['jobs-summary'], queryFn: fetchJobsSummary, refetchInterval: 10000 });
 
   const triggerJob = useMutation({
     mutationFn: startJob,
-    onSuccess: (_, jobType) => toast.success(`${jobType} job started`),
+    onSuccess: (data, jobType) => {
+      if (data.dispatch_mode === 'in_process') {
+        toast(`${jobType} job started in local fallback mode`);
+      } else {
+        toast.success(`${jobType} job started`);
+      }
+    },
     onError: (_, jobType) => toast.error(`Failed to start ${jobType}`),
   });
 
@@ -245,7 +259,109 @@ const DataHealthSection: React.FC = () => {
         </div>
       )}
 
+      {/* Source Integrity */}
+      {sourceAudit && (
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          <div className="p-4 border-b border-gray-100">
+            <h3 className="text-sm font-medium text-gray-700">Source Integrity Matrix</h3>
+            <p className="text-xs text-gray-500 mt-1">
+              Canonical view of configured sources vs runnable jobs vs active ingestion.
+            </p>
+            <div className="mt-3 grid grid-cols-2 sm:grid-cols-5 gap-2">
+              <div className="px-2 py-1.5 bg-gray-50 rounded">
+                <div className="text-[10px] text-gray-500 uppercase">Total</div>
+                <div className="text-sm font-semibold text-gray-800">{sourceAudit.summary.total_sources}</div>
+              </div>
+              <div className="px-2 py-1.5 bg-green-50 rounded">
+                <div className="text-[10px] text-green-600 uppercase">Operational</div>
+                <div className="text-sm font-semibold text-green-700">{sourceAudit.summary.operational}</div>
+              </div>
+              <div className="px-2 py-1.5 bg-amber-50 rounded">
+                <div className="text-[10px] text-amber-600 uppercase">No Recent Ingest</div>
+                <div className="text-sm font-semibold text-amber-700">{sourceAudit.summary.no_recent_ingest}</div>
+              </div>
+              <div className="px-2 py-1.5 bg-rose-50 rounded">
+                <div className="text-[10px] text-rose-600 uppercase">Not Wired</div>
+                <div className="text-sm font-semibold text-rose-700">{sourceAudit.summary.not_wired}</div>
+              </div>
+              <div className="px-2 py-1.5 bg-red-50 rounded">
+                <div className="text-[10px] text-red-600 uppercase">Schema Missing</div>
+                <div className="text-sm font-semibold text-red-700">{sourceAudit.summary.schema_missing}</div>
+              </div>
+            </div>
+            {sourceAudit.critical_gaps.length > 0 && (
+              <div className="mt-3 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded p-2">
+                Critical gaps: {sourceAudit.critical_gaps.map(g => g.source_name).join(', ')}
+              </div>
+            )}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs text-gray-500 uppercase">Source</th>
+                  <th className="px-4 py-2 text-left text-xs text-gray-500 uppercase">Dataset</th>
+                  <th className="px-4 py-2 text-left text-xs text-gray-500 uppercase">Job</th>
+                  <th className="px-4 py-2 text-left text-xs text-gray-500 uppercase">UI Surface</th>
+                  <th className="px-4 py-2 text-left text-xs text-gray-500 uppercase">Status</th>
+                  <th className="px-4 py-2 text-right text-xs text-gray-500 uppercase">Last Run</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {sourceAudit.sources.map(s => (
+                  <tr key={s.source_name}>
+                    <td className="px-4 py-2 font-medium">{s.source_name}</td>
+                    <td className="px-4 py-2 text-xs text-gray-500">{s.dataset_id}</td>
+                    <td className="px-4 py-2 text-xs">{s.job_type}</td>
+                    <td className="px-4 py-2 text-xs text-gray-600">{s.ui_surface}</td>
+                    <td className="px-4 py-2">
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                        s.status === 'operational' ? 'bg-green-100 text-green-700' :
+                        s.status === 'no_recent_ingest' ? 'bg-amber-100 text-amber-700' :
+                        s.status === 'not_wired' ? 'bg-rose-100 text-rose-700' :
+                        'bg-red-100 text-red-700'
+                      }`}>{s.status}</span>
+                    </td>
+                    <td className="px-4 py-2 text-right text-xs text-gray-500">
+                      {s.last_run ? new Date(s.last_run).toLocaleDateString() : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Recent Jobs */}
+      {jobsSummary && (
+        <div className="bg-white rounded-lg border border-gray-200 p-5">
+          <h3 className="text-sm font-medium text-gray-700 mb-3">Queue Health (24h)</h3>
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+            <div className="p-3 bg-gray-50 rounded-lg">
+              <div className="text-[10px] text-gray-500 uppercase">Queued</div>
+              <div className="text-xl font-semibold text-gray-800">{jobsSummary.queued_count.toLocaleString()}</div>
+            </div>
+            <div className="p-3 bg-blue-50 rounded-lg">
+              <div className="text-[10px] text-blue-600 uppercase">Running</div>
+              <div className="text-xl font-semibold text-blue-700">{jobsSummary.running_count.toLocaleString()}</div>
+            </div>
+            <div className="p-3 bg-green-50 rounded-lg">
+              <div className="text-[10px] text-green-600 uppercase">Succeeded</div>
+              <div className="text-xl font-semibold text-green-700">{jobsSummary.succeeded_24h.toLocaleString()}</div>
+            </div>
+            <div className="p-3 bg-red-50 rounded-lg">
+              <div className="text-[10px] text-red-600 uppercase">Failed</div>
+              <div className="text-xl font-semibold text-red-700">{jobsSummary.failed_24h.toLocaleString()}</div>
+            </div>
+            <div className="p-3 bg-amber-50 rounded-lg">
+              <div className="text-[10px] text-amber-600 uppercase">Avg Duration</div>
+              <div className="text-xl font-semibold text-amber-700">{Math.round(jobsSummary.avg_duration_seconds_24h)}s</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {jobs && jobs.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
           <h3 className="text-sm font-medium text-gray-700 p-4 border-b border-gray-100">Recent Jobs</h3>
@@ -268,9 +384,9 @@ const DataHealthSection: React.FC = () => {
                   <td className="px-4 py-2">{j.source}</td>
                   <td className="px-4 py-2">
                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                      j.status === 'completed' ? 'bg-green-100 text-green-700' :
+                      (j.status === 'completed' || j.status === 'succeeded') ? 'bg-green-100 text-green-700' :
                       j.status === 'failed' ? 'bg-red-100 text-red-700' :
-                      j.status === 'running' ? 'bg-blue-100 text-blue-700' :
+                      (j.status === 'running' || j.status === 'queued') ? 'bg-blue-100 text-blue-700' :
                       'bg-gray-100 text-gray-700'
                     }`}>{j.status}</span>
                   </td>
