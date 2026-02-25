@@ -440,12 +440,14 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                           {enrichedLead.total_units?.toLocaleString()} units × avg rent × 5% fee — View Breakdown
                         </summary>
                         <div className="mt-2 space-y-1">
-                          {enrichedLead.revenue_breakdown?.map((item: { label?: string; estimated_units?: number; rent_per_unit?: number; monthly_gross: number }, i: number) => (
-                            <div key={i} className="flex items-center justify-between text-xs">
-                              <span className="text-gray-500">{item.label}: <span className="text-gray-700 font-mono">{item.estimated_units?.toLocaleString()}</span> units @ <span className="text-gray-700 font-mono">${item.rent_per_unit?.toLocaleString()}</span>/mo</span>
-                              <span className="text-emerald-600 font-mono">{formatCurrency(item.monthly_gross * 0.05 * 12)}/yr</span>
-                            </div>
-                          )) || (
+                          {(enrichedLead.revenue_breakdown && enrichedLead.revenue_breakdown.length > 0) ? (
+                            enrichedLead.revenue_breakdown.map((item: { label?: string; estimated_units?: number; rent_per_unit?: number; monthly_gross: number }, i: number) => (
+                              <div key={i} className="flex items-center justify-between text-xs">
+                                <span className="text-gray-500">{item.label}: <span className="text-gray-700 font-mono">{item.estimated_units?.toLocaleString()}</span> units @ <span className="text-gray-700 font-mono">${item.rent_per_unit?.toLocaleString()}</span>/mo</span>
+                                <span className="text-emerald-600 font-mono">{formatCurrency(item.monthly_gross * 0.05 * 12)}/yr</span>
+                              </div>
+                            ))
+                          ) : (
                             <div className="text-[10px] text-gray-400 space-y-0.5">
                               <p>{enrichedLead.total_units?.toLocaleString() || '—'} units across {enrichedLead.portfolio_size || '—'} buildings</p>
                               <p>Borough: {enrichedLead.boro || 'NYC avg'} • Fee rate: 5%</p>

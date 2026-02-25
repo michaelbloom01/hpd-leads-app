@@ -93,10 +93,16 @@ async def list_buildings(
         text(f"""
             SELECT b.bbl, b.address, b.borough, b.unit_count, b.building_type,
                    b.churn_score, b.churn_category, b.key_signal,
-                   b.coverage_ratio, b.outreach_status, b.last_scored_at,
-                   bm.lead_id AS current_lead_id
+                   b.coverage_ratio, b.outreach_status, b.last_scored_at, m.lead_id AS current_lead_id
             FROM buildings b
-            LEFT JOIN building_management bm ON bm.bbl = b.bbl AND bm.is_current = true
+            LEFT JOIN LATERAL (
+                SELECT bm.lead_id
+                FROM building_management bm
+                WHERE bm.bbl = b.bbl
+                  AND bm.is_current = true
+                ORDER BY bm.updated_at DESC NULLS LAST, bm.id DESC
+                LIMIT 1
+            ) m ON TRUE
             WHERE {where_sql}
             ORDER BY b.{sort_col} {direction} NULLS LAST
             LIMIT :limit OFFSET :offset
@@ -180,9 +186,16 @@ async def get_building(
 ):
     result = await session.execute(
         text("""
-            SELECT b.*, bm.lead_id AS current_lead_id
+            SELECT b.*, m.lead_id AS current_lead_id
             FROM buildings b
-            LEFT JOIN building_management bm ON bm.bbl = b.bbl AND bm.is_current = true
+            LEFT JOIN LATERAL (
+                SELECT bm.lead_id
+                FROM building_management bm
+                WHERE bm.bbl = b.bbl
+                  AND bm.is_current = true
+                ORDER BY bm.updated_at DESC NULLS LAST, bm.id DESC
+                LIMIT 1
+            ) m ON TRUE
             WHERE b.bbl = :bbl
         """),
         {"bbl": bbl},
