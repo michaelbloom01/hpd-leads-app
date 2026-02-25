@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { toast } from 'react-hot-toast';
+import { useNavigate } from 'react-router-dom';
 import { ApiLead, fetchLead, updateLead, addOutreachAttempt, enrichLeadAll, estimateLeadRevenue, OutreachAttempt } from '../services/api';
+import { addBuildingToPipeline, fetchBuildings, type BuildingRow } from '../services/buildings-api';
 import { PIPELINE_STAGES, OUTREACH_STATUSES, OUTREACH_METHODS, OUTREACH_OUTCOMES, formatCurrency } from '../utils/format';
 
 // Lazy-load map to avoid large initial bundle
@@ -15,6 +17,7 @@ interface Props {
 }
 
 const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   const [isEnriching, setIsEnriching] = useState(false);
   // isResearching and isGeneratingAI removed — unified into isEnriching via handleEnrichAll
@@ -33,6 +36,9 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   const [showEmailMenu, setShowEmailMenu] = useState(false);
   const [isEstimatingRevenue, setIsEstimatingRevenue] = useState(false);
   const [revenueEstimateFailed, setRevenueEstimateFailed] = useState(false);
+  const [linkedBuildings, setLinkedBuildings] = useState<BuildingRow[]>([]);
+  const [loadingLinkedBuildings, setLoadingLinkedBuildings] = useState(false);
+  const [pipelineAddBusy, setPipelineAddBusy] = useState<Record<string, boolean>>({});
 
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -75,6 +81,31 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     loadFullLead();
     return () => { cancelled = true; };
   }, [lead.lead_id, onLeadUpdated]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadLinkedBuildings = async () => {
+      if (activeTab !== 'buildings') return;
+      setLoadingLinkedBuildings(true);
+      try {
+        const res = await fetchBuildings({
+          lead_id: enrichedLead.lead_id,
+          sort_by: 'address',
+          sort_dir: 'asc',
+          limit: 500,
+          offset: 0,
+        });
+        if (cancelled) return;
+        setLinkedBuildings(res.buildings || []);
+      } catch {
+        if (!cancelled) setLinkedBuildings([]);
+      } finally {
+        if (!cancelled) setLoadingLinkedBuildings(false);
+      }
+    };
+    loadLinkedBuildings();
+    return () => { cancelled = true; };
+  }, [activeTab, enrichedLead.lead_id]);
 
   // ESC to close
   useEffect(() => {
@@ -280,6 +311,26 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     if (url && !url.startsWith('http')) url = `https://${url}`;
     if (!url) url = `https://www.google.com/search?q=${encodeURIComponent((enrichedLead.agent_name || enrichedLead.owner_name) + ' property management NYC')}`;
     window.open(url, '_blank');
+  };
+
+  const openBuildingDetail = (bbl: string) => {
+    onClose();
+    navigate(`/buildings/${bbl}`);
+  };
+
+  const handleAddBuildingToPipeline = async (bbl: string) => {
+    setPipelineAddBusy((prev) => ({ ...prev, [bbl]: true }));
+    try {
+      await addBuildingToPipeline(bbl);
+      setLinkedBuildings((prev) =>
+        prev.map((b) => (b.bbl === bbl ? { ...b, outreach_status: 'pipeline' } : b)),
+      );
+      toast.success('Building added to pipeline');
+    } catch {
+      toast.error('Failed to add building to pipeline');
+    } finally {
+      setPipelineAddBusy((prev) => ({ ...prev, [bbl]: false }));
+    }
   };
 
   const TABS: { id: TabId; label: string }[] = [
@@ -828,16 +879,55 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
 
               {/* Building List */}
               <div className="space-y-1 max-h-96 overflow-y-auto">
-                {(enrichedLead.buildings || [])
-                  .filter((b: string) => !buildingSearch || String(b || '').toLowerCase().includes(buildingSearch.toLowerCase()))
-                  .map((building: string, i: number) => (
-                    <div key={i} className="flex items-center justify-between p-2 bg-white hover:bg-gray-50 border-b border-gray-100 rounded-lg">
-                      <span className="text-sm text-gray-700">{building}</span>
-                      <a href={`https://www.google.com/maps/search/${encodeURIComponent(building + ', New York, NY')}`} target="_blank" rel="noopener"
-                        className="text-[10px] text-blue-600 hover:underline">Map</a>
-                    </div>
-                  ))}
-                {(!enrichedLead.buildings || enrichedLead.buildings.length === 0) && <p className="text-gray-400 text-sm italic">No buildings data available</p>}
+                {loadingLinkedBuildings ? (
+                  <p className="text-gray-400 text-sm italic">Loading linked buildings...</p>
+                ) : linkedBuildings.length > 0 ? (
+                  linkedBuildings
+                    .filter((b) => !buildingSearch || String(b.address || '').toLowerCase().includes(buildingSearch.toLowerCase()) || String(b.bbl || '').toLowerCase().includes(buildingSearch.toLowerCase()))
+                    .map((building) => (
+                      <div key={building.bbl} className="flex items-center justify-between p-2 bg-white hover:bg-gray-50 border-b border-gray-100 rounded-lg gap-2">
+                        <div className="min-w-0">
+                          <button
+                            onClick={() => openBuildingDetail(building.bbl)}
+                            className="text-sm text-blue-700 hover:underline text-left truncate"
+                            title="Open building detail view"
+                          >
+                            {building.address || building.bbl}
+                          </button>
+                          <div className="text-[10px] text-gray-400">
+                            BBL: {building.bbl} • {building.borough || 'N/A'} • {building.unit_count ?? '--'} units
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <button
+                            onClick={() => handleAddBuildingToPipeline(building.bbl)}
+                            disabled={pipelineAddBusy[building.bbl] || building.outreach_status === 'pipeline'}
+                            className="text-[10px] px-2 py-1 rounded border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                            title="Add this building to pipeline list"
+                          >
+                            {building.outreach_status === 'pipeline'
+                              ? 'In Pipeline'
+                              : (pipelineAddBusy[building.bbl] ? 'Adding...' : 'Add to Pipeline')}
+                          </button>
+                          <a href={`https://www.google.com/maps/search/${encodeURIComponent((building.address || building.bbl) + ', New York, NY')}`} target="_blank" rel="noopener"
+                            className="text-[10px] text-blue-600 hover:underline">Map</a>
+                        </div>
+                      </div>
+                    ))
+                ) : (
+                  (enrichedLead.buildings || [])
+                    .filter((b: string) => !buildingSearch || String(b || '').toLowerCase().includes(buildingSearch.toLowerCase()))
+                    .map((building: string, i: number) => (
+                      <div key={i} className="flex items-center justify-between p-2 bg-white hover:bg-gray-50 border-b border-gray-100 rounded-lg">
+                        <span className="text-sm text-gray-700">{building}</span>
+                        <a href={`https://www.google.com/maps/search/${encodeURIComponent(building + ', New York, NY')}`} target="_blank" rel="noopener"
+                          className="text-[10px] text-blue-600 hover:underline">Map</a>
+                      </div>
+                    ))
+                )}
+                {!loadingLinkedBuildings && linkedBuildings.length === 0 && (!enrichedLead.buildings || enrichedLead.buildings.length === 0) && (
+                  <p className="text-gray-400 text-sm italic">No buildings data available</p>
+                )}
               </div>
             </>
           )}
