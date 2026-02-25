@@ -1134,6 +1134,9 @@ export interface SmartList {
   description: string;
   filters: Record<string, unknown>;
   pinned: boolean;
+  auto_evaluate: boolean;
+  evaluation_interval_hours: number;
+  next_evaluation_at: string | null;
   last_evaluated_at: string | null;
   last_count: number;
   created_at: string;
@@ -1160,13 +1163,22 @@ export async function createSmartList(body: {
   description?: string;
   filters: Record<string, unknown>;
   pinned?: boolean;
+  auto_evaluate?: boolean;
+  evaluation_interval_hours?: number;
 }): Promise<{ id: string; name: string; status: string }> {
   return apiMutate('/api/smart-lists', 'POST', body);
 }
 
 export async function updateSmartList(
   listId: string,
-  body: { name?: string; description?: string; filters?: Record<string, unknown>; pinned?: boolean },
+  body: {
+    name?: string;
+    description?: string;
+    filters?: Record<string, unknown>;
+    pinned?: boolean;
+    auto_evaluate?: boolean;
+    evaluation_interval_hours?: number;
+  },
 ): Promise<{ id: string; status: string }> {
   return apiMutate(`/api/smart-lists/${listId}`, 'PATCH', body);
 }
@@ -1177,6 +1189,14 @@ export async function deleteSmartList(listId: string): Promise<{ id: string; sta
 
 export async function evaluateSmartList(listId: string): Promise<SmartListEvaluation> {
   return apiMutate(`/api/smart-lists/${listId}/evaluate`, 'POST');
+}
+
+export async function runDueAutoEvaluations(limit: number = 50): Promise<{
+  status: string;
+  evaluated_count: number;
+  results: SmartListEvaluation[];
+}> {
+  return apiMutate(`/api/smart-lists/auto-evaluate/run?limit=${limit}`, 'POST');
 }
 
 // === Data Robustness APIs (v2) ===

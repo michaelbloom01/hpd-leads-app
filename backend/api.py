@@ -10,16 +10,19 @@ load_dotenv(Path(__file__).parent / ".env")
 
 import logging
 import os
+import time
+import uuid
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from src.logging_config import configure_logging
+from src.logging_config import configure_logging, set_request_id
 from src.sentry_init import init_sentry
-from src.db.session import get_session_factory
+from src.db.session import get_pool_snapshot, get_session_factory, shutdown_engine
 from src.routers.smart_lists import ensure_smart_lists_table
 
 configure_logging()
@@ -128,12 +131,63 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
-    response: Response = await call_next(request)
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    if _env == "production":
-        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
-    return response
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    request.state.request_id = request_id
+    request.state.request_started_at = time.perf_counter()
+    set_request_id(request_id)
+    try:
+        response: Response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Request-ID"] = request_id
+        if _env == "production":
+            response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+        elapsed_ms = int((time.perf_counter() - request.state.request_started_at) * 1000)
+        logger.info(
+            "http_request method=%s path=%s status=%s elapsed_ms=%s",
+            request.method,
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
+        )
+        return response
+    finally:
+        set_request_id(None)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    request_id = getattr(request.state, "request_id", None)
+    headers = {"X-Request-ID": request_id} if request_id else {}
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "code": "http_error",
+                "message": str(exc.detail),
+                "request_id": request_id,
+            }
+        },
+        headers=headers,
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = getattr(request.state, "request_id", None)
+    headers = {"X-Request-ID": request_id} if request_id else {}
+    logger.exception("unhandled_exception request_id=%s", request_id)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {
+                "code": "internal_server_error",
+                "message": "Unexpected server error",
+                "request_id": request_id,
+            }
+        },
+        headers=headers,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +225,13 @@ async def api_health():
     return {"status": "ok", "service": "double-edge-api"}
 
 
+@app.get("/api/health/db-pool")
+async def db_pool_health():
+    snapshot = get_pool_snapshot()
+    status = "ok" if snapshot.get("utilization_ratio", 0) < 0.9 else "degraded"
+    return {"status": status, "pool": snapshot}
+
+
 @app.on_event("startup")
 async def startup():
     _jwt_secret = os.environ.get("JWT_SECRET", "")
@@ -189,6 +250,12 @@ async def startup():
         logger.info("smart_lists table ensured on startup")
     except Exception as exc:
         logger.warning("Failed to ensure smart_lists table on startup: %s", exc)
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    await shutdown_engine()
+    logger.info("Database engine disposed on shutdown")
 
 
 if __name__ == "__main__":

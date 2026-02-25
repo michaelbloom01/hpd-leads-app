@@ -92,6 +92,8 @@ Notes:
 - Enrichment batch jobs are queued through `/api/v1/jobs/enrichment/start` and dispatched to Celery when available, with in-process async fallback for local reliability.
 - Canonical job lifecycle statuses are `queued`, `running`, `succeeded`, `failed` (legacy `completed` is normalized for compatibility).
 - Jobs API accepts source-style aliases for reruns (for example `energy_grades` -> `energy`, `aep_designations` -> `aep`).
+- Worker and queue health can be inspected at `GET /api/v1/jobs/worker-health`.
+- DB pool utilization is exposed at `GET /api/health/db-pool`.
 
 ## Execution Readiness Focus
 
@@ -102,3 +104,8 @@ Implementation is organized around three tracks:
 3. Delivery confidence (migration safety + critical path tests + CI gates)
 
 See root architecture plan and session notes for current gate status.
+
+## Operations Runbooks
+
+- `docs/08-operations-runbook.md`
+- `docs/09-postgres-backup-restore.md`

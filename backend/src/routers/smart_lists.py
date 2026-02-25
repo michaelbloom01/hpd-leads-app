@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS smart_lists (
     description TEXT DEFAULT '',
     filters JSONB NOT NULL DEFAULT '{}',
     pinned BOOLEAN DEFAULT false,
+    auto_evaluate BOOLEAN NOT NULL DEFAULT false,
+    evaluation_interval_hours INTEGER NOT NULL DEFAULT 24,
+    next_evaluation_at TIMESTAMPTZ,
     last_evaluated_at TIMESTAMPTZ,
     last_lead_ids TEXT[] DEFAULT '{}',
     last_count INTEGER DEFAULT 0,
@@ -40,6 +43,23 @@ CREATE TABLE IF NOT EXISTS smart_lists (
 );
 """
 ENSURE_INDEX_SQL = "CREATE INDEX IF NOT EXISTS idx_smart_lists_user ON smart_lists(user_id);"
+ENSURE_AUTO_EVAL_COLUMNS_SQL = """
+ALTER TABLE smart_lists
+ADD COLUMN IF NOT EXISTS auto_evaluate BOOLEAN NOT NULL DEFAULT false;
+"""
+ENSURE_AUTO_EVAL_INTERVAL_SQL = """
+ALTER TABLE smart_lists
+ADD COLUMN IF NOT EXISTS evaluation_interval_hours INTEGER NOT NULL DEFAULT 24;
+"""
+ENSURE_AUTO_EVAL_NEXT_SQL = """
+ALTER TABLE smart_lists
+ADD COLUMN IF NOT EXISTS next_evaluation_at TIMESTAMPTZ;
+"""
+ENSURE_AUTO_EVAL_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_smart_lists_next_eval
+ON smart_lists (next_evaluation_at)
+WHERE auto_evaluate = true;
+"""
 
 
 class SmartListCreate(BaseModel):
@@ -55,6 +75,8 @@ class SmartListCreate(BaseModel):
         return v
 
     pinned: bool = False
+    auto_evaluate: bool = False
+    evaluation_interval_hours: int = Field(default=24, ge=1, le=168)
 
 
 class SmartListUpdate(BaseModel):
@@ -62,6 +84,128 @@ class SmartListUpdate(BaseModel):
     description: Optional[str] = None
     filters: Optional[dict] = None
     pinned: Optional[bool] = None
+    auto_evaluate: Optional[bool] = None
+    evaluation_interval_hours: Optional[int] = Field(default=None, ge=1, le=168)
+
+
+def _compute_next_evaluation_at(
+    interval_hours: int,
+    now: datetime | None = None,
+) -> str:
+    base = now or datetime.now(timezone.utc)
+    next_dt = base.timestamp() + (int(interval_hours) * 3600)
+    return datetime.fromtimestamp(next_dt, tz=timezone.utc).isoformat()
+
+
+async def _evaluate_smart_list_data(
+    session: AsyncSession,
+    list_id: str,
+    data: dict,
+    *,
+    triggered_by: str = "manual",
+) -> dict:
+    filters = data["filters"]
+    if isinstance(filters, str):
+        filters = json.loads(filters)
+
+    where_sql, params = _build_where(filters)
+    result = await session.execute(
+        text(f"SELECT lead_id FROM leads WHERE {where_sql}"),
+        params,
+    )
+    current_ids = [r[0] for r in result]
+    current_set = set(current_ids)
+
+    prev_ids = data.get("last_lead_ids") or []
+    prev_set = set(prev_ids)
+
+    entered = current_set - prev_set
+    exited = prev_set - current_set
+
+    # Keep scheduler state and list membership in sync after each evaluation.
+    next_eval = None
+    if data.get("auto_evaluate"):
+        interval_hours = int(data.get("evaluation_interval_hours") or 24)
+        next_eval = _compute_next_evaluation_at(interval_hours)
+
+    await session.execute(
+        text("""
+            UPDATE smart_lists SET
+                last_evaluated_at = NOW(),
+                last_lead_ids = :ids,
+                last_count = :cnt,
+                next_evaluation_at = COALESCE(CAST(:next_eval AS TIMESTAMPTZ), next_evaluation_at),
+                updated_at = NOW()
+            WHERE id = :id
+        """),
+        {"ids": list(current_ids), "cnt": len(current_ids), "id": list_id, "next_eval": next_eval},
+    )
+
+    # Create change alerts for significant movements
+    if entered and prev_ids:
+        await session.execute(
+            text("""
+                INSERT INTO change_alerts (alert_type, description, details, created_at)
+                VALUES ('smart_list_change', :desc, CAST(:details AS JSONB), NOW())
+            """),
+            {
+                "desc": f"Smart List '{data['name']}': {len(entered)} new lead(s) entered",
+                "details": json.dumps({
+                    "smart_list_id": list_id,
+                    "smart_list_name": data["name"],
+                    "entered_count": len(entered),
+                    "exited_count": len(exited),
+                    "entered_ids": list(entered)[:20],
+                    "triggered_by": triggered_by,
+                }),
+            },
+        )
+
+    return {
+        "list_id": list_id,
+        "name": data["name"],
+        "total": len(current_ids),
+        "previous_total": len(prev_ids),
+        "entered": len(entered),
+        "exited": len(exited),
+        "entered_ids": list(entered)[:50],
+        "exited_ids": list(exited)[:50],
+    }
+
+
+async def evaluate_due_auto_lists(
+    session: AsyncSession,
+    *,
+    user_id: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """Evaluate due auto-enabled Smart Lists (optionally scoped to one user)."""
+    sql = """
+        SELECT *
+        FROM smart_lists
+        WHERE auto_evaluate = true
+          AND (
+            next_evaluation_at IS NULL
+            OR next_evaluation_at <= NOW()
+          )
+    """
+    params: dict = {"limit": limit}
+    if user_id:
+        sql += " AND user_id = :uid"
+        params["uid"] = user_id
+    sql += " ORDER BY COALESCE(next_evaluation_at, created_at) ASC LIMIT :limit"
+    due_rows = (await session.execute(text(sql), params)).fetchall()
+    results: list[dict] = []
+    for row in due_rows:
+        data = dict(row._mapping)
+        evaluated = await _evaluate_smart_list_data(
+            session,
+            data["id"],
+            data,
+            triggered_by="auto",
+        )
+        results.append(evaluated)
+    return results
 
 
 def _build_where(filters: dict) -> tuple[str, dict]:
@@ -138,6 +282,10 @@ async def ensure_smart_lists_table(session: AsyncSession):
     await session.execute(text("SELECT pg_advisory_xact_lock(987654321012345678)"))
     await session.execute(text(ENSURE_TABLE_SQL))
     await session.execute(text(ENSURE_INDEX_SQL))
+    await session.execute(text(ENSURE_AUTO_EVAL_COLUMNS_SQL))
+    await session.execute(text(ENSURE_AUTO_EVAL_INTERVAL_SQL))
+    await session.execute(text(ENSURE_AUTO_EVAL_NEXT_SQL))
+    await session.execute(text(ENSURE_AUTO_EVAL_INDEX_SQL))
 
 
 @router.get("")
@@ -151,6 +299,7 @@ async def list_smart_lists(
     result = await session.execute(
         text("""
             SELECT id, name, description, filters, pinned,
+                   auto_evaluate, evaluation_interval_hours, next_evaluation_at,
                    last_evaluated_at, last_count, created_at, updated_at
             FROM smart_lists
             WHERE user_id = :uid
@@ -189,6 +338,18 @@ async def create_smart_list(
             "pinned": body.pinned,
         },
     )
+    if body.auto_evaluate:
+        next_eval = _compute_next_evaluation_at(body.evaluation_interval_hours)
+        await session.execute(
+            text("""
+                UPDATE smart_lists
+                SET auto_evaluate = true,
+                    evaluation_interval_hours = :hrs,
+                    next_evaluation_at = CAST(:next_eval AS TIMESTAMPTZ)
+                WHERE id = :id
+            """),
+            {"id": list_id, "hrs": body.evaluation_interval_hours, "next_eval": next_eval},
+        )
     return {"id": list_id, "name": body.name, "status": "created"}
 
 
@@ -245,11 +406,31 @@ async def update_smart_list(
     if body.pinned is not None:
         sets.append("pinned = :pinned")
         params["pinned"] = body.pinned
+    if body.auto_evaluate is not None:
+        sets.append("auto_evaluate = :auto_evaluate")
+        params["auto_evaluate"] = body.auto_evaluate
+        if body.auto_evaluate is False:
+            sets.append("next_evaluation_at = NULL")
+    if body.evaluation_interval_hours is not None:
+        sets.append("evaluation_interval_hours = :evaluation_interval_hours")
+        params["evaluation_interval_hours"] = body.evaluation_interval_hours
 
     await session.execute(
         text(f"UPDATE smart_lists SET {', '.join(sets)} WHERE id = :id AND user_id = :uid"),
         params,
     )
+    if body.auto_evaluate is True:
+        # If enabling auto-evaluate, ensure a due time exists.
+        interval = body.evaluation_interval_hours or 24
+        next_eval = _compute_next_evaluation_at(interval)
+        await session.execute(
+            text("""
+                UPDATE smart_lists
+                SET next_evaluation_at = COALESCE(next_evaluation_at, CAST(:next_eval AS TIMESTAMPTZ))
+                WHERE id = :id AND user_id = :uid
+            """),
+            {"id": list_id, "uid": user.user_id, "next_eval": next_eval},
+        )
     return {"id": list_id, "status": "updated"}
 
 
@@ -289,63 +470,23 @@ async def evaluate_smart_list(
         raise HTTPException(404, "Smart list not found")
 
     data = dict(row._mapping)
-    filters = data["filters"]
-    if isinstance(filters, str):
-        filters = json.loads(filters)
+    return await _evaluate_smart_list_data(session, list_id, data, triggered_by="manual")
 
-    where_sql, params = _build_where(filters)
-    result = await session.execute(
-        text(f"SELECT lead_id FROM leads WHERE {where_sql}"),
-        params,
-    )
-    current_ids = [r[0] for r in result]
-    current_set = set(current_ids)
 
-    prev_ids = data.get("last_lead_ids") or []
-    prev_set = set(prev_ids)
-
-    entered = current_set - prev_set
-    exited = prev_set - current_set
-
-    # Update the smart list with new results
-    await session.execute(
-        text("""
-            UPDATE smart_lists SET
-                last_evaluated_at = NOW(),
-                last_lead_ids = :ids,
-                last_count = :cnt,
-                updated_at = NOW()
-            WHERE id = :id
-        """),
-        {"ids": list(current_ids), "cnt": len(current_ids), "id": list_id},
-    )
-
-    # Create change alerts for significant movements
-    if entered and prev_ids:
-        await session.execute(
-            text("""
-                INSERT INTO change_alerts (alert_type, description, details, created_at)
-                VALUES ('smart_list_change', :desc, CAST(:details AS JSONB), NOW())
-            """),
-            {
-                "desc": f"Smart List '{data['name']}': {len(entered)} new lead(s) entered",
-                "details": json.dumps({
-                    "smart_list_id": list_id,
-                    "smart_list_name": data["name"],
-                    "entered_count": len(entered),
-                    "exited_count": len(exited),
-                    "entered_ids": list(entered)[:20],
-                }),
-            },
-        )
+@router.post("/auto-evaluate/run")
+@limiter.limit("10/minute")
+async def run_due_auto_evaluations(
+    request: Request,
+    limit: int = 50,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Evaluate due auto-enabled Smart Lists for current user."""
+    await ensure_smart_lists_table(session)
+    results = await evaluate_due_auto_lists(session, user_id=user.user_id, limit=limit)
 
     return {
-        "list_id": list_id,
-        "name": data["name"],
-        "total": len(current_ids),
-        "previous_total": len(prev_ids),
-        "entered": len(entered),
-        "exited": len(exited),
-        "entered_ids": list(entered)[:50],
-        "exited_ids": list(exited)[:50],
+        "status": "ok",
+        "evaluated_count": len(results),
+        "results": results,
     }

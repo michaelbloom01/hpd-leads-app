@@ -8,6 +8,7 @@ import {
   deleteSmartList,
   evaluateSmartList,
   updateSmartList,
+  runDueAutoEvaluations,
 } from '../services/api';
 
 const SmartListsPage: React.FC = () => {
@@ -20,6 +21,7 @@ const SmartListsPage: React.FC = () => {
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [nameError, setNameError] = useState<string | null>(null);
+  const [runningDueEvals, setRunningDueEvals] = useState(false);
   const navigate = useNavigate();
 
   const MIN_NAME_LENGTH = 2;
@@ -103,6 +105,39 @@ const SmartListsPage: React.FC = () => {
     }
   };
 
+  const handleToggleAutoEvaluate = async (list: SmartList) => {
+    try {
+      await updateSmartList(list.id, { auto_evaluate: !list.auto_evaluate });
+      toast.success(!list.auto_evaluate ? 'Auto-evaluation enabled' : 'Auto-evaluation disabled');
+      loadLists();
+    } catch {
+      toast.error('Failed to update auto-evaluation');
+    }
+  };
+
+  const handleIntervalChange = async (list: SmartList, hours: number) => {
+    try {
+      await updateSmartList(list.id, { evaluation_interval_hours: hours, auto_evaluate: true });
+      toast.success(`Auto-evaluation set to every ${hours}h`);
+      loadLists();
+    } catch {
+      toast.error('Failed to update evaluation interval');
+    }
+  };
+
+  const handleRunDueAutoEvals = async () => {
+    setRunningDueEvals(true);
+    try {
+      const result = await runDueAutoEvaluations(100);
+      toast.success(`Auto-evaluated ${result.evaluated_count} Smart List${result.evaluated_count === 1 ? '' : 's'}`);
+      loadLists();
+    } catch {
+      toast.error('Failed to run due auto-evaluations');
+    } finally {
+      setRunningDueEvals(false);
+    }
+  };
+
   const handleOpenInLeads = (list: SmartList) => {
     const filters = list.filters as Record<string, unknown>;
     const params = new URLSearchParams();
@@ -146,12 +181,22 @@ const SmartListsPage: React.FC = () => {
           <h2 className="text-lg font-bold text-gray-900">Smart Lists</h2>
           <p className="text-sm text-gray-500">Saved filter segments that track lead changes over time.</p>
         </div>
-        <button
-          onClick={() => setShowCreate(!showCreate)}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
-        >
-          + New Smart List
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleRunDueAutoEvals}
+            disabled={runningDueEvals}
+            className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+            title="Run auto-evaluation for all due lists now"
+          >
+            {runningDueEvals ? 'Running...' : 'Run Due Auto-Evals'}
+          </button>
+          <button
+            onClick={() => setShowCreate(!showCreate)}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+          >
+            + New Smart List
+          </button>
+        </div>
       </div>
 
       {showCreate && (
@@ -234,7 +279,35 @@ const SmartListsPage: React.FC = () => {
                   {list.last_evaluated_at && (
                     <span>Last evaluated: {new Date(list.last_evaluated_at).toLocaleDateString()}</span>
                   )}
+                  {list.auto_evaluate && list.next_evaluation_at && (
+                    <span>Next auto-eval: {new Date(list.next_evaluation_at).toLocaleString()}</span>
+                  )}
                   <span>Created: {new Date(list.created_at).toLocaleDateString()}</span>
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    onClick={() => handleToggleAutoEvaluate(list)}
+                    className={`px-2.5 py-1 text-[11px] rounded-lg border ${
+                      list.auto_evaluate
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-gray-50 text-gray-600 border-gray-200'
+                    }`}
+                  >
+                    {list.auto_evaluate ? 'Auto: On' : 'Auto: Off'}
+                  </button>
+                  <select
+                    value={list.evaluation_interval_hours || 24}
+                    onChange={(e) => handleIntervalChange(list, Number(e.target.value))}
+                    className="px-2 py-1 text-[11px] border border-gray-200 rounded-lg bg-white text-gray-700"
+                    disabled={!list.auto_evaluate}
+                    title="Auto-evaluation interval"
+                  >
+                    <option value={6}>Every 6h</option>
+                    <option value={12}>Every 12h</option>
+                    <option value={24}>Every 24h</option>
+                    <option value={48}>Every 48h</option>
+                    <option value={72}>Every 72h</option>
+                  </select>
                 </div>
               </div>
               <div className="flex items-center gap-1 ml-3 flex-shrink-0">

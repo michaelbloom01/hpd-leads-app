@@ -16,6 +16,7 @@ app = Celery(
         "src.tasks.enrich",
         "src.tasks.ingest",
         "src.tasks.score",
+        "src.tasks.smart_lists",
         "src.tasks.quality_checks",
         "src.tasks.entity_resolution",
     ],

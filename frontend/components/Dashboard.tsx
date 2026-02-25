@@ -20,6 +20,8 @@ import {
   checkHealth,
   fetchDataHealth,
   DataHealthResponse,
+  getSmartLists,
+  SmartList,
 } from '../services/api';
 import {
   PIPELINE_STAGES,
@@ -66,6 +68,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dataHealth, setDataHealth] = useState<DataHealthResponse | null>(null);
   const [buildingStats, setBuildingStats] = useState<BuildingStats | null>(null);
+  const [pinnedSmartLists, setPinnedSmartLists] = useState<SmartList[]>([]);
 
   // Pipeline drawer state
   const [selectedStage, setSelectedStage] = useState<string | null>(null);
@@ -86,7 +89,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
         ]);
       };
 
-      const [leadsResult, statsResult, enrichResult, followUpsResult, dataStatusResult, gapsResult, healthResult, bldgStatsResult] = await Promise.allSettled([
+      const [leadsResult, statsResult, enrichResult, followUpsResult, dataStatusResult, gapsResult, healthResult, bldgStatsResult, smartListsResult] = await Promise.allSettled([
         withTimeout(fetchLeads({ limit: 100, min_portfolio: 10 }), 15000),
         withTimeout(fetchStats(), 15000),
         withTimeout(getEnrichmentProgress(), 10000),
@@ -95,6 +98,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
         withTimeout(getEnrichmentGaps(), 10000),
         withTimeout(fetchDataHealth(), 10000),
         withTimeout(fetchBuildingStats(), 10000),
+        withTimeout(getSmartLists(), 10000),
       ]);
       
       if (leadsResult.status === 'fulfilled') {
@@ -143,6 +147,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
 
       if (bldgStatsResult.status === 'fulfilled' && isMounted.current) {
         setBuildingStats(bldgStatsResult.value);
+      }
+      if (smartListsResult.status === 'fulfilled' && isMounted.current) {
+        const pinned = (smartListsResult.value.smart_lists || []).filter((list) => list.pinned);
+        setPinnedSmartLists(pinned);
       }
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
@@ -246,6 +254,27 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
     } finally {
       if (isMounted.current) setDrawerLoading(false);
     }
+  };
+
+  const handleOpenSmartListInLeads = (list: SmartList) => {
+    const filters = list.filters as Record<string, unknown>;
+    const preset: LeadFilterPreset = {};
+    if (filters.pipeline_stages) {
+      const stages = Array.isArray(filters.pipeline_stages)
+        ? filters.pipeline_stages
+        : String(filters.pipeline_stages).split(",");
+      preset.pipelineStages = stages.map((s) => String(s).trim()).filter(Boolean);
+    }
+    if (filters.entity_types) {
+      const types = Array.isArray(filters.entity_types)
+        ? filters.entity_types
+        : String(filters.entity_types).split(",");
+      preset.entityTypes = types.map((t) => String(t).trim()).filter(Boolean);
+    }
+    if (filters.has_phone) preset.hasPhone = true;
+    if (filters.has_email) preset.hasEmail = true;
+    if (filters.min_portfolio) preset.minPortfolio = String(filters.min_portfolio);
+    onNavigateToLeads?.(preset);
   };
 
   // ─── Derived data ────────────────────────────────────────────
@@ -458,6 +487,41 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
           </div>
         )}
       </div>
+
+      {/* ── Pinned Smart Lists ───────────────────────────────────── */}
+      {pinnedSmartLists.length > 0 && (
+        <div className="bg-white shadow-sm border border-gray-200 rounded-2xl p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Pinned Smart Lists</h3>
+            <span className="text-xs text-gray-400">{pinnedSmartLists.length} pinned</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+            {pinnedSmartLists.slice(0, 4).map((list) => (
+              <button
+                key={list.id}
+                onClick={() => handleOpenSmartListInLeads(list)}
+                className="text-left p-3 rounded-xl border border-gray-200 hover:border-blue-300 hover:bg-blue-50/40 transition-colors"
+                title="Open list in Leads"
+              >
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-gray-900 truncate">{list.name}</p>
+                  <span className="px-2 py-0.5 bg-blue-50 text-blue-700 text-[10px] rounded font-medium">
+                    {list.last_count}
+                  </span>
+                </div>
+                {list.description && (
+                  <p className="mt-1 text-xs text-gray-500 truncate">{list.description}</p>
+                )}
+                <p className="mt-2 text-[10px] text-gray-400">
+                  {list.last_evaluated_at
+                    ? `Last eval ${new Date(list.last_evaluated_at).toLocaleDateString()}`
+                    : "Not evaluated yet"}
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Section 2: PM Company Deal Pipeline ──────────────────── */}
       <div className="bg-white shadow-sm border border-gray-200 rounded-2xl p-5">

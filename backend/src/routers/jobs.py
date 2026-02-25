@@ -1,6 +1,7 @@
 """Job tracking API router for background task monitoring."""
 import asyncio
 import logging
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,6 +13,7 @@ from src.auth.auth import AuthUser, get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
+STALE_RUNNING_THRESHOLD_MINUTES = 120
 
 
 def _normalize_status(raw: str | None) -> str:
@@ -29,6 +31,7 @@ JOB_TYPE_ALIASES = {
     "eviction_filings": "evictions",
     "facade_inspections": "facades",
     "aep_designations": "aep",
+    "smart_lists_auto_evaluate": "smart_lists_evaluation",
 }
 
 
@@ -57,7 +60,108 @@ async def jobs_summary(
     }
 
 
-@router.get("")
+@router.get("/worker-health")
+async def worker_health(
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Worker/broker liveness and stale-running signal."""
+    stale_count = (
+        await session.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM ingestion_jobs
+                WHERE status = 'running'
+                  AND finished_at IS NULL
+                  AND started_at < now() - (:mins * interval '1 minute')
+                """
+            ),
+            {"mins": STALE_RUNNING_THRESHOLD_MINUTES},
+        )
+    ).scalar_one()
+
+    broker_url = os.environ.get("REDIS_URL", "")
+    celery_ping_ok = False
+    celery_ping_detail = "unavailable"
+    try:
+        from src.worker import app as celery_app
+
+        inspector = celery_app.control.inspect(timeout=1.5)
+        ping = inspector.ping() or {}
+        celery_ping_ok = bool(ping)
+        celery_ping_detail = "ok" if celery_ping_ok else "no_workers"
+    except Exception as exc:
+        celery_ping_detail = f"error:{type(exc).__name__}"
+
+    return {
+        "status": "ok" if stale_count == 0 else "degraded",
+        "broker_configured": bool(broker_url),
+        "celery_ping_ok": celery_ping_ok,
+        "celery_ping_detail": celery_ping_detail,
+        "stale_running_threshold_minutes": STALE_RUNNING_THRESHOLD_MINUTES,
+        "stale_running_jobs": int(stale_count or 0),
+    }
+
+
+@router.post("/reconcile-stale-running")
+async def reconcile_stale_running(
+    dry_run: bool = Query(default=True),
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Mark excessively old running jobs as failed to avoid silent zombie rows."""
+    stale_rows = (
+        await session.execute(
+            text(
+                """
+                SELECT id
+                FROM ingestion_jobs
+                WHERE status = 'running'
+                  AND finished_at IS NULL
+                  AND started_at < now() - (:mins * interval '1 minute')
+                ORDER BY id
+                """
+            ),
+            {"mins": STALE_RUNNING_THRESHOLD_MINUTES},
+        )
+    ).fetchall()
+    stale_ids = [int(r[0]) for r in stale_rows]
+    if dry_run or not stale_ids:
+        return {
+            "status": "dry_run" if dry_run else "no_op",
+            "stale_job_ids": stale_ids,
+            "updated": 0,
+        }
+
+    placeholders = ", ".join(f":sid_{i}" for i in range(len(stale_ids)))
+    params = {
+        "suffix": "Marked failed by stale-job reconciler",
+        "suffix_prefixed": " | Marked failed by stale-job reconciler",
+    }
+    for i, sid in enumerate(stale_ids):
+        params[f"sid_{i}"] = sid
+    await session.execute(
+        text(
+            f"""
+            UPDATE ingestion_jobs
+            SET status = 'failed',
+                finished_at = now(),
+                updated_at = now(),
+                error = COALESCE(error, '') || CASE
+                    WHEN COALESCE(error, '') = '' THEN :suffix
+                    ELSE :suffix_prefixed
+                END
+            WHERE id IN ({placeholders})
+            """
+        ),
+        params,
+    )
+    await session.commit()
+    return {"status": "updated", "stale_job_ids": stale_ids, "updated": len(stale_ids)}
+
+
+@router.get("/")
 async def list_jobs(
     status: Optional[str] = None,
     job_type: Optional[str] = None,
@@ -124,6 +228,7 @@ async def start_job(
         "buildings", "hpd_complaints", "acris", "hpd_violations",
         "dob_permits", "hpd_litigation", "emergency_repairs", "aep",
         "evictions", "energy", "facades", "pad", "scoring", "enrichment",
+        "smart_lists_evaluation",
     ]
     if job_type not in valid_types:
         raise HTTPException(400, f"Unknown job type: {job_type}. Valid: {valid_types}")
@@ -236,6 +341,30 @@ async def start_job(
             )
             from src.tasks.score import run_scoring_job
             asyncio.create_task(asyncio.to_thread(run_scoring_job.run, job_id=job_id))
+            dispatch_mode = "in_process"
+
+        return {
+            "status": "queued",
+            "job_type": job_type,
+            "requested_job_type": original_job_type,
+            "job_id": job_id,
+            "limit": limit,
+            "dispatch_mode": dispatch_mode,
+        }
+
+    if job_type == "smart_lists_evaluation":
+        dispatch_mode = "celery"
+        try:
+            from src.tasks.smart_lists import run_auto_evaluate_job
+            run_auto_evaluate_job.delay(job_id=job_id, limit=limit)
+        except Exception as exc:
+            logger.warning(
+                "Celery dispatch failed for smart_lists_evaluation job %s, falling back to in-process execution: %s",
+                job_id,
+                exc,
+            )
+            from src.tasks.smart_lists import run_auto_evaluate_job
+            asyncio.create_task(asyncio.to_thread(run_auto_evaluate_job.run, job_id=job_id, limit=limit))
             dispatch_mode = "in_process"
 
         return {

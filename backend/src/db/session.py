@@ -64,6 +64,29 @@ def get_session_factory():
     return _get_session_factory()
 
 
+def get_pool_snapshot() -> dict:
+    """Pool snapshot for lightweight health monitoring."""
+    engine = _get_engine()
+    pool = engine.pool
+    size = int(pool.size())
+    checked_out = int(pool.checkedout())
+    overflow = int(pool.overflow())
+    total_capacity = max(1, size + max(0, overflow))
+    utilization_ratio = checked_out / total_capacity
+    return {
+        "size": size,
+        "checked_out": checked_out,
+        "overflow": overflow,
+        "total_capacity": total_capacity,
+        "utilization_ratio": round(utilization_ratio, 3),
+    }
+
+
+async def shutdown_engine():
+    """Dispose engine on application shutdown."""
+    await _get_engine().dispose()
+
+
 async def get_session() -> AsyncGenerator:
     """FastAPI dependency that yields an async session and auto-commits/rolls back."""
     factory = _get_session_factory()

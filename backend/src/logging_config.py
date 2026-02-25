@@ -7,7 +7,22 @@ import json
 import logging
 import os
 import sys
+from contextvars import ContextVar
 from datetime import datetime
+
+_request_id_ctx: ContextVar[str | None] = ContextVar("request_id", default=None)
+
+
+def set_request_id(request_id: str | None) -> None:
+    _request_id_ctx.set(request_id)
+
+
+class RequestContextFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        request_id = _request_id_ctx.get()
+        if request_id:
+            record.request_id = request_id
+        return True
 
 
 class JSONFormatter(logging.Formatter):
@@ -38,6 +53,7 @@ def configure_logging():
         root.removeHandler(handler)
 
     handler = logging.StreamHandler(sys.stdout)
+    handler.addFilter(RequestContextFilter())
     if env == "production":
         handler.setFormatter(JSONFormatter())
     else:
