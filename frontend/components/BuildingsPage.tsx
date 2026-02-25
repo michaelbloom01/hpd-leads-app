@@ -175,7 +175,7 @@ const BuildingsPage: React.FC = () => {
               disabled={busy}
               className="text-xs px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
             >
-              {busy ? 'Adding...' : 'Add to list'}
+              {busy ? 'Adding...' : 'Add to List'}
             </button>
             {isOpen && (
               <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[160px]">
@@ -227,7 +227,7 @@ const BuildingsPage: React.FC = () => {
                       onClick={e => { e.stopPropagation(); setCreateListForBbl(bbl); }}
                       className="w-full text-left px-3 py-1.5 text-xs border-t border-gray-100 hover:bg-gray-50 text-blue-600"
                     >
-                      + Create new list
+                      + Create New List
                     </button>
                   </>
                 )}

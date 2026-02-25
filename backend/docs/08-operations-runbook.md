@@ -37,3 +37,38 @@ Default stale threshold is 120 minutes for jobs in `running` with no `finished_a
 
 - Queue dispatch is Celery-first with in-process fallback.
 - For predictable production scheduling, use platform cron to call queue-start endpoints.
+
+## Monitoring and Alerting
+
+- External uptime monitor (recommended):
+  - Monitor `GET /api/health` every 5 minutes
+  - Alert channel: email (minimum), Slack/PagerDuty (preferred)
+- Sentry:
+  - Ensure `SENTRY_DSN` is configured in production runtime env
+  - Verify a test exception appears in Sentry after deploy
+  - Configure alert rule for new unhandled exceptions
+- DB pool watch:
+  - Track `GET /api/health/db-pool`
+  - Treat utilization ratio >= 0.9 as degraded and investigate long-running queries
+
+## Deployment Checklist (Railway + Vercel)
+
+1. Deploy backend and frontend.
+2. Verify backend health:
+   - `GET /api/health`
+   - `GET /api/health/db-pool`
+   - `GET /api/v1/jobs/worker-health`
+3. Verify frontend critical flows:
+   - Leads filtering and sorting
+   - Building list CRUD/member actions
+   - Smart List evaluate/pin behavior
+4. Confirm Sentry receives errors and alert routing works.
+
+## Incident Quick Response
+
+- Worker stalled / stale running jobs:
+  - Run `POST /api/v1/jobs/reconcile-stale-running?dry_run=true`
+  - If results are correct, run with `dry_run=false`
+- DB pool pressure:
+  - Check `GET /api/health/db-pool`
+  - Reduce concurrent heavy jobs, then inspect long query patterns

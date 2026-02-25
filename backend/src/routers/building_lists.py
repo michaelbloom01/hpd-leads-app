@@ -49,6 +49,10 @@ class BuildingListCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
 
 
+class BuildingListUpdate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+
+
 @router.get("")
 @limiter.limit("60/minute")
 async def list_building_lists(
@@ -90,6 +94,34 @@ async def create_building_list(
     )
     await session.commit()
     return {"id": list_id, "name": body.name.strip()}
+
+
+@router.patch("/{list_id}")
+@limiter.limit("30/minute")
+async def update_building_list(
+    request: Request,
+    list_id: str,
+    body: BuildingListUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Rename a building list."""
+    result = await session.execute(
+        text(
+            """
+            UPDATE building_lists
+            SET name = :name, updated_at = now()
+            WHERE id = :id AND user_id = :uid
+            RETURNING id, name
+            """
+        ),
+        {"id": list_id, "uid": user.id, "name": body.name.strip()},
+    )
+    row = result.fetchone()
+    await session.commit()
+    if not row:
+        raise HTTPException(status_code=404, detail="Building list not found")
+    return {"id": row[0], "name": row[1], "status": "updated"}
 
 
 @router.delete("/{list_id}")

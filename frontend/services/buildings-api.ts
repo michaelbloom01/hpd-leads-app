@@ -205,6 +205,10 @@ export interface BuildingList {
   member_count?: number;
 }
 
+export interface BuildingListMember extends BuildingRow {
+  added_at: string;
+}
+
 export async function getBuildingLists(): Promise<{ building_lists: BuildingList[] }> {
   return apiGet('/api/v1/building-lists');
 }
@@ -213,8 +217,29 @@ export async function createBuildingList(name: string): Promise<{ id: string; na
   return apiPost('/api/v1/building-lists', { name });
 }
 
+export async function updateBuildingList(listId: string, name: string): Promise<{ id: string; name: string; status: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/building-lists/${listId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify({ name }),
+  });
+  if (response.status === 401) { clearToken(); window.dispatchEvent(new Event('auth:logout')); throw new Error('Session expired'); }
+  if (!response.ok) throw new Error(`PATCH building list failed: ${response.statusText}`);
+  return response.json();
+}
+
 export async function addBuildingToList(listId: string, bbl: string): Promise<{ list_id: string; bbl: string; status: string }> {
   return apiPost(`/api/v1/building-lists/${listId}/buildings/${bbl}`);
+}
+
+export async function deleteBuildingList(listId: string): Promise<{ id: string; status: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/building-lists/${listId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  if (response.status === 401) { clearToken(); window.dispatchEvent(new Event('auth:logout')); throw new Error('Session expired'); }
+  if (!response.ok) throw new Error(`DELETE building list failed: ${response.statusText}`);
+  return response.json();
 }
 
 export async function removeBuildingFromList(listId: string, bbl: string): Promise<{ list_id: string; bbl: string; status: string }> {
@@ -225,6 +250,10 @@ export async function removeBuildingFromList(listId: string, bbl: string): Promi
   if (response.status === 401) { clearToken(); window.dispatchEvent(new Event('auth:logout')); throw new Error('Session expired'); }
   if (!response.ok) throw new Error(`DELETE building from list failed: ${response.statusText}`);
   return response.json();
+}
+
+export async function fetchBuildingListMembers(listId: string): Promise<{ buildings: BuildingListMember[] }> {
+  return apiGet(`/api/v1/building-lists/${listId}/buildings`);
 }
 
 export function logBuildingOutreachEvent(

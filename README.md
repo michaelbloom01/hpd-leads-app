@@ -17,7 +17,8 @@ NYC property management intelligence platform with dual purpose: **PE acquisitio
 7. **Scores leads (V2)** using 8 dimensions: portfolio, units, professional, contact, concentration, revenue, distress, deal fit
 8. **Enriches contacts** using 4-tier cascade: Google Places -> NY DOS -> Web Crawl -> Hunter.io
 9. **Smart Lists** — saved filter segments that track lead changes over time
-10. **Full sourcing UI** with server-side filtering, pipeline tracking, follow-ups, and bookmarkable filter URLs
+10. **Building Lists** — saved collections of buildings for outreach workflows
+11. **Full sourcing UI** with server-side filtering, pipeline tracking, follow-ups, and bookmarkable filter URLs
 
 ## Current Status (Feb 2026)
 
@@ -79,6 +80,12 @@ This is an architecture simplification effort and does not reduce product JTBD s
 - Open in Leads page to apply saved filters instantly
 - Change alerts when list composition shifts
 
+### Building Lists
+- Create named building collections from the Buildings table
+- Add/remove buildings by BBL
+- Manage lists from dedicated `/building-lists` page
+- Open building detail directly from list members
+
 ### Buildings Tab
 - Building-level search and filtering
 - Churn score and outreach pipeline per building
@@ -128,6 +135,10 @@ hpd-leads-app/
 | `/api/smart-lists` | GET/POST | List or create Smart Lists |
 | `/api/smart-lists/{id}` | GET/PATCH/DELETE | CRUD for a Smart List |
 | `/api/smart-lists/{id}/evaluate` | POST | Re-run filters, detect changes |
+| `/api/v1/building-lists` | GET/POST | List or create Building Lists |
+| `/api/v1/building-lists/{id}` | PATCH/DELETE | Rename or delete a Building List |
+| `/api/v1/building-lists/{id}/buildings/{bbl}` | POST/DELETE | Add or remove a building from list |
+| `/api/v1/building-lists/{id}/buildings` | GET | List buildings in a Building List |
 | `/api/enrich/batch` | POST | Start batch enrichment |
 | `/api/estimate-revenue` | POST | Bulk revenue estimation |
 | `/api/violations/refresh` | POST | Fetch HPD violations |

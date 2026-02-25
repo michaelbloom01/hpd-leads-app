@@ -52,19 +52,18 @@ Double Edge (formerly HPD Leads) is a dual-purpose NYC housing intelligence plat
 - **Accessibility**: ESC-to-close, focus trapping, ARIA labels, focus-visible indicators
 - **URL filter persistence**: useFilterUrl hook syncs filters to/from URL search params
 - **Smart Lists**: Saved filter segments with CRUD, change detection (evaluate), and pin-to-dashboard
+- **Building Lists**: Saved building collections with CRUD and member management
 - **404 route**: Catch-all with styled page
-- **Bug fixes**: Multi-borough filter, CSV export path, per-lead revenue endpoint, building_type_has and units_per_bldg filters
+- **Bug fixes**: Multi-borough filter, CSV export path, per-lead revenue endpoint, building_type_has and units_per_bldg filters, leads query-time dedupe collision
 
 ## Remaining Backlog
 
-1. **Full Due Diligence reports** — AI-generated with comparables
+1. **Full Due Diligence reports** — AI-generated with comparables (deferred)
 2. **Kanban view** for pipeline stages
 3. **Apollo.io** integration for deeper contact discovery
-4. **Dashboard pinned Smart List tiles** — show pinned lists on the main dashboard
-5. **Smart List auto-evaluation** — run evaluations on a schedule
-6. **Email digest** for weekly change alerts
-7. **Historical violation trending**
-8. **Component extraction** — split LeadTable.tsx into smaller components
+4. **Email digest** for weekly change alerts
+5. **Historical violation trending**
+6. **Component extraction** — split LeadTable.tsx into smaller components
 
 ## Architecture Convergence Program (Pre-Backlog Gate)
 

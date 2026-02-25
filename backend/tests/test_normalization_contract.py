@@ -1,5 +1,6 @@
 from src.transform.normalize import normalize_name, normalize_name_for_grouping
 from src.routers.leads import _row_to_response
+from pathlib import Path
 
 
 def test_normalize_name_expands_common_abbreviations():
@@ -39,3 +40,13 @@ def test_row_to_response_parses_json_like_fields():
     assert payload["building_types"] is not None
     assert payload["building_classes"] == {"R4": 1}
     assert payload["revenue_breakdown"] == [{"label": "x"}]
+
+
+def test_leads_search_query_does_not_partition_by_normalized_name():
+    """
+    Regression guard: search results should not be deduped by normalized_name.
+    Distinct PM companies can share normalized grouping labels and must still appear.
+    """
+    leads_router = Path(__file__).resolve().parents[1] / "src" / "routers" / "leads.py"
+    source = leads_router.read_text(encoding="utf-8")
+    assert "PARTITION BY COALESCE(NULLIF(normalized_name, ''), lead_id)" not in source

@@ -16,6 +16,7 @@ const LeadTable = lazy(() => import('./components/LeadTable'));
 const LeadDetail = lazy(() => import('./components/LeadDetail'));
 const AgentPanel = lazy(() => import('./components/AgentPanel'));
 const BuildingsPage = lazy(() => import('./components/BuildingsPage'));
+const BuildingListsPage = lazy(() => import('./components/BuildingListsPage'));
 const BuildingDetailPage = lazy(() => import('./components/BuildingDetailPage'));
 const SettingsPage = lazy(() => import('./components/SettingsPage'));
 const SmartListsPage = lazy(() => import('./components/SmartListsPage'));
@@ -60,6 +61,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/': 'Lead Dashboard',
   '/leads': 'All Leads',
   '/buildings': 'Buildings',
+  '/building-lists': 'Building Lists',
   '/settings': 'Settings',
   '/smart-lists': 'Smart Lists',
 };
@@ -248,6 +250,11 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                   <Route path="/buildings" element={
                     <RouteErrorBoundary>
                       <BuildingsPage />
+                    </RouteErrorBoundary>
+                  } />
+                  <Route path="/building-lists" element={
+                    <RouteErrorBoundary>
+                      <BuildingListsPage />
                     </RouteErrorBoundary>
                   } />
                   <Route path="/buildings/:bbl" element={

@@ -9,6 +9,8 @@ All notable changes to Double Edge (formerly HPD Leads) are documented here.
 - Real worker bootstrap at `backend/src/worker.py` and executable queue dispatch for enrichment/buildings/scoring/ingestion job families.
 - Jobs observability endpoint `GET /api/v1/jobs/summary` plus Settings UI “Queue Health (24h)” telemetry cards.
 - CI contract coverage for jobs normalization/alias behavior (`backend/tests/test_jobs_contract.py`).
+- Building Lists backend surface (`/api/v1/building-lists`) with create/list/rename/delete and member add/remove/list.
+- Dedicated Building Lists UI page (`/building-lists`) with list CRUD and member management.
 
 ### Changed
 - Updated active markdown documentation to reflect execution baseline (runtime convergence, durable async jobs, confidence gates).
@@ -17,10 +19,14 @@ All notable changes to Double Edge (formerly HPD Leads) are documented here.
 - `POST /api/v1/jobs/{job_type}/start` now supports source-style aliases (e.g., `energy_grades -> energy`) and returns `requested_job_type`.
 - Ingestion tasks now adopt pre-created queued jobs via optional `job_id` instead of creating detached shadow jobs.
 - Initial Alembic migration hardened to explicit frozen table snapshot loops instead of metadata-wide create/drop.
+- Buildings table UX labels clarified: `Status` -> `Outreach`; `BBL` expanded to `BBL (Borough-Block-Lot)`.
+- Buildings table now includes per-building estimated annual revenue.
 
 ### Fixed
 - Documentation drift reduction across key architecture docs.
 - CI migration safety guard now uses a portable Python scanner instead of shell-specific tools.
+- Leads search no longer dedupes by `normalized_name` at query-time, resolving suppressed valid matches under portfolio/unit filters.
+- Added regression guard to prevent reintroducing query-time normalized-name dedupe.
 
 ---
 

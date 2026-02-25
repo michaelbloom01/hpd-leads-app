@@ -253,34 +253,17 @@ async def get_leads(
         sort_col = "score"
     sort_direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
 
-    deduped_count_sql = f"""
-        WITH ranked AS (
-            SELECT *,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY COALESCE(NULLIF(normalized_name, ''), lead_id)
-                       ORDER BY portfolio_size DESC, score DESC, updated_at DESC NULLS LAST
-                   ) AS rn
-            FROM leads
-            WHERE {where_sql}
-        )
-        SELECT COUNT(*) FROM ranked WHERE rn = 1
-    """
-    count_result = await session.execute(text(deduped_count_sql), params)
+    count_result = await session.execute(
+        text(f"SELECT COUNT(*) FROM leads WHERE {where_sql}"),
+        params,
+    )
     total = count_result.scalar() or 0
 
     result = await session.execute(
         text(f"""
-            WITH ranked AS (
-                SELECT *,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY COALESCE(NULLIF(normalized_name, ''), lead_id)
-                           ORDER BY portfolio_size DESC, score DESC, updated_at DESC NULLS LAST
-                       ) AS rn
-                FROM leads
-                WHERE {where_sql}
-            )
-            SELECT * FROM ranked
-            WHERE rn = 1
+            SELECT *
+            FROM leads
+            WHERE {where_sql}
             ORDER BY {sort_col} {sort_direction} NULLS LAST
             LIMIT :limit OFFSET :offset
         """),
