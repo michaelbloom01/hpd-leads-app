@@ -21,6 +21,50 @@ router = APIRouter(prefix="/api", tags=["admin"])
 limiter = Limiter(key_func=get_remote_address)
 
 
+async def sync_lead_portfolio_snapshot(session: AsyncSession) -> dict:
+    """
+    Sync lead portfolio_size and total_units from live building_management links.
+
+    This repairs stale lead snapshots that can undercount managed buildings and units.
+    """
+    update_result = await session.execute(text("""
+        UPDATE leads l
+        SET portfolio_size = sub.bldg_count,
+            total_units = sub.unit_sum,
+            updated_at = NOW()
+        FROM (
+            SELECT bm.lead_id,
+                   COUNT(DISTINCT bm.bbl) AS bldg_count,
+                   COALESCE(SUM(b.unit_count), 0) AS unit_sum
+            FROM building_management bm
+            JOIN buildings b ON b.bbl = bm.bbl
+            WHERE bm.is_current = true
+            GROUP BY bm.lead_id
+        ) sub
+        WHERE l.lead_id = sub.lead_id
+          AND (
+                COALESCE(l.portfolio_size, 0) <> sub.bldg_count
+             OR COALESCE(l.total_units, 0) <> sub.unit_sum
+          )
+    """))
+    await session.commit()
+
+    stats_result = await session.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE portfolio_size >= 5) AS leads_5_plus_buildings,
+            COUNT(*) FILTER (WHERE total_units >= 50) AS leads_50_plus_units,
+            COUNT(*) FILTER (WHERE portfolio_size >= 5 AND total_units >= 50) AS leads_50_units_5_buildings
+        FROM leads
+    """))
+    stats = stats_result.first()
+    return {
+        "rows_updated": int(update_result.rowcount or 0),
+        "leads_5_plus_buildings": int(stats[0] or 0),
+        "leads_50_plus_units": int(stats[1] or 0),
+        "leads_50_units_5_buildings": int(stats[2] or 0),
+    }
+
+
 @router.post("/admin/recalculate-categories")
 @limiter.limit("20/minute")
 async def recalculate_categories(
@@ -58,6 +102,21 @@ async def recalculate_categories(
 
     threading.Thread(target=_run, daemon=True).start()
     return {"status": "started", "message": "Recalculating categories in background"}
+
+
+@router.post("/admin/recompute-lead-portfolio")
+@limiter.limit("20/minute")
+async def recompute_lead_portfolio(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Recompute lead portfolio_size and total_units from building_management + buildings."""
+    snapshot = await sync_lead_portfolio_snapshot(session)
+    return {
+        "status": "ok",
+        **snapshot,
+    }
 
 
 @router.post("/admin/recompute-lead-units")

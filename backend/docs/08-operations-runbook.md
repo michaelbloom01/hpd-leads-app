@@ -51,6 +51,14 @@ Default stale threshold is 120 minutes for jobs in `running` with no `finished_a
   - Track `GET /api/health/db-pool`
   - Treat utilization ratio >= 0.9 as degraded and investigate long-running queries
 
+## Lead Portfolio Sync
+
+- Recompute lead building/unit snapshots from live links:
+  - `POST /api/admin/recompute-lead-portfolio`
+- Purpose:
+  - Syncs `leads.portfolio_size` and `leads.total_units` from `building_management` + `buildings`
+  - Fixes stale snapshot drift that can undercount results in Leads filters
+
 ## Deployment Checklist (Railway + Vercel)
 
 1. Deploy backend and frontend.

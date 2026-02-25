@@ -50,3 +50,14 @@ def test_leads_search_query_does_not_partition_by_normalized_name():
     leads_router = Path(__file__).resolve().parents[1] / "src" / "routers" / "leads.py"
     source = leads_router.read_text(encoding="utf-8")
     assert "PARTITION BY COALESCE(NULLIF(normalized_name, ''), lead_id)" not in source
+
+
+def test_admin_recompute_portfolio_uses_building_management():
+    """
+    Regression guard: lead portfolio recompute must source live linkage data
+    from building_management instead of stale lead snapshots.
+    """
+    admin_router = Path(__file__).resolve().parents[1] / "src" / "routers" / "admin.py"
+    source = admin_router.read_text(encoding="utf-8")
+    assert "/admin/recompute-lead-portfolio" in source
+    assert "FROM building_management bm" in source

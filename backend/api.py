@@ -25,6 +25,7 @@ from src.sentry_init import init_sentry
 from src.db.session import get_pool_snapshot, get_session_factory, shutdown_engine
 from src.routers.smart_lists import ensure_smart_lists_table
 from src.routers.building_lists import ensure_building_lists_tables
+from src.routers.admin import sync_lead_portfolio_snapshot
 
 configure_logging()
 init_sentry()
@@ -250,10 +251,15 @@ async def startup():
         async with factory() as session:
             await ensure_smart_lists_table(session)
             await ensure_building_lists_tables(session)
+            snapshot = await sync_lead_portfolio_snapshot(session)
             await session.commit()
-        logger.info("smart_lists and building_lists tables ensured on startup")
+        logger.info(
+            "startup_sync complete: smart/building lists ensured; lead portfolio snapshot rows_updated=%s threshold_count=%s",
+            snapshot.get("rows_updated"),
+            snapshot.get("leads_50_units_5_buildings"),
+        )
     except Exception as exc:
-        logger.warning("Failed to ensure smart_lists table on startup: %s", exc)
+        logger.warning("Failed startup data/table sync: %s", exc)
 
 
 @app.on_event("shutdown")
