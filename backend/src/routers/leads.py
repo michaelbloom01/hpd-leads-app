@@ -5,6 +5,7 @@ endpoints to evaluate PM companies as acquisition targets.
 """
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -33,6 +34,9 @@ SORT_COL_EXPRESSIONS = {
     "units_per_bldg": "CASE WHEN portfolio_size > 0 THEN total_units::float / portfolio_size ELSE 0 END",
 }
 
+SNAPSHOT_SYNC_MIN_INTERVAL_SECONDS = 15 * 60
+_last_snapshot_sync_ts = 0.0
+
 
 def _parse_json_list(value) -> list:
     if value is None:
@@ -52,6 +56,46 @@ def _lineage_status(record_count: int, missing_reason: Optional[str]) -> str:
     if record_count > 0:
         return "available"
     return "missing"
+
+
+def _split_csv_values(value: Optional[str]) -> list[str]:
+    if not value:
+        return []
+    return [v.strip() for v in value.split(",") if v.strip()]
+
+
+async def _sync_lead_portfolio_snapshot_if_due(session: AsyncSession) -> None:
+    """
+    Keep lead-level portfolio/unit snapshots fresh enough for filter accuracy.
+    """
+    global _last_snapshot_sync_ts
+    now = time.time()
+    if now - _last_snapshot_sync_ts < SNAPSHOT_SYNC_MIN_INTERVAL_SECONDS:
+        return
+
+    update_result = await session.execute(text("""
+        UPDATE leads l
+        SET portfolio_size = sub.bldg_count,
+            total_units = sub.unit_sum,
+            updated_at = NOW()
+        FROM (
+            SELECT bm.lead_id,
+                   COUNT(DISTINCT bm.bbl) AS bldg_count,
+                   COALESCE(SUM(b.unit_count), 0) AS unit_sum
+            FROM building_management bm
+            JOIN buildings b ON b.bbl = bm.bbl
+            WHERE bm.is_current = true
+            GROUP BY bm.lead_id
+        ) sub
+        WHERE l.lead_id = sub.lead_id
+          AND (
+                COALESCE(l.portfolio_size, 0) <> sub.bldg_count
+             OR COALESCE(l.total_units, 0) <> sub.unit_sum
+          )
+    """))
+    await session.commit()
+    _last_snapshot_sync_ts = now
+    logger.info("Lead portfolio snapshot sync complete; rows_updated=%s", int(update_result.rowcount or 0))
 
 
 def _row_to_response(r: dict) -> dict:
@@ -179,6 +223,8 @@ async def get_leads(
 ):
     wheres: list[str] = []
     params: dict = {"limit": limit, "offset": offset}
+    if any(v is not None for v in [min_portfolio, max_portfolio, min_units, max_units, min_units_per_bldg, max_units_per_bldg]):
+        await _sync_lead_portfolio_snapshot_if_due(session)
 
     if min_score is not None:
         wheres.append("score >= :min_score")
@@ -202,24 +248,36 @@ async def get_leads(
             wheres.append(f"primary_borough IN ({placeholders})")
             for i, b in enumerate(boro_list):
                 params[f"boro_{i}"] = b
-    if has_phone:
-        wheres.append("phone IS NOT NULL AND phone != ''")
-    if has_email:
-        wheres.append("email IS NOT NULL AND email != ''")
-    if has_website:
-        wheres.append("website IS NOT NULL AND website != ''")
-    if entity_type:
-        wheres.append("entity_type = :entity_type")
-        params["entity_type"] = entity_type
-    if enrichment_status:
-        wheres.append("enrichment_status = :enrichment_status")
-        params["enrichment_status"] = enrichment_status
-    if outreach_status:
-        wheres.append("outreach_status = :outreach_status")
-        params["outreach_status"] = outreach_status
-    if pipeline_stage:
-        wheres.append("pipeline_stage = :pipeline_stage")
-        params["pipeline_stage"] = pipeline_stage
+    if has_phone is not None:
+        wheres.append("phone IS NOT NULL AND phone != ''" if has_phone else "(phone IS NULL OR phone = '')")
+    if has_email is not None:
+        wheres.append("email IS NOT NULL AND email != ''" if has_email else "(email IS NULL OR email = '')")
+    if has_website is not None:
+        wheres.append("website IS NOT NULL AND website != ''" if has_website else "(website IS NULL OR website = '')")
+    entity_types = _split_csv_values(entity_type)
+    if entity_types:
+        placeholders = ", ".join(f":entity_type_{i}" for i in range(len(entity_types)))
+        wheres.append(f"entity_type IN ({placeholders})")
+        for i, value in enumerate(entity_types):
+            params[f"entity_type_{i}"] = value
+    enrichment_statuses = _split_csv_values(enrichment_status)
+    if enrichment_statuses:
+        placeholders = ", ".join(f":enrichment_status_{i}" for i in range(len(enrichment_statuses)))
+        wheres.append(f"enrichment_status IN ({placeholders})")
+        for i, value in enumerate(enrichment_statuses):
+            params[f"enrichment_status_{i}"] = value
+    outreach_statuses = _split_csv_values(outreach_status)
+    if outreach_statuses:
+        placeholders = ", ".join(f":outreach_status_{i}" for i in range(len(outreach_statuses)))
+        wheres.append(f"outreach_status IN ({placeholders})")
+        for i, value in enumerate(outreach_statuses):
+            params[f"outreach_status_{i}"] = value
+    pipeline_stages = _split_csv_values(pipeline_stage)
+    if pipeline_stages:
+        placeholders = ", ".join(f":pipeline_stage_{i}" for i in range(len(pipeline_stages)))
+        wheres.append(f"pipeline_stage IN ({placeholders})")
+        for i, value in enumerate(pipeline_stages):
+            params[f"pipeline_stage_{i}"] = value
     if min_units is not None:
         wheres.append("total_units >= :min_units")
         params["min_units"] = min_units
