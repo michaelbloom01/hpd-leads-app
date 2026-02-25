@@ -2,6 +2,15 @@
 
 > Paste this entire document into Claude to give it full context about the project. Last updated: Feb 24, 2026.
 
+## Context Refresh (Execution Baseline)
+
+- This project is entering a **holistic architecture convergence program** before additional feature expansion.
+- The target operating model is:
+  - one canonical runtime data path (PostgreSQL),
+  - one durable async execution model (queue + worker),
+  - one API contract layer consumed by frontend/agent.
+- Legacy SQLite/cache paths still exist in code and are treated as transitional.
+
 ## What This Project Is
 
 Double Edge (formerly HPD Leads) is a dual-purpose NYC housing intelligence platform. **PE acquisition sourcing** (find and evaluate PM companies as acquisition targets) and **PM operator lead generation** (find buildings with high churn probability for outreach). Built on HPD public data — identifies management companies, scores them, enriches with contact info, estimates revenue, tracks violations, and provides a full sourcing workflow.
@@ -14,7 +23,7 @@ Double Edge (formerly HPD Leads) is a dual-purpose NYC housing intelligence plat
 
 ```
 Frontend: React + TypeScript + Tailwind CSS + Vite → Vercel
-Backend:  Python FastAPI + SQLite → Railway (Docker, persistent volume)
+Backend:  Python FastAPI + PostgreSQL (primary) + transitional SQLite paths → Railway
 ```
 
 ### Directory Structure

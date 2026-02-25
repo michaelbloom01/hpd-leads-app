@@ -34,6 +34,16 @@ NYC property management intelligence platform with dual purpose: **PE acquisitio
 | Pipeline Stages | Research -> First Contact -> Follow-Up -> Meeting -> LOI -> DD -> Closed |
 | Smart Lists | Saved filter segments with change detection |
 
+## Architecture Execution Readiness (Feb 24, 2026)
+
+Before major feature expansion, the project is executing a holistic architecture convergence program:
+
+- Runtime convergence to one canonical PostgreSQL path
+- Durable async processing via queue + worker for long-running jobs
+- Delivery confidence baseline (migration safety + critical-path tests + CI gates)
+
+This is an architecture simplification effort and does not reduce product JTBD scope.
+
 ## Key Features
 
 ### Dashboard
@@ -172,6 +182,10 @@ VITE_API_URL=https://hpd-leads-app-production.up.railway.app
 - **HPD Violations:** `https://data.cityofnewyork.us/resource/wvxf-dwi5.json`
 - **PLUTO (Building Classes):** `https://data.cityofnewyork.us/resource/64uk-42ks.json`
 - **NY DOS Corporations:** `https://data.ny.gov/resource/n9v6-gdp6.json`
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release history. Session notes are in [docs/SESSION_NOTES.md](docs/SESSION_NOTES.md).
 
 ## License
 

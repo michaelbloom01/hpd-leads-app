@@ -696,7 +696,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                   Mgmt Fee <SortIcon field="estimated_annual_revenue" />
                 </th>
                 <th className="px-4 py-3 cursor-pointer hover:text-gray-700 transition-colors text-right" onClick={() => handleSort('violations_per_unit')}
-                  title="Open HPD violations per residential unit — higher = more maintenance issues, potential distressed asset opportunity" aria-sort={sortField === 'violations_per_unit' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>
+                  title="Open housing violations per residential unit — higher = more maintenance issues, potential distressed asset opportunity" aria-sort={sortField === 'violations_per_unit' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>
                   Violations <SortIcon field="violations_per_unit" />
                 </th>
                 <th className="px-4 py-3">Contact</th>
@@ -726,7 +726,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                     <div className="font-medium text-gray-800 text-sm flex items-center gap-1.5">
                       {lead.company_name || lead.agent_name || lead.owner_name}
                       {lead.data_staleness === 'expired' && (
-                        <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-red-50 text-red-500" title="HPD registration not confirmed in last refresh">EXPIRED</span>
+                        <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-red-50 text-red-500" title="Registration not confirmed in last refresh">EXPIRED</span>
                       )}
                       {lead.data_staleness === 'partially_stale' && (
                         <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-amber-50 text-amber-500" title="Some buildings have stale registrations">STALE</span>
@@ -738,7 +738,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                         lead.entity_type === 'individual_agent' ? 'bg-amber-50 text-amber-700' :
                         lead.entity_type === 'owner_operator' ? 'bg-purple-50 text-purple-700' :
                         'bg-gray-100 text-gray-400'
-                      }`} title={lead.entity_type === 'company' ? 'Registered management company or housing entity' : lead.entity_type === 'individual_agent' ? 'Individual person acting as managing agent for these buildings' : lead.entity_type === 'owner_operator' ? 'Property owner who self-manages without a separate management company' : 'Entity type could not be determined from HPD records'}>
+                      }`} title={lead.entity_type === 'company' ? 'Registered management company or housing entity' : lead.entity_type === 'individual_agent' ? 'Individual person acting as managing agent for these buildings' : lead.entity_type === 'owner_operator' ? 'Property owner who self-manages without a separate management company' : 'Entity type could not be determined from city records'}>
                         {lead.entity_type === 'company' ? 'Company' : 
                          lead.entity_type === 'individual_agent' ? 'Individual' : 
                          lead.entity_type === 'owner_operator' ? 'Owner-Op' : 'Unknown'}
@@ -800,7 +800,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                     ) : (lead.violation_count || 0) > 0 ? (
                       <span className="font-mono text-sm text-gray-500" title={`${lead.violation_count || 0} total violations (per-unit data not yet available)`}>{lead.violation_count}</span>
                     ) : (
-                      <span className="text-gray-300" title="No open HPD violations on record, or data not yet loaded">—</span>
+                      <span className="text-gray-300" title="No open housing violations on record, or data not yet loaded">—</span>
                     )}
                   </td>
                   <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>

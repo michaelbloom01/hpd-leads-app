@@ -155,7 +155,6 @@ const AgentChat: React.FC<AgentChatProps> = ({
     let accumulatedActions: string[] | undefined;
     let accumulatedError: string | undefined;
     let accumulatedFilters: Record<string, unknown> | undefined;
-    let receivedAnyData = false;
 
     const updateAssistant = () => {
       setMessages(prev => {
@@ -181,7 +180,6 @@ const AgentChat: React.FC<AgentChatProps> = ({
     };
 
     const handleEvent = (event: AgentSSEEvent) => {
-      receivedAnyData = true;
       switch (event.type) {
         case 'status':
           setStatus(event.data);
@@ -256,7 +254,7 @@ const AgentChat: React.FC<AgentChatProps> = ({
           setIsStreaming(false);
           setStatus(null);
           setLastFailedMsg(text.trim());
-          accumulatedError = 'No response received after 90 seconds. The server may be starting up â€” try again.';
+          accumulatedError = 'No response received after 90 seconds. The server may be starting up - try again.';
           updateAssistant();
         }
       }, 150_000);
@@ -283,7 +281,7 @@ const AgentChat: React.FC<AgentChatProps> = ({
         if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError') || err.message.includes('Load failed')) {
           errorMsg = 'Could not reach the server. Check your connection and try again.';
         } else if (err.message.includes('timeout') || err.message.includes('Timeout')) {
-          errorMsg = 'Request timed out. The server may be busy â€” try again in a moment.';
+          errorMsg = 'Request timed out. The server may be busy - try again in a moment.';
         }
         accumulatedError = errorMsg;
         updateAssistant();

@@ -7,7 +7,7 @@ interface HeaderProps {
   onSearchChange?: (query: string) => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ searchQuery = '', onSearchChange }) => {
+const Header: React.FC<HeaderProps> = () => {
   const { user } = useAuth();
   const displayName = user?.email?.split('@')[0] || 'User';
   const initials = displayName.slice(0, 2).toUpperCase();
@@ -24,7 +24,7 @@ const Header: React.FC<HeaderProps> = ({ searchQuery = '', onSearchChange }) => 
         <div className="hidden lg:flex items-center gap-4 pr-4 border-r border-gray-200">
            <div className="text-right">
              <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">Status</p>
-             <p className="text-xs font-medium text-emerald-600">Connected</p>
+             <p className="text-xs font-medium text-emerald-600">API connected</p>
            </div>
         </div>
 

@@ -1,5 +1,15 @@
 # Pipeline Architecture
 
+> Note (Feb 24, 2026): This document includes legacy "Publish to Sheets" architecture. Treat it as historical reference. Current execution baseline is API-first with PostgreSQL canonical storage and queued background jobs.
+
+## Current End-to-End Flow (Canonical)
+
+1. Ingest public + enrichment data sources
+2. Normalize and aggregate into lead/building models
+3. Score/classify and persist canonical state in PostgreSQL
+4. Run long tasks via queue workers (not request lifecycle)
+5. Serve frontend and agent via stable API contracts
+
 ## High-Level Flow
 
 ```

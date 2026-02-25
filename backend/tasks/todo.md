@@ -1,4 +1,6 @@
-# HPD Leads App - Task Tracker
+# Double Edge - Task Tracker
+
+(Formerly HPD Leads App)
 
 ## Completed
 
@@ -46,7 +48,7 @@
 - [x] Due diligence snapshot (markdown report, comparables) (5.5)
 - [x] Scoring V2 (8 dimensions: portfolio, units, professional, contact, concentration, revenue, distress, deal fit) (5.6)
 
-### Phase 6: Cleanup
+### Phase 6: Cleanup & Rebrand
 - [x] Moved stale scripts to backend/scripts/
 - [x] Fixed start.py logging (print -> logger)
 - [x] Archived REVIEW.md and COMPREHENSIVE_REVIEW.md
@@ -54,6 +56,8 @@
 - [x] Removed unused frontend API functions
 - [x] Updated README.md with current architecture
 - [x] Updated scoring_weights.yaml for V2
+- [x] Rebrand HPD Leads -> Double Edge
+- [x] Remove remaining HPD branding (Connected -> API connected, HPD Violations -> Housing Violations, etc.)
 
 ## Backlog (Future Sessions)
 

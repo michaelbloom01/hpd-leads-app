@@ -1,5 +1,17 @@
 # Project Overview
 
+> Note (Feb 24, 2026): This document contains historical project framing from early pipeline phases (including Google Sheets-first output). Keep for context, but follow the current architecture plan and root docs for execution.
+
+## Current Execution Objective
+
+Deliver the simplest reliable architecture that preserves all JTBD outcomes:
+
+- PE sourcing (lead identification, scoring, enrichment, pipeline actions)
+- PM operator workflow (building targeting and outreach)
+- Operational reliability (durable jobs, observability, migration safety)
+
+Current system output is the web app/API experience; Google Sheets references below are historical unless explicitly re-enabled.
+
 ## Goal
 
 Generate high-quality acquisition leads for Property Management and HOA/COA management firms in NYC that Michael could potentially purchase.

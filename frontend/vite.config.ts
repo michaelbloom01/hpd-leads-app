@@ -22,5 +22,5 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: 'hidden',  // R10: hidden sourcemaps for debuggable production errors (not exposed to users)
-  }
+  },
 });

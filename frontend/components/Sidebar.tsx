@@ -94,7 +94,7 @@ const Sidebar: React.FC<Props> = ({ isMobileOpen = false, onToggleAgent, onLogou
       <div className="space-y-3">
         <div className="flex items-center gap-2 px-2">
           <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-          <span className="text-xs text-gray-400">Connected</span>
+          <span className="text-xs text-gray-400">API connected</span>
         </div>
         {userEmail && (
           <div className="px-2">

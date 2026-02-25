@@ -3,6 +3,8 @@
 **Author:** Michael Bloom
 **Date:** February 2026
 
+> Context refresh (Feb 24, 2026): The product scope and JTBD remain the same. Current initiative is architecture simplification for reliability and execution speed (not feature reduction).
+
 ---
 
 ## What Is This Project?
