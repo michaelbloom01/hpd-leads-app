@@ -19,4 +19,4 @@ COPY . .
 # Start using Python script that reads PORT env var
 ENTRYPOINT ["python", "start.py"]
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD curl -f http://localhost:${PORT:-8000}/api/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD sh -c 'if [ "${WORKER_MODE}" = "1" ] || [ "${WORKER_MODE}" = "true" ]; then exit 0; else curl -f http://localhost:${PORT:-8000}/api/health || exit 1; fi'

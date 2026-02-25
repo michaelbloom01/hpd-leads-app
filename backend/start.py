@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Startup script that reads PORT from environment and starts gunicorn."""
+"""Startup script that reads mode from env and starts API or worker."""
 import logging
 import os
 import subprocess
@@ -8,17 +8,29 @@ import sys
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-port = os.environ.get("PORT", "8000")
-logger.info(f"Starting server on port {port}")
+worker_mode = os.environ.get("WORKER_MODE", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 
-cmd = [
-    "gunicorn",
-    "api:app",
-    "--workers", "2",
-    "--worker-class", "uvicorn.workers.UvicornWorker",
-    "--bind", f"0.0.0.0:{port}",
-    "--timeout", "300",
-]
+if worker_mode:
+    cmd = [
+        "celery",
+        "-A",
+        "src.worker.app",
+        "worker",
+        "--loglevel=info",
+        "--concurrency=2",
+    ]
+    logger.info("Starting Celery worker mode")
+else:
+    port = os.environ.get("PORT", "8000")
+    logger.info(f"Starting API server on port {port}")
+    cmd = [
+        "gunicorn",
+        "api:app",
+        "--workers", "2",
+        "--worker-class", "uvicorn.workers.UvicornWorker",
+        "--bind", f"0.0.0.0:{port}",
+        "--timeout", "300",
+    ]
 
-logger.info(f"Running: {' '.join(cmd)}")
+logger.info("Running: %s", " ".join(cmd))
 sys.exit(subprocess.call(cmd))
