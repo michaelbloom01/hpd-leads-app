@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { toast } from 'react-hot-toast';
-import { ApiLead, updateLead, addOutreachAttempt, enrichLeadAll, estimateLeadRevenue, OutreachAttempt } from '../services/api';
+import { ApiLead, fetchLead, updateLead, addOutreachAttempt, enrichLeadAll, estimateLeadRevenue, OutreachAttempt } from '../services/api';
 import { PIPELINE_STAGES, OUTREACH_STATUSES, OUTREACH_METHODS, OUTREACH_OUTCOMES, formatCurrency } from '../utils/format';
 
 // Lazy-load map to avoid large initial bundle
@@ -50,6 +50,31 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     setIsEstimatingRevenue(false);
     setRevenueEstimateFailed(false);
   }, [lead]);
+
+  // Always refresh with canonical lead detail on open.
+  // LeadTable rows are intentionally slim and can be stale/missing nested fields.
+  useEffect(() => {
+    let cancelled = false;
+    const loadFullLead = async () => {
+      try {
+        const fullLead = await fetchLead(lead.lead_id);
+        if (cancelled) return;
+        setEnrichedLead(fullLead);
+        setNotes(fullLead.notes || '');
+        setOutreachStatus(fullLead.outreach_status || 'new');
+        setOutreachAttempts(fullLead.outreach_attempts || []);
+        setAiDescription(fullLead.business_summary || null);
+        setPipelineStage(fullLead.pipeline_stage || 'research');
+        setPriorityRank(fullLead.priority_rank || 0);
+        setNextFollowUp(fullLead.next_follow_up || '');
+        onLeadUpdated?.(fullLead);
+      } catch (err) {
+        console.error('Failed to load full lead detail:', err);
+      }
+    };
+    loadFullLead();
+    return () => { cancelled = true; };
+  }, [lead.lead_id, onLeadUpdated]);
 
   // ESC to close
   useEffect(() => {
@@ -134,7 +159,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     return () => window.clearTimeout(timeout);
   }, [isEstimatingRevenue, enrichedLead.lead_id]);
 
-  const fallbackAnnualRevenue = ((enrichedLead.revenue_breakdown || []).reduce((sum: number, item: Record<string, number>) => {
+  const fallbackAnnualRevenue = ((enrichedLead.revenue_breakdown || []).reduce((sum: number, item) => {
     const monthlyGross = Number(item?.monthly_gross || 0);
     const feeRate = Number(item?.fee_rate || 0.05);
     return sum + (monthlyGross * feeRate * 12);
@@ -256,12 +281,6 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     if (!url) url = `https://www.google.com/search?q=${encodeURIComponent((enrichedLead.agent_name || enrichedLead.owner_name) + ' property management NYC')}`;
     window.open(url, '_blank');
   };
-
-  // Deduplicate HPD contacts by name
-  const uniqueContacts = enrichedLead.contacts ? 
-    enrichedLead.contacts.filter((c: { name?: string }, i: number, arr: { name?: string }[]) => 
-      arr.findIndex(x => (x.name || '').toLowerCase() === (c.name || '').toLowerCase()) === i
-    ) : [];
 
   const TABS: { id: TabId; label: string }[] = [
     { id: 'overview', label: 'Overview' },
@@ -460,7 +479,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                   'bg-gray-50 border-gray-200'
                 } border rounded-xl p-4`}>
                   <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider">HPD Violations</h3>
+                    <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Housing Violations</h3>
                     {enrichedLead.violations_per_unit > 1.0 && (
                       <span className="px-2 py-0.5 bg-rose-100 text-rose-700 text-[10px] font-bold rounded uppercase">High Distress</span>
                     )}
@@ -496,7 +515,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                   <div className={`text-2xl font-bold font-mono ${(enrichedLead.score || 0) >= 60 ? 'text-emerald-600' : (enrichedLead.score || 0) >= 40 ? 'text-amber-600' : 'text-gray-500'}`}>{(enrichedLead.score || 0).toFixed(1)}</div>
                   <div className="text-[10px] text-gray-400 mt-0.5 uppercase">Lead Score</div>
                 </div>
-                <div className="bg-gray-50 rounded-xl p-3 text-center" title="Total number of buildings managed by this entity per HPD registration records">
+                <div className="bg-gray-50 rounded-xl p-3 text-center" title="Total number of buildings managed by this entity per city registration records">
                   <div className="text-2xl font-bold font-mono text-blue-600">{enrichedLead.portfolio_size || 0}</div>
                   <div className="text-[10px] text-gray-400 mt-0.5 uppercase">Buildings</div>
                 </div>

@@ -19,9 +19,13 @@ from slowapi.util import get_remote_address
 
 from src.logging_config import configure_logging
 from src.sentry_init import init_sentry
+from src.db.session import get_session_factory
+from src.routers.smart_lists import ensure_smart_lists_table
 
 configure_logging()
 init_sentry()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # SQLAlchemy async session
 from src.db.session import get_session  # noqa: F401
@@ -38,32 +42,33 @@ from src.routers.alerts import router as alerts_router
 from src.routers.export_v1 import router as export_v1_router
 from src.routers.smart_lists import router as smart_lists_router
 
-# Legacy SQLite routers: only load when DATABASE_URL is absent (local dev with SQLite).
-# On Railway (PostgreSQL), these routers call get_database() which hits a nonexistent
-# SQLite file and can hang or error, breaking enrichment and pipeline endpoints.
-_legacy_routers = []
-_has_pg = bool(os.environ.get("DATABASE_URL"))
-if not _has_pg:
+# Optional routers loaded conditionally.
+_optional_routers = []
+
+# Legacy SQLite routers are now opt-in only. This keeps PostgreSQL as the default runtime
+# and prevents accidental split-path execution when DATABASE_URL is misconfigured.
+_enable_legacy_sqlite_routers = os.environ.get("ENABLE_LEGACY_SQLITE_ROUTERS", "").lower() in {"1", "true", "yes"}
+if _enable_legacy_sqlite_routers:
+    logger.warning("ENABLE_LEGACY_SQLITE_ROUTERS is enabled; loading legacy SQLite routers.")
     try:
         from src.routers.enrichment import router as enrichment_router
-        _legacy_routers.append(enrichment_router)
-    except Exception:
+        _optional_routers.append(enrichment_router)
+    except Exception as exc:
+        logger.warning("Failed to load legacy enrichment router: %s", exc)
         enrichment_router = None
     try:
         from src.routers.pipeline import router as pipeline_router
-        _legacy_routers.append(pipeline_router)
-    except Exception:
+        _optional_routers.append(pipeline_router)
+    except Exception as exc:
+        logger.warning("Failed to load legacy pipeline router: %s", exc)
         pipeline_router = None
 
 # Agent router uses PostgreSQL — always load
 try:
     from src.routers.agent import router as agent_router
-    _legacy_routers.append(agent_router)
+    _optional_routers.append(agent_router)
 except ImportError:
     agent_router = None
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Rate limiter
@@ -144,7 +149,7 @@ app.include_router(quality_router)
 app.include_router(alerts_router)
 app.include_router(export_v1_router)
 app.include_router(smart_lists_router)
-for r in _legacy_routers:
+for r in _optional_routers:
     app.include_router(r)
 
 
@@ -153,6 +158,16 @@ for r in _legacy_routers:
 # ---------------------------------------------------------------------------
 @app.get("/")
 async def root():
+    return {"status": "ok", "service": "double-edge-api"}
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "service": "double-edge-api"}
+
+
+@app.get("/api/health")
+async def api_health():
     return {"status": "ok", "service": "double-edge-api"}
 
 
@@ -165,6 +180,15 @@ async def startup():
         logger.critical("REFUSING TO START: JWT_SECRET is not set or is the default placeholder. Set a secure random value.")
         raise RuntimeError("JWT_SECRET must be set in production")
     logger.info(f"Double Edge API starting (env={_env})")
+
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            await ensure_smart_lists_table(session)
+            await session.commit()
+        logger.info("smart_lists table ensured on startup")
+    except Exception as exc:
+        logger.warning("Failed to ensure smart_lists table on startup: %s", exc)
 
 
 if __name__ == "__main__":

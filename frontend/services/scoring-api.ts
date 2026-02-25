@@ -70,4 +70,4 @@ export const createConfig = (name: string, weights: ScoringWeights) => apiPost<{
 export const updateConfig = (id: number, name: string, weights: ScoringWeights) => apiPut(`/api/v1/scoring/configs/${id}`, { name, weights });
 export const deleteConfig = (id: number) => apiDelete(`/api/v1/scoring/configs/${id}`);
 export const activateConfig = (id: number) => apiPost(`/api/v1/scoring/configs/${id}/activate`);
-export const triggerRecalculate = () => apiPost<{ job_id: number; status: string }>('/api/v1/scoring/recalculate');
+export const triggerRecalculate = () => apiPost<{ job_id: number; status: string; dispatch_mode?: string }>('/api/v1/scoring/recalculate');

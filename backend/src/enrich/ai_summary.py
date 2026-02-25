@@ -7,8 +7,14 @@ from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-# R7: configurable model via env var
-ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-haiku-latest")
+# R7: configurable model via env var.
+# Keep a fallback chain because model aliases can be retired by Anthropic.
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest")
+ANTHROPIC_MODEL_FALLBACKS = [
+    "claude-3-5-sonnet-latest",
+    "claude-3-5-haiku-latest",
+    "claude-3-haiku-20240307",
+]
 
 
 def generate_company_description(
@@ -93,11 +99,28 @@ Write exactly 2-3 sentences in plain text (no markdown, no bullet points, no hea
 
     try:
         client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model=ANTHROPIC_MODEL,  # R7: configurable via ANTHROPIC_MODEL env var
-            max_tokens=500,  # Allow longer descriptions
-            messages=[{"role": "user", "content": prompt}]
-        )
+        tried_models = []
+        response = None
+        model_candidates = [ANTHROPIC_MODEL] + [m for m in ANTHROPIC_MODEL_FALLBACKS if m != ANTHROPIC_MODEL]
+        for model_name in model_candidates:
+            tried_models.append(model_name)
+            try:
+                response = client.messages.create(
+                    model=model_name,
+                    max_tokens=500,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                break
+            except Exception as model_exc:
+                msg = str(model_exc).lower()
+                # Retry with fallback model when alias/model is retired.
+                if "not_found_error" in msg or "model" in msg and "not found" in msg:
+                    logger.warning("Anthropic model unavailable: %s", model_name)
+                    continue
+                raise
+
+        if response is None:
+            return None, f"No available Anthropic model from: {', '.join(tried_models)}"
         
         description = response.content[0].text.strip()
         logger.info(f"Generated AI description for {company_name}")

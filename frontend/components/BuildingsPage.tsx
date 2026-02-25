@@ -118,17 +118,31 @@ const BuildingsPage: React.FC = () => {
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           {[
-            { label: 'Total Buildings', value: stats.total.toLocaleString() },
-            { label: 'Hot', value: stats.hot.toLocaleString(), color: 'text-red-600' },
-            { label: 'Warm', value: stats.warm.toLocaleString(), color: 'text-amber-600' },
-            { label: 'Stable', value: stats.stable.toLocaleString(), color: 'text-green-600' },
-            { label: 'Avg Score', value: stats.avg_score?.toFixed(1) ?? '--' },
-            { label: 'Scored', value: stats.scored.toLocaleString() },
+            { label: 'Total Buildings', value: stats.total.toLocaleString(), category: '' },
+            { label: 'Hot', value: stats.hot.toLocaleString(), color: 'text-red-600', category: 'hot' },
+            { label: 'Warm', value: stats.warm.toLocaleString(), color: 'text-amber-600', category: 'warm' },
+            { label: 'Stable', value: stats.stable.toLocaleString(), color: 'text-green-600', category: 'stable' },
+            { label: 'Avg Score', value: stats.avg_score?.toFixed(1) ?? '--', category: null },
+            { label: 'Scored', value: stats.scored.toLocaleString(), category: null },
           ].map(s => (
-            <div key={s.label} className="bg-white rounded-lg border border-gray-200 p-3">
+            <button
+              key={s.label}
+              type="button"
+              onClick={() => {
+                if (s.category === null) return;
+                handleFilterChange('churn_category', s.category);
+              }}
+              className={`bg-white rounded-lg border p-3 text-left transition-colors ${
+                s.category === null
+                  ? 'border-gray-200 cursor-default'
+                  : (filters.churn_category || '') === s.category
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-gray-200 hover:border-gray-300'
+              }`}
+            >
               <div className="text-xs text-gray-500">{s.label}</div>
               <div className={`text-lg font-bold ${s.color || 'text-gray-900'}`}>{s.value}</div>
-            </div>
+            </button>
           ))}
         </div>
       )}

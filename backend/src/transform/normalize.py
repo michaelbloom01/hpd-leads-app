@@ -8,6 +8,17 @@ from typing import Optional, List, Dict
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
+_TOKEN_NORMALIZATION = {
+    "MGMT": "MANAGEMENT",
+    "MGT": "MANAGEMENT",
+    "PROP": "PROPERTY",
+    "PROPS": "PROPERTIES",
+    "ASSOC": "ASSOCIATES",
+    "CO": "COMPANY",
+    "CO.": "COMPANY",
+    "&": "AND",
+}
+
 
 @dataclass
 class Contact:
@@ -210,11 +221,19 @@ def normalize_name(name: Optional[str]) -> str:
     # Uppercase
     name = name.upper()
     
-    # Remove periods (L.L.C. → LLC)
-    name = name.replace(".", "")
-    
-    # Remove commas
-    name = name.replace(",", "")
+    # Replace common punctuation with whitespace boundaries.
+    # Keep alphanumeric tokens so later token normalization remains stable.
+    name = re.sub(r"[.,/\\()\-]+", " ", name)
+    name = re.sub(r"\s*&\s*", " AND ", name)
+
+    # Expand common shorthand tokens before collapsing spaces.
+    parts = []
+    for raw_token in name.split():
+        parts.append(_TOKEN_NORMALIZATION.get(raw_token, raw_token))
+    name = " ".join(parts)
+    name = re.sub(r"\bL\s+L\s+C\b", "LLC", name)
+    name = re.sub(r"\bL\s+L\s+P\b", "LLP", name)
+    name = re.sub(r"\bP\s+L\s+L\s+C\b", "PLLC", name)
     
     # Normalize whitespace
     name = " ".join(name.split())
@@ -239,8 +258,8 @@ def normalize_name_for_grouping(name: str) -> str:
     if not name:
         return ""
     
-    # Already normalized, but ensure uppercase
-    name = name.upper()
+    # Ensure canonical normalization first.
+    name = normalize_name(name)
     
     # Remove common suffixes for grouping — ITERATIVE until stable
     # This fixes the bug where "ABC LLC INC" only stripped "INC" in a single pass
@@ -258,6 +277,13 @@ def normalize_name_for_grouping(name: str) -> str:
             if name.endswith(suffix):
                 name = name[:-len(suffix)].strip()
                 changed = True
+
+    # Collapse repeated adjacent tokens that can emerge after suffix stripping.
+    deduped_tokens = []
+    for token in name.split():
+        if not deduped_tokens or deduped_tokens[-1] != token:
+            deduped_tokens.append(token)
+    name = " ".join(deduped_tokens)
     
     # Strip leading noise words
     for prefix in ["THE ", "A "]:

@@ -48,6 +48,10 @@ jobs:
       - name: Run Alembic migrations
         run: alembic upgrade head
         working-directory: backend
+      - name: Enforce migration safety
+        run: |
+          python -c "from pathlib import Path; import re, sys; p=Path('alembic/versions'); bad=[]; pattern=re.compile(r'metadata\\.(create_all|drop_all)'); [bad.append(str(f)) for f in p.glob('*.py') if pattern.search(f.read_text(encoding='utf-8'))]; print('Unsafe Alembic pattern detected:' if bad else 'Migration safety check passed.'); [print(x) for x in bad]; sys.exit(1 if bad else 0)"
+        working-directory: backend
       - name: Run tests
         run: pytest tests/ -q --tb=short
         working-directory: backend
@@ -66,6 +70,9 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
         run: npm ci
+        working-directory: frontend
+      - name: Run frontend tests
+        run: npm run test:run
         working-directory: frontend
       - name: Type check and build
         run: npm run build

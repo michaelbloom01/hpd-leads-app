@@ -376,3 +376,62 @@ def compute_churn_scores(self, config_id: int | None = None):
     session.close()
     logger.info(f"Scored {scored} buildings with config {cfg_id}")
     return {"scored": scored, "config_id": cfg_id}
+
+
+@celery_app.task(bind=True, name="src.tasks.score.run_scoring_job")
+def run_scoring_job(self, job_id: int, config_id: int | None = None):
+    """Run scoring and persist ingestion_jobs lifecycle for a queued scoring job."""
+    session = _get_pg_session()
+    try:
+        session.execute(
+            text("""
+                UPDATE ingestion_jobs
+                SET status = 'running',
+                    source = 'churn',
+                    started_at = COALESCE(started_at, now()),
+                    processed = 0,
+                    succeeded = 0,
+                    failed = 0,
+                    error = NULL,
+                    updated_at = now()
+                WHERE id = :job_id
+            """),
+            {"job_id": job_id},
+        )
+        session.commit()
+
+        result = compute_churn_scores.run(config_id=config_id)
+        scored = int((result or {}).get("scored", 0))
+        session.execute(
+            text("""
+                UPDATE ingestion_jobs
+                SET status = 'succeeded',
+                    total = :total,
+                    processed = :processed,
+                    succeeded = :succeeded,
+                    failed = 0,
+                    finished_at = now(),
+                    updated_at = now()
+                WHERE id = :job_id
+            """),
+            {"job_id": job_id, "total": scored, "processed": scored, "succeeded": scored},
+        )
+        session.commit()
+        return {"job_id": job_id, "status": "succeeded", "scored": scored}
+    except Exception as exc:  # pragma: no cover - defensive worker boundary
+        session.execute(
+            text("""
+                UPDATE ingestion_jobs
+                SET status = 'failed',
+                    error = :err,
+                    failed = COALESCE(failed, 0) + 1,
+                    finished_at = now(),
+                    updated_at = now()
+                WHERE id = :job_id
+            """),
+            {"job_id": job_id, "err": str(exc)[:500]},
+        )
+        session.commit()
+        raise
+    finally:
+        session.close()

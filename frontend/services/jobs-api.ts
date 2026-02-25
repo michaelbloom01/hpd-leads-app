@@ -34,10 +34,20 @@ export interface Job {
   finished_at: string | null;
 }
 
+export interface JobsSummary {
+  queued_count: number;
+  running_count: number;
+  succeeded_24h: number;
+  failed_24h: number;
+  avg_duration_seconds_24h: number;
+}
+
 export const fetchJobs = (status?: string, limit = 20): Promise<Job[]> =>
   apiGet(`/api/v1/jobs${status ? `?status=${status}&limit=${limit}` : `?limit=${limit}`}`);
 
 export const fetchJob = (id: number): Promise<Job> => apiGet(`/api/v1/jobs/${id}`);
 
-export const startJob = (jobType: string): Promise<{ status: string; job_type: string }> =>
+export const startJob = (jobType: string): Promise<{ status: string; job_type: string; dispatch_mode?: string }> =>
   apiPost(`/api/v1/jobs/${jobType}/start`);
+
+export const fetchJobsSummary = (): Promise<JobsSummary> => apiGet('/api/v1/jobs/summary');

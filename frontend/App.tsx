@@ -116,15 +116,19 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
   const handleRefresh = useCallback(async () => {
     const confirmed = window.confirm(
-      'This will refresh ALL ~200k buildings from HPD. This runs in the background and may take several minutes. Continue?'
+      'This will refresh ALL ~200k buildings from NYC Open Data. This runs in the background and may take several minutes. Continue?'
     );
     if (!confirmed) return;
     
     setIsRefreshing(true);
     try {
-      await refreshPipeline(true);
+      const started = await refreshPipeline(true);
       setRefreshKey(k => k + 1);
-      toast.success('Refresh started in background. Check the dashboard for progress.');
+      if (started.dispatch_mode === 'in_process') {
+        toast('Refresh started in local fallback mode. Check dashboard job status.');
+      } else {
+        toast.success('Refresh started in background. Check the dashboard for progress.');
+      }
     } catch (err) {
       console.error('Failed to refresh:', err);
       toast.error('Failed to start refresh. Make sure the backend is running.');

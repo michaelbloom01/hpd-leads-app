@@ -3,6 +3,7 @@
 Controls the PM Operator's building churn scoring weights.
 Does NOT affect the PE Searcher's lead scoring (V3).
 """
+import asyncio
 import json
 import logging
 from typing import Optional
@@ -167,99 +168,28 @@ async def trigger_recalculate(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
-    import threading
     result = await session.execute(
         text("""
             INSERT INTO ingestion_jobs (job_type, source, status, started_at, created_at, updated_at)
-            VALUES ('scoring', 'churn', 'running', now(), now(), now())
+            VALUES ('scoring', 'churn', 'queued', now(), now(), now())
             RETURNING id
         """)
     )
     job_id = result.scalar_one()
+    await session.commit()
 
-    def _run_scoring():
-        try:
-            from src.tasks.score import compute_churn_scores, _get_pg_session, SIGNAL_VIEWS_SQL, SUMMARY_VIEW_SQL, SIGNAL_NAMES, _compute_raw_signal
-            from sqlalchemy import create_engine, text as sa_text
-            from sqlalchemy.orm import Session as SyncSession
-            from src.db.session import get_sync_url
-            import json
-            from datetime import datetime
+    dispatch_mode = "celery"
+    try:
+        from src.tasks.score import run_scoring_job
+        run_scoring_job.delay(job_id=job_id)
+    except Exception as exc:
+        logger.warning(
+            "Celery dispatch failed for scoring job %s, falling back to in-process execution: %s",
+            job_id,
+            exc,
+        )
+        from src.tasks.score import run_scoring_job
+        asyncio.create_task(asyncio.to_thread(run_scoring_job.run, job_id=job_id))
+        dispatch_mode = "in_process"
 
-            sync_session = SyncSession(create_engine(get_sync_url()))
-            config_row = sync_session.execute(sa_text("SELECT id, weights FROM scoring_configs WHERE is_active = true LIMIT 1")).first()
-            if not config_row:
-                sync_session.execute(sa_text("UPDATE ingestion_jobs SET status='failed', error='No active config', finished_at=now() WHERE id=:id"), {"id": job_id})
-                sync_session.commit()
-                return
-
-            cfg_id, weights = config_row[0], config_row[1] if isinstance(config_row[1], dict) else {}
-            for stmt in SIGNAL_VIEWS_SQL.split(";"):
-                stmt = stmt.strip()
-                if stmt:
-                    sync_session.execute(sa_text(stmt))
-            sync_session.commit()
-            sync_session.execute(sa_text("DROP MATERIALIZED VIEW IF EXISTS building_signal_summary"))
-            sync_session.execute(sa_text(SUMMARY_VIEW_SQL))
-            sync_session.commit()
-
-            rows = sync_session.execute(sa_text("SELECT * FROM building_signal_summary")).fetchall()
-            columns = list(sync_session.execute(sa_text("SELECT * FROM building_signal_summary LIMIT 0")).keys())
-            scored = 0
-            now = datetime.utcnow()
-
-            for row in rows:
-                row_dict = dict(zip(columns, row))
-                bbl = row_dict["bbl"]
-                raw_scores = {}
-                available = 0
-                for name in SIGNAL_NAMES:
-                    val = _compute_raw_signal(name, row_dict)
-                    raw_scores[name] = val
-                    if val is not None:
-                        available += 1
-                null_weight_pool = sum(weights.get(n, 0) for n in SIGNAL_NAMES if raw_scores[n] is None)
-                non_null_total = sum(weights.get(n, 0) for n in SIGNAL_NAMES if raw_scores[n] is not None)
-                weighted_sum = 0.0
-                breakdown = {}
-                for name in SIGNAL_NAMES:
-                    raw = raw_scores[name]
-                    base_weight = weights.get(name, 0)
-                    if raw is None:
-                        breakdown[name] = {"raw": None, "weight": base_weight, "effective_weight": 0, "contribution": 0}
-                        continue
-                    effective_weight = base_weight
-                    if non_null_total > 0 and null_weight_pool > 0:
-                        effective_weight = base_weight + (null_weight_pool * base_weight / non_null_total)
-                    contribution = raw * effective_weight / 100.0
-                    weighted_sum += contribution
-                    breakdown[name] = {"raw": round(raw, 1), "weight": base_weight, "effective_weight": round(effective_weight, 1), "contribution": round(contribution, 1)}
-
-                churn_score = min(100.0, max(0.0, weighted_sum))
-                category = "hot" if churn_score >= 35 else "warm" if churn_score >= 15 else "stable"
-                key_signal = max(((n, d["contribution"]) for n, d in breakdown.items() if d["contribution"] > 0), key=lambda x: x[1], default=("none", 0))[0]
-                sync_session.execute(sa_text("UPDATE buildings SET churn_score=:score, churn_category=:category, churn_breakdown=:breakdown, key_signal=:key, scoring_config_id=:cfg_id, signals_available=:available, coverage_ratio=:coverage, last_scored_at=:now, updated_at=:now WHERE bbl=:bbl"),
-                    {"score": round(churn_score, 1), "category": category, "breakdown": json.dumps(breakdown), "key": key_signal, "cfg_id": cfg_id, "available": available, "coverage": round(available / len(SIGNAL_NAMES), 2), "now": now, "bbl": bbl})
-                scored += 1
-                if scored % 5000 == 0:
-                    sync_session.commit()
-
-            sync_session.commit()
-            sync_session.execute(sa_text("UPDATE ingestion_jobs SET status='completed', succeeded=:scored, finished_at=now() WHERE id=:id"), {"id": job_id, "scored": scored})
-            sync_session.commit()
-            sync_session.close()
-        except Exception as exc:
-            logger.error(f"Scoring failed: {exc}")
-            try:
-                from sqlalchemy import create_engine, text as sa_text
-                from sqlalchemy.orm import Session as SyncSession
-                from src.db.session import get_sync_url
-                s = SyncSession(create_engine(get_sync_url()))
-                s.execute(sa_text("UPDATE ingestion_jobs SET status='failed', error=:err, finished_at=now() WHERE id=:id"), {"id": job_id, "err": str(exc)[:500]})
-                s.commit()
-                s.close()
-            except Exception:
-                pass
-
-    threading.Thread(target=_run_scoring, daemon=True).start()
-    return {"job_id": job_id, "status": "running"}
+    return {"job_id": job_id, "status": "queued", "dispatch_mode": dispatch_mode}

@@ -4,9 +4,9 @@ Revision ID: 001
 Revises:
 Create Date: 2026-02-23
 
-Creates all tables from SQLAlchemy models. This migration uses
-Base.metadata.create_all() for the upgrade and drop_all() for
-the downgrade, ensuring the migration stays in sync with models.
+Creates a frozen snapshot of initial tables from SQLAlchemy models.
+Unlike metadata-wide create_all/drop_all, this revision only operates
+on an explicit table list to avoid future model drift side effects.
 """
 from typing import Sequence, Union
 
@@ -21,11 +21,50 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Import and use the actual model metadata to create all tables.
-    # This ensures the migration is always in sync with the models.
+    # Import model metadata, but apply only a frozen table snapshot so
+    # future model changes do not mutate this historical revision.
     from src.models import Base
     bind = op.get_bind()
-    Base.metadata.create_all(bind=bind)
+    table_order = [
+        "users",
+        "leads",
+        "buildings",
+        "building_management",
+        "building_contacts",
+        "enrichment_results",
+        "outreach_events",
+        "change_alerts",
+        "ingestion_jobs",
+        "scoring_configs",
+        "building_score_history",
+        "hpd_complaints",
+        "acris_transactions",
+        "dob_permits",
+        "hpd_violations",
+        "energy_grades",
+        "hpd_litigation",
+        "emergency_repairs",
+        "aep_designations",
+        "eviction_filings",
+        "facade_inspections",
+        "data_quality_log",
+        "pad_addresses",
+        "lead_user_data",
+        "enrichment_cache",
+        "outreach_attempts",
+        "enrichment_jobs",
+        "dos_cache",
+        "places_cache",
+        "ai_summary_cache",
+        "app_settings",
+        "agent_conversations",
+        "agent_messages",
+        "agent_pending_actions",
+    ]
+    for table_name in table_order:
+        table = Base.metadata.tables.get(table_name)
+        if table is not None:
+            table.create(bind=bind, checkfirst=True)
 
     # Seed scoring config presets
     op.execute(
@@ -54,4 +93,43 @@ def upgrade() -> None:
 def downgrade() -> None:
     from src.models import Base
     bind = op.get_bind()
-    Base.metadata.drop_all(bind=bind)
+    table_order = [
+        "agent_pending_actions",
+        "agent_messages",
+        "agent_conversations",
+        "app_settings",
+        "ai_summary_cache",
+        "places_cache",
+        "dos_cache",
+        "enrichment_jobs",
+        "outreach_attempts",
+        "enrichment_cache",
+        "lead_user_data",
+        "pad_addresses",
+        "data_quality_log",
+        "facade_inspections",
+        "eviction_filings",
+        "aep_designations",
+        "emergency_repairs",
+        "hpd_litigation",
+        "energy_grades",
+        "hpd_violations",
+        "dob_permits",
+        "acris_transactions",
+        "hpd_complaints",
+        "building_score_history",
+        "scoring_configs",
+        "ingestion_jobs",
+        "change_alerts",
+        "outreach_events",
+        "enrichment_results",
+        "building_contacts",
+        "building_management",
+        "buildings",
+        "leads",
+        "users",
+    ]
+    for table_name in table_order:
+        table = Base.metadata.tables.get(table_name)
+        if table is not None:
+            table.drop(bind=bind, checkfirst=True)

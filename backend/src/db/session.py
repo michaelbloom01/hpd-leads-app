@@ -59,6 +59,11 @@ def _get_session_factory():
     )
 
 
+def get_session_factory():
+    """Public async session factory for non-FastAPI contexts (e.g., workers)."""
+    return _get_session_factory()
+
+
 async def get_session() -> AsyncGenerator:
     """FastAPI dependency that yields an async session and auto-commits/rolls back."""
     factory = _get_session_factory()

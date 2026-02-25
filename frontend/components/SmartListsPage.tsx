@@ -31,7 +31,8 @@ const SmartListsPage: React.FC = () => {
       setLists(data.smart_lists);
     } catch (err) {
       console.error('Failed to load smart lists:', err);
-      toast.error('Failed to load smart lists');
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      toast.error(`Failed to load smart lists: ${message}`);
     } finally {
       setLoading(false);
     }
@@ -55,7 +56,8 @@ const SmartListsPage: React.FC = () => {
       setShowCreate(false);
       loadLists();
     } catch (err) {
-      toast.error('Failed to create smart list');
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      toast.error(`Failed to create smart list: ${message}`);
     } finally {
       setCreating(false);
     }

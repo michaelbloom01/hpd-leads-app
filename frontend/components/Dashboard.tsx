@@ -10,9 +10,7 @@ import {
   fetchStats,
   fetchDataStatus,
   ApiLead, 
-  PipelineStatus,
   PipelineStats,
-  DataStatus,
   getEnrichmentProgress,
   startBatchEnrichment,
   getFollowUpsDue,
@@ -34,7 +32,7 @@ import {
   formatCurrency,
   scoreColor,
 } from '../utils/format';
-import { fetchBuildingStats, type BuildingStats } from '../services/buildings-api';
+import { fetchBuildingStats, type BuildingStats, type BuildingOutreachStats } from '../services/buildings-api';
 
 interface LeadFilterPreset {
   outreachStatuses?: string[];
@@ -58,13 +56,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
   const [topLeads, setTopLeads] = useState<ApiLead[]>([]);
   const [readyToContactLeads, setReadyToContactLeads] = useState<ApiLead[]>([]);
   const [showReadyDrawer, setShowReadyDrawer] = useState(false);
-  const [status, setStatus] = useState<PipelineStatus | null>(null);
   const [stats, setStats] = useState<PipelineStats | null>(null);
   const [enrichmentStatus, setEnrichmentStatus] = useState<EnrichmentProgress | null>(null);
   const [followUpsDue, setFollowUpsDue] = useState<{ count: number; leads: Array<Record<string, unknown>> } | null>(null);
   const [loading, setLoading] = useState(true);
   const [startingEnrichment, setStartingEnrichment] = useState(false);
-  const [dataStatus, setDataStatus] = useState<DataStatus | null>(null);
   const [enrichmentGaps, setEnrichmentGaps] = useState<EnrichmentGaps | null>(null);
   const [backendStarting, setBackendStarting] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -118,12 +114,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
       
       if (statsResult.status === 'fulfilled' && isMounted.current) {
         const statsData = statsResult.value;
-        setStatus({
-          total_leads: statsData.total_leads,
-          last_refresh: statsData.last_refresh,
-          enriched_count: statsData.with_phone + statsData.with_email,
-          top_score: statsData.top_score || 0,
-        });
         setStats(statsData);
       } else if (statsResult.status !== 'fulfilled') {
         console.error('Failed to load stats:', statsResult.reason);
@@ -137,8 +127,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
         setFollowUpsDue(followUpsResult.value);
       }
 
-      if (dataStatusResult.status === 'fulfilled' && isMounted.current) {
-        setDataStatus(dataStatusResult.value);
+      if (dataStatusResult.status !== 'fulfilled') {
+        console.error('Failed to load data status:', dataStatusResult.reason);
       }
 
       if (gapsResult.status === 'fulfilled' && isMounted.current) {
@@ -217,11 +207,19 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
   const handleStartEnrichment = async () => {
     setStartingEnrichment(true);
     try {
-      await startBatchEnrichment(500);
+      const started = await startBatchEnrichment(500);
+      if (started.status !== 'started' && started.status !== 'queued') {
+        toast(started.message || 'Batch enrichment is unavailable right now.');
+        return;
+      }
       const enrichData = await getEnrichmentProgress();
       if (isMounted.current) {
         setEnrichmentStatus(enrichData);
-        toast.success('Enrichment started for top 500 leads');
+        if (started.dispatch_mode === 'in_process') {
+          toast(started.message || 'Enrichment queued in local fallback mode.');
+        } else {
+          toast.success(started.message || 'Enrichment started for top 500 leads');
+        }
       }
     } catch {
       if (isMounted.current) toast.error('Failed to start enrichment');
@@ -574,14 +572,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
             </span>
           </div>
           <div className="flex gap-1.5">
-            {[
+            {([
               { key: 'pipeline', label: 'Pipeline', tw: 'bg-blue-500' },
               { key: 'contacted', label: 'Contacted', tw: 'bg-indigo-500' },
               { key: 'meeting', label: 'Meeting', tw: 'bg-purple-500' },
               { key: 'won', label: 'Won', tw: 'bg-emerald-500' },
               { key: 'lost', label: 'Lost', tw: 'bg-gray-400' },
-            ].map((stage) => {
-              const count = (buildingStats.outreach as Record<string, number>)?.[stage.key] || 0;
+            ] as Array<{ key: keyof Pick<BuildingOutreachStats, 'pipeline' | 'contacted' | 'meeting' | 'won' | 'lost'>; label: string; tw: string }>).map((stage) => {
+              const count = buildingStats.outreach?.[stage.key] ?? 0;
               return (
                 <div
                   key={stage.key}
@@ -784,7 +782,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
             {dataHealth ? (
               <>
                 {dataHealth.total_leads.toLocaleString()} leads
-                {dataHealth.coverage_percent != null && ` · ${dataHealth.coverage_percent}% HPD coverage`}
+                {dataHealth.coverage_percent != null && ` · ${dataHealth.coverage_percent}% data coverage`}
                 {dataHealth.total_buildings_registered > 0 && ` · ${dataHealth.total_buildings_registered.toLocaleString()} buildings`}
                 {dataHealth.last_refresh?.finished_at && ` · refreshed ${new Date(dataHealth.last_refresh.finished_at).toLocaleDateString()}`}
               </>

@@ -38,8 +38,8 @@ CREATE TABLE IF NOT EXISTS smart_lists (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_smart_lists_user ON smart_lists(user_id);
 """
+ENSURE_INDEX_SQL = "CREATE INDEX IF NOT EXISTS idx_smart_lists_user ON smart_lists(user_id);"
 
 
 class SmartListCreate(BaseModel):
@@ -49,9 +49,9 @@ class SmartListCreate(BaseModel):
 
     @field_validator("filters")
     @classmethod
-    def filters_not_empty(cls, v: dict) -> dict:
-        if not v:
-            raise ValueError("filters cannot be empty")
+    def filters_object_only(cls, v: dict) -> dict:
+        # Allow empty filter objects so users can create a scaffold list first,
+        # then populate filters from the Leads workflow.
         return v
 
     pinned: bool = False
@@ -132,18 +132,12 @@ def _build_where(filters: dict) -> tuple[str, dict]:
     return where_sql, params
 
 
-@router.on_event("startup")
-async def _ensure_table():
+async def ensure_smart_lists_table(session: AsyncSession):
     """Create the smart_lists table if it doesn't exist."""
-    try:
-        from src.db.session import _get_session_factory
-        factory = _get_session_factory()
-        async with factory() as session:
-            await session.execute(text(ENSURE_TABLE_SQL))
-            await session.commit()
-            logger.info("smart_lists table ensured")
-    except Exception as e:
-        logger.warning(f"Could not ensure smart_lists table: {e}")
+    # Prevent concurrent worker startup races on CREATE TABLE IF NOT EXISTS.
+    await session.execute(text("SELECT pg_advisory_xact_lock(987654321012345678)"))
+    await session.execute(text(ENSURE_TABLE_SQL))
+    await session.execute(text(ENSURE_INDEX_SQL))
 
 
 @router.get("")
@@ -153,6 +147,7 @@ async def list_smart_lists(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
+    await ensure_smart_lists_table(session)
     result = await session.execute(
         text("""
             SELECT id, name, description, filters, pinned,
@@ -178,11 +173,12 @@ async def create_smart_list(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
+    await ensure_smart_lists_table(session)
     list_id = str(uuid.uuid4())[:12]
     await session.execute(
         text("""
             INSERT INTO smart_lists (id, user_id, name, description, filters, pinned)
-            VALUES (:id, :uid, :name, :desc, :filters::jsonb, :pinned)
+            VALUES (:id, :uid, :name, :desc, CAST(:filters AS JSONB), :pinned)
         """),
         {
             "id": list_id,
@@ -193,7 +189,6 @@ async def create_smart_list(
             "pinned": body.pinned,
         },
     )
-    await session.commit()
     return {"id": list_id, "name": body.name, "status": "created"}
 
 
@@ -205,6 +200,7 @@ async def get_smart_list(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
+    await ensure_smart_lists_table(session)
     result = await session.execute(
         text("SELECT * FROM smart_lists WHERE id = :id AND user_id = :uid"),
         {"id": list_id, "uid": user.user_id},
@@ -227,6 +223,7 @@ async def update_smart_list(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
+    await ensure_smart_lists_table(session)
     exists = (await session.execute(
         text("SELECT 1 FROM smart_lists WHERE id = :id AND user_id = :uid"),
         {"id": list_id, "uid": user.user_id},
@@ -243,7 +240,7 @@ async def update_smart_list(
         sets.append("description = :desc")
         params["desc"] = body.description
     if body.filters is not None:
-        sets.append("filters = :filters::jsonb")
+        sets.append("filters = CAST(:filters AS JSONB)")
         params["filters"] = json.dumps(body.filters)
     if body.pinned is not None:
         sets.append("pinned = :pinned")
@@ -253,7 +250,6 @@ async def update_smart_list(
         text(f"UPDATE smart_lists SET {', '.join(sets)} WHERE id = :id AND user_id = :uid"),
         params,
     )
-    await session.commit()
     return {"id": list_id, "status": "updated"}
 
 
@@ -265,13 +261,13 @@ async def delete_smart_list(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
+    await ensure_smart_lists_table(session)
     result = await session.execute(
         text("DELETE FROM smart_lists WHERE id = :id AND user_id = :uid"),
         {"id": list_id, "uid": user.user_id},
     )
     if result.rowcount == 0:
         raise HTTPException(404, "Smart list not found")
-    await session.commit()
     return {"id": list_id, "status": "deleted"}
 
 
@@ -284,6 +280,7 @@ async def evaluate_smart_list(
     user: AuthUser = Depends(get_current_user),
 ):
     """Re-run the saved filters and detect changes since last evaluation."""
+    await ensure_smart_lists_table(session)
     row = (await session.execute(
         text("SELECT * FROM smart_lists WHERE id = :id AND user_id = :uid"),
         {"id": list_id, "uid": user.user_id},
@@ -328,7 +325,7 @@ async def evaluate_smart_list(
         await session.execute(
             text("""
                 INSERT INTO change_alerts (alert_type, description, details, created_at)
-                VALUES ('smart_list_change', :desc, :details::jsonb, NOW())
+                VALUES ('smart_list_change', :desc, CAST(:details AS JSONB), NOW())
             """),
             {
                 "desc": f"Smart List '{data['name']}': {len(entered)} new lead(s) entered",
@@ -341,8 +338,6 @@ async def evaluate_smart_list(
                 }),
             },
         )
-
-    await session.commit()
 
     return {
         "list_id": list_id,
