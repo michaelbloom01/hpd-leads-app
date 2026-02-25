@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.session import get_session
 from src.auth.auth import AuthUser, get_current_user
+from src.score.revenue import estimate_building_revenue
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/buildings", tags=["buildings"])
@@ -110,6 +111,12 @@ async def list_buildings(
         params,
     )
     buildings = [dict(r._mapping) for r in result]
+    for b in buildings:
+        b["estimated_annual_revenue"] = estimate_building_revenue(
+            b.get("unit_count"),
+            b.get("borough"),
+            b.get("building_type"),
+        )
     return {"buildings": buildings, "total": total, "limit": limit, "offset": offset}
 
 

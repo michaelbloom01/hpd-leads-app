@@ -24,6 +24,7 @@ from src.logging_config import configure_logging, set_request_id
 from src.sentry_init import init_sentry
 from src.db.session import get_pool_snapshot, get_session_factory, shutdown_engine
 from src.routers.smart_lists import ensure_smart_lists_table
+from src.routers.building_lists import ensure_building_lists_tables
 
 configure_logging()
 init_sentry()
@@ -44,6 +45,7 @@ from src.routers.quality import router as quality_router
 from src.routers.alerts import router as alerts_router
 from src.routers.export_v1 import router as export_v1_router
 from src.routers.smart_lists import router as smart_lists_router
+from src.routers.building_lists import router as building_lists_router
 
 # Optional routers loaded conditionally.
 _optional_routers = []
@@ -203,6 +205,7 @@ app.include_router(quality_router)
 app.include_router(alerts_router)
 app.include_router(export_v1_router)
 app.include_router(smart_lists_router)
+app.include_router(building_lists_router)
 for r in _optional_routers:
     app.include_router(r)
 
@@ -246,8 +249,9 @@ async def startup():
         factory = get_session_factory()
         async with factory() as session:
             await ensure_smart_lists_table(session)
+            await ensure_building_lists_tables(session)
             await session.commit()
-        logger.info("smart_lists table ensured on startup")
+        logger.info("smart_lists and building_lists tables ensured on startup")
     except Exception as exc:
         logger.warning("Failed to ensure smart_lists table on startup: %s", exc)
 

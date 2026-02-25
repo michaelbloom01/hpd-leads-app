@@ -97,6 +97,29 @@ BUILDING_TYPE_LABELS = {
 }
 
 
+def estimate_building_revenue(
+    unit_count: Optional[int],
+    borough: Optional[str],
+    building_type: Optional[str],
+) -> float:
+    """
+    Estimate annual management fee revenue for a single building.
+    Uses unit_count × avg_rent(borough, building_type) × 5% × 12.
+    """
+    units = int(unit_count or 0)
+    if units <= 0:
+        return 0.0
+    boro = (str(borough or "").upper() or "MANHATTAN").strip()
+    rent_table = AVG_MONTHLY_RENT.get(boro, DEFAULT_RENTS)
+    btype = (str(building_type or "").lower() or "unknown").strip()
+    if btype not in rent_table:
+        btype = "unknown"
+    rent = rent_table.get(btype, rent_table["unknown"])
+    if btype in ("condo", "coop"):
+        rent = rent * CONDO_COOP_ADJUSTMENT
+    return round(units * rent * MGMT_FEE_RATE * 12, 0)
+
+
 def estimate_revenue(lead) -> dict:
     """
     Estimate monthly and annual property management revenue for a lead.

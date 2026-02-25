@@ -42,6 +42,7 @@ export interface BuildingRow {
   outreach_status: string | null;
   last_scored_at: string | null;
   current_lead_id: string | null;
+  estimated_annual_revenue?: number | null;
 }
 
 export interface BuildingsListResponse {
@@ -194,6 +195,36 @@ export function addBuildingToPipeline(bbl: string): Promise<{ bbl: string; statu
 
 export function fetchBuildingOutreachEvents(bbl: string): Promise<{ bbl: string; events: OutreachEvent[] }> {
   return apiGet(`/api/v1/buildings/${bbl}/outreach-events`);
+}
+
+export interface BuildingList {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  member_count?: number;
+}
+
+export async function getBuildingLists(): Promise<{ building_lists: BuildingList[] }> {
+  return apiGet('/api/v1/building-lists');
+}
+
+export async function createBuildingList(name: string): Promise<{ id: string; name: string }> {
+  return apiPost('/api/v1/building-lists', { name });
+}
+
+export async function addBuildingToList(listId: string, bbl: string): Promise<{ list_id: string; bbl: string; status: string }> {
+  return apiPost(`/api/v1/building-lists/${listId}/buildings/${bbl}`);
+}
+
+export async function removeBuildingFromList(listId: string, bbl: string): Promise<{ list_id: string; bbl: string; status: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/building-lists/${listId}/buildings/${bbl}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  if (response.status === 401) { clearToken(); window.dispatchEvent(new Event('auth:logout')); throw new Error('Session expired'); }
+  if (!response.ok) throw new Error(`DELETE building from list failed: ${response.statusText}`);
+  return response.json();
 }
 
 export function logBuildingOutreachEvent(

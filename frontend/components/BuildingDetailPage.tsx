@@ -106,7 +106,7 @@ const BuildingDetailPage: React.FC = () => {
           <h1 className="text-2xl font-bold text-gray-900">{building.address || building.bbl}</h1>
           <div className="flex items-center gap-3 mt-1 text-sm text-gray-500">
             <span>{building.borough}</span>
-            <span>BBL: {building.bbl}</span>
+            <span title="Borough-Block-Lot: NYC's unique property identifier">BBL: {building.bbl}</span>
             {building.unit_count && <span>{building.unit_count} units</span>}
             {building.year_built && <span>Built {building.year_built}</span>}
           </div>

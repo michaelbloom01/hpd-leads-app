@@ -2,8 +2,8 @@
  * BuildingsPage — PM Operator persona workspace.
  * Find buildings with high churn probability for outreach.
  */
-import React, { useState, useMemo, useCallback } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   createColumnHelper,
@@ -13,7 +13,16 @@ import {
   useReactTable,
   SortingState,
 } from '@tanstack/react-table';
-import { fetchBuildings, fetchBuildingStats, type BuildingRow, type BuildingsQueryParams } from '../services/buildings-api';
+import {
+  fetchBuildings,
+  fetchBuildingStats,
+  getBuildingLists,
+  createBuildingList,
+  addBuildingToList,
+  type BuildingRow,
+  type BuildingsQueryParams,
+  type BuildingList,
+} from '../services/buildings-api';
 import { useDebounce } from '../hooks/useDebounce';
 
 const columnHelper = createColumnHelper<BuildingRow>();
@@ -25,7 +34,15 @@ const churnBadge = (category: string | null) => {
   return <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>{category}</span>;
 };
 
-const columns = [
+const baseColumns = [
+  columnHelper.accessor('bbl', {
+    header: 'BBL (Borough-Block-Lot)',
+    cell: info => (
+      <span className="text-gray-600 font-mono text-xs" title="NYC's unique property identifier">
+        {info.getValue() || '--'}
+      </span>
+    ),
+  }),
   columnHelper.accessor('address', {
     header: 'Address',
     cell: info => <span className="font-medium text-gray-900">{info.getValue() || '--'}</span>,
@@ -56,23 +73,171 @@ const columns = [
     },
   }),
   columnHelper.accessor('outreach_status', {
-    header: 'Status',
+    header: () => (
+      <span title="Pipeline status when building is in outreach (pipeline, contacted, meeting, won, lost). Empty when not in pipeline.">
+        Outreach
+      </span>
+    ),
     cell: info => {
       const v = info.getValue();
       if (!v || v === 'none') return <span className="text-gray-400 text-xs">--</span>;
       return <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">{v}</span>;
     },
   }),
+  columnHelper.accessor('estimated_annual_revenue', {
+    header: 'Est. Revenue',
+    cell: info => {
+      const v = info.getValue();
+      if (v == null || v === 0) return <span className="text-gray-400 text-xs">--</span>;
+      return <span className="font-mono text-emerald-600 text-xs">${(v / 1000).toFixed(0)}k</span>;
+    },
+  }),
 ];
 
 const BuildingsPage: React.FC = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [sorting, setSorting] = useState<SortingState>([{ id: 'churn_score', desc: true }]);
   const [searchInput, setSearchInput] = useState('');
   const debouncedSearch = useDebounce(searchInput, 300);
   const [filters, setFilters] = useState<BuildingsQueryParams>({});
   const [page, setPage] = useState(0);
   const pageSize = 50;
+  const [addToListOpen, setAddToListOpen] = useState<string | null>(null);
+  const [addToListBusy, setAddToListBusy] = useState<Record<string, boolean>>({});
+  const [createListName, setCreateListName] = useState('');
+  const [createListForBbl, setCreateListForBbl] = useState<string | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const { data: listsData } = useQuery({
+    queryKey: ['building-lists'],
+    queryFn: getBuildingLists,
+    staleTime: 30000,
+  });
+  const buildingLists = listsData?.building_lists ?? [];
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setAddToListOpen(null);
+        setCreateListForBbl(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleAddToExistingList = useCallback(async (listId: string, bbl: string) => {
+    setAddToListBusy(prev => ({ ...prev, [bbl]: true }));
+    try {
+      await addBuildingToList(listId, bbl);
+      setAddToListOpen(null);
+      queryClient.invalidateQueries({ queryKey: ['building-lists'] });
+    } catch (err) {
+      console.error('Failed to add building to list:', err);
+    } finally {
+      setAddToListBusy(prev => ({ ...prev, [bbl]: false }));
+    }
+  }, [queryClient]);
+
+  const handleCreateListAndAdd = useCallback(async (bbl: string) => {
+    const name = createListName.trim() || 'New list';
+    setAddToListBusy(prev => ({ ...prev, [bbl]: true }));
+    try {
+      const { id } = await createBuildingList(name);
+      await addBuildingToList(id, bbl);
+      setAddToListOpen(null);
+      setCreateListForBbl(null);
+      setCreateListName('');
+      queryClient.invalidateQueries({ queryKey: ['building-lists'] });
+    } catch (err) {
+      console.error('Failed to create list and add building:', err);
+    } finally {
+      setAddToListBusy(prev => ({ ...prev, [bbl]: false }));
+    }
+  }, [createListName, queryClient]);
+
+  const columns = useMemo(() => [
+    ...baseColumns,
+    columnHelper.display({
+      id: 'actions',
+      header: 'Actions',
+      cell: ({ row }) => {
+        const bbl = row.original.bbl;
+        const isOpen = addToListOpen === bbl;
+        const busy = addToListBusy[bbl];
+        const showCreate = createListForBbl === bbl;
+        return (
+          <div ref={isOpen ? dropdownRef : undefined} className="relative">
+            <button
+              type="button"
+              onClick={e => { e.stopPropagation(); setAddToListOpen(isOpen ? null : bbl); setCreateListForBbl(null); }}
+              disabled={busy}
+              className="text-xs px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {busy ? 'Adding...' : 'Add to list'}
+            </button>
+            {isOpen && (
+              <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[160px]">
+                {showCreate ? (
+                  <div className="px-3 py-2 space-y-2" onClick={e => e.stopPropagation()}>
+                    <input
+                      type="text"
+                      value={createListName}
+                      onChange={e => setCreateListName(e.target.value)}
+                      placeholder="List name"
+                      className="w-full px-2 py-1 text-sm border rounded"
+                      autoFocus
+                    />
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleCreateListAndAdd(bbl)}
+                        className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+                      >
+                        Create & Add
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setCreateListForBbl(null); setCreateListName(''); }}
+                        className="text-xs px-2 py-1 border rounded"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {buildingLists.length === 0 ? (
+                      <div className="px-3 py-2 text-xs text-gray-500">No lists yet</div>
+                    ) : (
+                      buildingLists.map((list: BuildingList) => (
+                        <button
+                          key={list.id}
+                          type="button"
+                          onClick={e => { e.stopPropagation(); handleAddToExistingList(list.id, bbl); }}
+                          className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50"
+                        >
+                          {list.name} {list.member_count != null ? `(${list.member_count})` : ''}
+                        </button>
+                      ))
+                    )}
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); setCreateListForBbl(bbl); }}
+                      className="w-full text-left px-3 py-1.5 text-xs border-t border-gray-100 hover:bg-gray-50 text-blue-600"
+                    >
+                      + Create new list
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      },
+    }),
+  ], [addToListOpen, addToListBusy, createListForBbl, createListName, buildingLists, handleAddToExistingList, handleCreateListAndAdd]);
 
   const queryParams = useMemo(() => ({
     ...filters,
@@ -151,7 +316,7 @@ const BuildingsPage: React.FC = () => {
       <div className="flex flex-wrap gap-3 items-center">
         <input
           type="text"
-          placeholder="Search address or BBL..."
+          placeholder="Search address or BBL (Borough-Block-Lot)..."
           value={searchInput}
           onChange={e => setSearchInput(e.target.value)}
           className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent w-64"
@@ -210,7 +375,7 @@ const BuildingsPage: React.FC = () => {
                       <th
                         key={header.id}
                         className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
-                        onClick={header.column.getToggleSortingHandler()}
+                        onClick={header.column.id !== 'actions' ? header.column.getToggleSortingHandler() : undefined}
                       >
                         <div className="flex items-center gap-1">
                           {flexRender(header.column.columnDef.header, header.getContext())}

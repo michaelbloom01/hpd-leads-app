@@ -895,7 +895,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                             {building.address || building.bbl}
                           </button>
                           <div className="text-[10px] text-gray-400">
-                            BBL: {building.bbl} • {building.borough || 'N/A'} • {building.unit_count ?? '--'} units
+                            BBL (Borough-Block-Lot): {building.bbl} • {building.borough || 'N/A'} • {building.unit_count ?? '--'} units
                           </div>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
