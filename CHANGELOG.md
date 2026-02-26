@@ -11,6 +11,8 @@ All notable changes to Double Edge (formerly HPD Leads) are documented here.
 - CI contract coverage for jobs normalization/alias behavior (`backend/tests/test_jobs_contract.py`).
 - Building Lists backend surface (`/api/v1/building-lists`) with create/list/rename/delete and member add/remove/list.
 - Dedicated Building Lists UI page (`/building-lists`) with list CRUD and member management.
+- Dedicated Railway worker service (`hpd-leads-worker`) with Redis-backed Celery runtime.
+- Worker-mode runtime support in `backend/start.py` and worker-safe healthcheck behavior in `backend/Dockerfile`.
 
 ### Changed
 - Updated active markdown documentation to reflect execution baseline (runtime convergence, durable async jobs, confidence gates).
@@ -21,12 +23,17 @@ All notable changes to Double Edge (formerly HPD Leads) are documented here.
 - Initial Alembic migration hardened to explicit frozen table snapshot loops instead of metadata-wide create/drop.
 - Buildings table UX labels clarified: `Status` -> `Outreach`; `BBL` expanded to `BBL (Borough-Block-Lot)`.
 - Buildings table now includes per-building estimated annual revenue.
+- Production operations baseline now includes one-time snapshot recompute endpoints and stale-job reconciliation during go-live.
 
 ### Fixed
 - Documentation drift reduction across key architecture docs.
 - CI migration safety guard now uses a portable Python scanner instead of shell-specific tools.
 - Leads search no longer dedupes by `normalized_name` at query-time, resolving suppressed valid matches under portfolio/unit filters.
 - Added regression guard to prevent reintroducing query-time normalized-name dedupe.
+- Fixed leads API filtering behavior for comma-delimited multi-select filters (`entity_type`, `pipeline_stage`, `enrichment_status`, `outreach_status`).
+- Fixed `has_phone` / `has_email` / `has_website` false filtering semantics.
+- Fixed stale `total_units` / `portfolio_size` snapshot drift impact by adding periodic on-demand snapshot sync for unit/portfolio filter paths.
+- Fixed production worker health from degraded (`broker_configured=false` / no worker) to healthy (`broker_configured=true`, `celery_ping_ok=true`, `stale_running_jobs=0`).
 
 ---
 

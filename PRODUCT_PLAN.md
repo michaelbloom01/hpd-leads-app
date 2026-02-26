@@ -1,6 +1,6 @@
 # Double Edge - Product Plan
 
-## Status: All Core Phases + Smart Lists Complete (Feb 2026)
+## Status: Production Live End-to-End (Feb 2026)
 
 Double Edge (formerly HPD Leads) is a dual-purpose NYC housing intelligence platform:
 - **PE/Acquirer view (Leads tab):** Source and evaluate PM businesses for acquisition
@@ -82,3 +82,5 @@ All three convergence tracks are now implemented in the active codebase:
 - Runtime is PostgreSQL-first by default; legacy SQLite routers are opt-in only.
 - Jobs execute through a canonical queue lifecycle with worker-first dispatch and safe in-process fallback.
 - Delivery confidence includes migration safety guards, backend + frontend automated tests, and CI enforcement.
+- Production now runs with Redis configured and a dedicated worker service for Celery execution/health.
+- Live production data has been reconciled via admin recompute endpoints to restore PM surfacing filter accuracy.

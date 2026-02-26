@@ -173,12 +173,19 @@ npm run dev
 
 ```
 DATABASE_URL=postgresql+asyncpg://...     # PostgreSQL connection
+REDIS_URL=redis://...                      # Redis broker/result backend for Celery
 JWT_SECRET=...                             # JWT signing secret
 ANTHROPIC_API_KEY=sk-ant-...              # AI summaries
 GOOGLE_PLACES_API_KEY=AIza...             # Google Places enrichment
 HUNTER_API_KEY=...                        # Hunter.io email finder
 CORS_ORIGINS=https://your-frontend.vercel.app,http://localhost:5173
 ```
+
+### Worker Service (Railway)
+
+- Service name: `hpd-leads-worker`
+- Uses same backend image with `WORKER_MODE=1`
+- Requires: `REDIS_URL`, `DATABASE_URL`, and shared API keys as needed by task modules
 
 ### Frontend (Vercel)
 

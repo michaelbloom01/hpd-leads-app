@@ -69,6 +69,40 @@ Everything is displayed in a web-based dashboard where you can:
 
 ---
 
+## Full Data Flow (Current Production)
+
+This is the end-to-end runtime/data flow now running in production:
+
+1. **Ingestion trigger**
+   - A user action or scheduled job hits a jobs endpoint (for buildings, violations, scoring, enrichment, etc.).
+2. **Job creation**
+   - Backend writes a canonical `ingestion_jobs` row in PostgreSQL with status `queued`.
+3. **Dispatch path**
+   - Primary: Celery task dispatch through Redis broker.
+   - Fallback: in-process execution if worker dispatch fails.
+4. **Worker execution**
+   - Dedicated Railway worker service consumes tasks from Redis and runs task modules under `src/tasks/*`.
+5. **Raw/source updates**
+   - Source data lands in normalized DB tables (buildings, violations, complaints, contacts, etc.).
+6. **Transform and aggregate**
+   - Building-linked records aggregate into lead-level snapshots (`portfolio_size`, `total_units`, scoring inputs).
+7. **Scoring/enrichment**
+   - Scoring and contact/research enrichment tasks update lead records and derived metrics.
+8. **API read path**
+   - Frontend calls FastAPI endpoints; server-side SQL filtering/sorting returns paginated results.
+9. **Operational visibility**
+   - Queue health and worker health endpoints expose queue depth, failures, stale-running jobs, and worker/broker liveness.
+10. **Recovery controls**
+   - Admin recompute endpoints restore lead snapshots if drift occurs.
+   - Stale-running reconciliation endpoint marks zombie jobs failed to keep queue state trustworthy.
+
+### Key Data Integrity Guardrails
+- Lead unit/building filters are protected by snapshot sync to reduce stale-value false negatives.
+- Canonical status vocabulary (`queued/running/succeeded/failed`) is normalized in jobs APIs.
+- Migration safety and API contract checks are enforced in CI.
+
+---
+
 ## What Data Sources Does It Use?
 
 All primary data comes from **free, public government databases**:
@@ -107,8 +141,9 @@ For enrichment (finding contact info), it also uses:
 
 ## Where Does It Live?
 
-- **The website** is hosted on Vercel (a web hosting service)
-- **The backend server** runs on Railway (a cloud platform)
-- **The code** is stored on GitHub (a code repository)
+- **The website** (Vercel): `https://frontend-nine-psi-58.vercel.app`
+- **The backend API** (Railway): `https://hpd-leads-app-production.up.railway.app`
+- **The code repository** (GitHub): `https://github.com/michaelbloom01/hpd-leads-app`
+- **Background worker runtime**: dedicated Railway worker service + Redis broker (`hpd-leads-worker` + managed Redis)
 
 No special software is needed to use it — just open the website in a browser.

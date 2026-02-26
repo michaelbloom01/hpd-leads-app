@@ -4,6 +4,58 @@ Session notes and decisions from development work on Double Edge.
 
 ---
 
+## 2026-02-25 — Production Go-Live Completion (End-to-End)
+
+### Objective
+Ship the critical PM surfacing fix to production, reconcile live data snapshots, and complete full runtime readiness (API + frontend + queue worker).
+
+### Production Access
+- **Frontend (prod):** `https://frontend-nine-psi-58.vercel.app`
+- **Backend API (prod):** `https://hpd-leads-app-production.up.railway.app`
+- **Repository:** `https://github.com/michaelbloom01/hpd-leads-app`
+
+### What Was Deployed
+1. **Leads filter reliability hotfix**
+   - `backend/src/routers/leads.py`
+   - Fixed comma-delimited multi-select handling (`entity_type`, `pipeline_stage`, `enrichment_status`, `outreach_status`).
+   - Fixed boolean filter semantics for `has_phone/has_email/has_website`.
+   - Added snapshot sync guard for `portfolio_size` / `total_units` when unit/portfolio filters are applied.
+2. **Worker runtime support**
+   - `backend/start.py`, `backend/Dockerfile`
+   - Added startup mode switch (`WORKER_MODE`) so one container image can run API or Celery worker.
+   - Added worker-mode HTTP health endpoint for Railway health checks.
+   - Added worker-aware container healthcheck behavior.
+
+### Production Operations Executed
+- Deployed backend to Railway and frontend to Vercel.
+- Ran one-time production data repair:
+  - `POST /api/admin/recompute-lead-portfolio`
+  - `POST /api/admin/recompute-lead-units`
+- Reconciled stale running jobs:
+  - `POST /api/v1/jobs/reconcile-stale-running?dry_run=true`
+  - `POST /api/v1/jobs/reconcile-stale-running?dry_run=false`
+- Provisioned Redis service and configured backend `REDIS_URL`.
+- Created and deployed dedicated Railway worker service (`hpd-leads-worker`).
+
+### Final Validation (Production)
+- `GET /api/health` -> `ok`
+- Auth login -> `ok`
+- Leads list loads (`~38k` leads in live DB)
+- Critical PM filter now returns results:
+  - `min_units=50,max_units=250,min_portfolio=2,max_portfolio=20`
+  - non-zero results confirmed in production (~6.7k)
+- Lead detail endpoint loads successfully from filtered result.
+- Worker health now green:
+  - `GET /api/v1/jobs/worker-health` -> `status=ok`, `broker_configured=true`, `celery_ping_ok=true`, `stale_running_jobs=0`
+
+### Outcome
+The project is live end-to-end in production with:
+- stable data pulls for PM surfacing filters,
+- repaired lead unit snapshots,
+- and fully operational queue/worker infrastructure.
+
+---
+
 ## 2026-02-24 — HPD Branding Removal & Production Hardening
 
 ### User-Reported Issues Addressed
