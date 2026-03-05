@@ -43,6 +43,7 @@ export interface BuildingRow {
   last_scored_at: string | null;
   current_lead_id: string | null;
   estimated_annual_revenue?: number | null;
+  pm_company?: string | null;
 }
 
 export interface BuildingsListResponse {
@@ -79,6 +80,22 @@ export interface BuildingDetail {
   last_scored_at: string | null;
   outreach_status: string | null;
   current_lead_id: string | null;
+  all_contacts?: BuildingContactEntry[];
+  management_company?: string | null;
+  corporate_owner?: string | null;
+  dos_contacts_is_stale?: boolean;
+  dos_contacts_last_refreshed_at?: string | null;
+}
+
+export interface BuildingContactEntry {
+  name: string;
+  role: string;
+  source: string;
+  source_record_id: string | null;
+  as_of_date: string | null;
+  address: string | null;
+  confidence_hint: 'Likely board member (resident)' | 'PM company employee' | null;
+  is_decision_maker: boolean;
 }
 
 export interface BuildingOutreachStats {

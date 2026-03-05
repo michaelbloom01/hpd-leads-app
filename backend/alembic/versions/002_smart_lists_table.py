@@ -1,7 +1,7 @@
 """Add smart_lists table.
 
 Revision ID: 002_smart_lists_table
-Revises: 001_initial_schema
+Revises: 001
 Create Date: 2026-02-25 06:35:00.000000
 """
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "002_smart_lists_table"
-down_revision: Union[str, None] = "001_initial_schema"
+down_revision: Union[str, None] = "001"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

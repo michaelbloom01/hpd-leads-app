@@ -7,6 +7,7 @@
 import { toast } from 'react-hot-toast';
 import { getAuthHeaders, clearToken } from './auth';
 import { API_BASE_URL } from './config';
+import type { BuildingContactEntry } from './buildings-api';
 
 // Re-export for backward compatibility (other files import from api.ts)
 export { API_BASE_URL };
@@ -494,6 +495,16 @@ export interface LeadLineageResponse {
   sources: SourceLineageRow[];
 }
 
+export interface LeadContactsResponse {
+  lead_id: string;
+  buildings: Array<{
+    bbl: string;
+    address: string;
+    outreach_status: string | null;
+    contacts: BuildingContactEntry[];
+  }>;
+}
+
 export async function fetchDataStatus(): Promise<DataStatus> {
   const response = await fetchWithRetry(`${API_BASE_URL}/api/data-status`);
   if (!response.ok) throw new Error(`Failed to fetch data status: ${response.statusText}`);
@@ -503,6 +514,12 @@ export async function fetchDataStatus(): Promise<DataStatus> {
 export async function fetchLeadLineage(leadId: string): Promise<LeadLineageResponse> {
   const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/lineage`);
   if (!response.ok) throw new Error(`Failed to fetch lead lineage: ${response.statusText}`);
+  return response.json();
+}
+
+export async function fetchLeadContacts(leadId: string): Promise<LeadContactsResponse> {
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/contacts`);
+  if (!response.ok) throw new Error(`Failed to fetch lead contacts: ${response.statusText}`);
   return response.json();
 }
 

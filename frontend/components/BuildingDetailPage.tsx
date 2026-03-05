@@ -8,8 +8,25 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import {
   fetchBuildingDetail, fetchBuildingTimeline, fetchBuildingScoreHistory,
   addBuildingToPipeline, fetchBuildingOutreachEvents, logBuildingOutreachEvent,
+  type BuildingContactEntry,
 } from '../services/buildings-api';
 import { toast } from 'react-hot-toast';
+
+const formatRelativeDate = (value: string | null | undefined): string => {
+  if (!value) return '--';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  const now = new Date();
+  const diffDays = Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays < 1) return 'Today';
+  if (diffDays === 1) return '1 day ago';
+  if (diffDays < 30) return `${diffDays} days ago`;
+  const months = Math.floor(diffDays / 30);
+  if (months === 1) return '1 month ago';
+  if (months < 12) return `${months} months ago`;
+  const years = Math.floor(months / 12);
+  return years === 1 ? '1 year ago' : `${years} years ago`;
+};
 
 const signalLabels: Record<string, string> = {
   ownership_change: 'Ownership Change',
@@ -94,6 +111,15 @@ const BuildingDetailPage: React.FC = () => {
     date: new Date(h.scored_at).toLocaleDateString(),
     score: h.churn_score,
   })) || [];
+  const hasDosContacts = Boolean(
+    building.all_contacts?.some((c: BuildingContactEntry) => c.source === 'NY DOS Filing' || c.source === 'NY DOS Snapshot')
+  );
+  const sortedContacts = [...(building.all_contacts || [])].sort((a, b) => {
+    if (a.is_decision_maker !== b.is_decision_maker) return a.is_decision_maker ? -1 : 1;
+    const aTime = a.as_of_date ? Date.parse(a.as_of_date) : 0;
+    const bTime = b.as_of_date ? Date.parse(b.as_of_date) : 0;
+    return bTime - aTime;
+  });
 
   return (
     <div className="space-y-6">
@@ -125,6 +151,101 @@ const BuildingDetailPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* People & Companies — contacts from all sources */}
+      {building.all_contacts && building.all_contacts.length > 0 && (
+        <div className="bg-white rounded-lg border border-gray-200 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold text-gray-900">People & Companies</h2>
+            <span className="text-xs text-gray-400">{building.all_contacts.length} contacts from {new Set(building.all_contacts.map((c: BuildingContactEntry) => c.source)).size} sources</span>
+          </div>
+          {building.dos_contacts_is_stale && (
+            <div className="mb-3 text-xs rounded border border-amber-200 bg-amber-50 text-amber-700 px-2 py-1">
+              Refreshing contact data...
+              {building.dos_contacts_last_refreshed_at ? ` Last refresh: ${formatRelativeDate(building.dos_contacts_last_refreshed_at)}.` : ''}
+            </div>
+          )}
+          {!building.dos_contacts_is_stale && !hasDosContacts && (
+            <div className="mb-3 text-xs rounded border border-gray-200 bg-gray-50 text-gray-600 px-2 py-1">
+              No NY DOS contacts found for this building.
+            </div>
+          )}
+          {building.management_company && (
+            <div className="mb-3 text-sm"><span className="text-gray-500">Managing Agent:</span> <span className="font-medium text-gray-900">{building.management_company}</span></div>
+          )}
+          {building.corporate_owner && (
+            <div className="mb-3 text-sm"><span className="text-gray-500">Corporate Owner:</span> <span className="font-medium text-gray-900">{building.corporate_owner}</span></div>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Role</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Source</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Updated</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Address</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Confidence</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {sortedContacts.map((contact: BuildingContactEntry, i: number) => (
+                  <tr key={i} className={contact.is_decision_maker ? 'border-l-4 border-l-green-400 bg-green-50/40' : ''}>
+                    <td className="px-3 py-2 font-medium text-gray-900 whitespace-nowrap">
+                      <button
+                        className="hover:underline"
+                        onClick={() => {
+                          if (navigator.clipboard?.writeText) {
+                            navigator.clipboard.writeText(contact.name).catch(() => undefined);
+                            toast.success('Copied name');
+                          }
+                        }}
+                      >
+                        {contact.is_decision_maker ? '★ ' : ''}{contact.name}
+                      </button>
+                    </td>
+                    <td className="px-3 py-2 text-gray-600">{contact.role}</td>
+                    <td className="px-3 py-2">
+                      <span className={`text-xs px-2 py-0.5 rounded ${
+                        contact.source === 'NY DOS Filing' ? 'bg-blue-50 text-blue-700' :
+                        contact.source === 'NY DOS Snapshot' ? 'bg-indigo-50 text-indigo-700' :
+                        'bg-gray-100 text-gray-600'
+                      }`}>{contact.source}</span>
+                    </td>
+                    <td className="px-3 py-2 text-gray-500 text-xs" title={contact.as_of_date || ''}>
+                      {formatRelativeDate(contact.as_of_date)}
+                    </td>
+                    <td className="px-3 py-2 text-gray-500 text-xs max-w-[200px] truncate">
+                      {contact.address ? (
+                        <button
+                          className="hover:underline"
+                          onClick={() => {
+                            if (navigator.clipboard?.writeText) {
+                              navigator.clipboard.writeText(contact.address || '').catch(() => undefined);
+                              toast.success('Copied address');
+                            }
+                          }}
+                        >
+                          {contact.address}
+                        </button>
+                      ) : '--'}
+                    </td>
+                    <td className="px-3 py-2 text-xs">
+                      {contact.confidence_hint ? (
+                        <span className={`px-1.5 py-0.5 rounded ${
+                          contact.confidence_hint === 'Likely board member (resident)' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'
+                        }`}>
+                          {contact.confidence_hint}
+                        </span>
+                      ) : '--'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Score Breakdown */}

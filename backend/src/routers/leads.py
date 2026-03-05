@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.session import get_session
 from src.auth.auth import AuthUser, get_current_user
 from src.schemas.requests import UpdateLeadRequest, OutreachEventRequest, OutreachAttemptRequest
+from src.services.contact_roster import get_lead_contacts
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["leads"])
@@ -518,7 +519,6 @@ async def get_lead(request: Request, lead_id: str, session: AsyncSession = Depen
         units = int(lead_data.get("total_units") or 0)
         avg_rent = borough_avg_rents.get(boro, 2200)
         fee_rate = 0.05
-        building_types = lead_data.get("building_types") or {}
         type_units = lead_data.get("_type_units_for_revenue") or {}
         if not isinstance(type_units, dict):
             type_units = {}
@@ -646,6 +646,28 @@ async def get_lead(request: Request, lead_id: str, session: AsyncSession = Depen
         await session.commit()
 
     return _row_to_response(lead_data)
+
+
+@router.get("/leads/{lead_id}/contacts")
+@limiter.limit("60/minute")
+async def get_lead_contacts_roster(
+    request: Request,
+    lead_id: str,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    exists = (await session.execute(
+        text("SELECT 1 FROM leads WHERE lead_id = :lid"),
+        {"lid": lead_id},
+    )).first()
+    if not exists:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    buildings = await get_lead_contacts(session=session, lead_id=lead_id)
+    return {
+        "lead_id": lead_id,
+        "buildings": buildings,
+    }
 
 
 @router.get("/leads/{lead_id}/lineage")
@@ -793,7 +815,6 @@ async def estimate_lead_revenue(
     data = dict(row._mapping)
 
     total_units = data.get("total_units") or 0
-    portfolio_size = data.get("portfolio_size") or 0
     boro = data.get("primary_borough") or "MANHATTAN"
 
     borough_avg_rents = {

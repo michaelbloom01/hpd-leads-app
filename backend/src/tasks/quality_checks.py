@@ -8,7 +8,7 @@ Runs periodically after ingestion to detect:
 5. Cross-source consistency
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session

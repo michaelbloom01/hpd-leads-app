@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, date
 from typing import List, Optional, Dict
 
-from .normalize import Building, Contact, normalize_name, normalize_name_for_grouping
+from .normalize import Building, normalize_name_for_grouping
 
 
 @dataclass
@@ -158,7 +158,7 @@ def aggregate_to_leads(buildings: List[Building]) -> List[Lead]:
         leads.append(lead)
     
     # Sort by portfolio size descending
-    leads.sort(key=lambda l: l.portfolio_size, reverse=True)
+    leads.sort(key=lambda lead: lead.portfolio_size, reverse=True)
     
     # Deduplicate leads with same business address
     leads = deduplicate_leads(leads)
@@ -275,7 +275,7 @@ def deduplicate_leads(leads: List[Lead]) -> List[Lead]:
     result = [lead for i, lead in enumerate(leads) if i not in merged_indices]
     
     # Re-sort by portfolio size
-    result.sort(key=lambda l: l.portfolio_size, reverse=True)
+    result.sort(key=lambda lead: lead.portfolio_size, reverse=True)
     
     return result
 
@@ -482,15 +482,12 @@ def _classify_entity(agent_name: str, owner_name: str, owner_type: str, contacts
     
     # Find the best company name from contacts
     corporate_owner = None
-    agent_contact = None
     for c in contacts:
         ct = (c.get('type') or '').lower()
         cn = c.get('name') or ''
         if ct == 'corporateowner' and cn:
             if any(ind in cn.upper() for ind in COMPANY_INDICATORS):
                 corporate_owner = c
-        if ct == 'agent' and cn:
-            agent_contact = c
     
     result = {
         'entity_type': 'unknown',
@@ -722,7 +719,7 @@ class StreamingLeadAggregator:
             leads.append(lead)
         
         # Sort by portfolio size descending
-        leads.sort(key=lambda l: l.portfolio_size, reverse=True)
+        leads.sort(key=lambda lead: lead.portfolio_size, reverse=True)
         
         return leads
     

@@ -11,7 +11,7 @@ import logging
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional, Dict, Callable
 
@@ -220,7 +220,7 @@ class BatchEnricher:
         
         logger.info(f"Running DOS lookup for {len(candidates)} corporation leads")
         
-        lead_index = {l.lead_id: l for l in leads}
+        lead_index = {lead.lead_id: lead for lead in leads}
         batch_size = self.config.dos_batch_size
         total_batches = (len(candidates) + batch_size - 1) // batch_size
         
@@ -364,7 +364,7 @@ class BatchEnricher:
             candidates.append(lead)
         
         # Sort by priority (score * portfolio_size)
-        candidates.sort(key=lambda l: l.score * (1 + l.portfolio_size / 100), reverse=True)
+        candidates.sort(key=lambda lead: lead.score * (1 + lead.portfolio_size / 100), reverse=True)
         
         # Apply limit
         if self.config.max_web_crawl:
@@ -376,7 +376,7 @@ class BatchEnricher:
         
         logger.info(f"Running web crawl for {len(candidates)} high-priority leads")
         
-        lead_index = {l.lead_id: l for l in leads}
+        lead_index = {lead.lead_id: lead for lead in leads}
         batch_size = self.config.web_batch_size
         total_batches = (len(candidates) + batch_size - 1) // batch_size
         

@@ -1,11 +1,10 @@
 """Pipeline routes — refresh, violations, rescore, revenue, data status."""
 import gc
 import logging
-import threading
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Query, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Query, BackgroundTasks
 
 from src.ingest.hpd_client import HPDClient
 from src.transform.normalize import normalize_building
@@ -178,8 +177,8 @@ async def get_status():
     """Get pipeline status."""
     cache = get_cache()
     with cache.leads_lock:
-        enriched = len([l for l in cache.leads if l.enrichment_status in ("complete", "partial")])
-        top = max((l.score for l in cache.leads), default=0)
+        enriched = len([lead for lead in cache.leads if lead.enrichment_status in ("complete", "partial")])
+        top = max((lead.score for lead in cache.leads), default=0)
         total = len(cache.leads)
     return PipelineStatus(
         total_leads=total, last_refresh=cache.last_refresh.isoformat() if cache.last_refresh else None,
@@ -210,7 +209,7 @@ async def refresh_violations():
     summary = ViolationsService.compute_and_persist(cache_leads=leads_snapshot)
     # Write changes back
     with cache.leads_lock:
-        lead_map = {l.lead_id: l for l in leads_snapshot}
+        lead_map = {lead.lead_id: lead for lead in leads_snapshot}
         for i, lead in enumerate(cache.leads):
             if lead.lead_id in lead_map:
                 cache.leads[i] = lead_map[lead.lead_id]

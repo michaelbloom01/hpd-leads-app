@@ -240,7 +240,7 @@ class Enricher:
             candidates.append(lead)
         
         # Sort by score descending (prioritize high-value leads)
-        candidates.sort(key=lambda l: l.score, reverse=True)
+        candidates.sort(key=lambda lead: lead.score, reverse=True)
         
         # Limit batch size
         batch = candidates[:limit]
@@ -301,7 +301,7 @@ if __name__ == "__main__":
     enricher = Enricher(use_cache=True)
     enriched = enricher.enrich_lead(test_lead)
     
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Website: {enriched.website}")
     print(f"  Phone: {enriched.phone}")
     print(f"  Email: {enriched.email}")

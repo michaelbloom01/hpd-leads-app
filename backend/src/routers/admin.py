@@ -5,12 +5,12 @@ Migrated to PostgreSQL (AsyncSession).
 import re
 import time
 import logging
-from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, HTTPException, Request
+from fastapi import APIRouter, Depends, Query, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.session import get_session
@@ -278,6 +278,69 @@ async def health_detailed(
             "with_website": contacts["with_website"],
         },
         "pipeline": {"follow_ups_due": follow_up_count, "recent_alerts": alert_count},
+    }
+
+
+@router.get("/admin/contacts-reconciliation")
+@limiter.limit("20/minute")
+async def contacts_reconciliation(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Report contact-linkage and cache freshness issues for monitoring."""
+    buildings_multi_pm = (await session.execute(text("""
+        SELECT COUNT(*) FROM (
+            SELECT bbl
+            FROM building_management
+            WHERE is_current = true
+            GROUP BY bbl
+            HAVING COUNT(*) > 1
+        ) t
+    """))).scalar() or 0
+
+    leads_zero_links = (await session.execute(text("""
+        SELECT COUNT(*)
+        FROM leads l
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM building_management bm
+            WHERE bm.lead_id = l.lead_id
+              AND bm.is_current = true
+        )
+    """))).scalar() or 0
+
+    stale_dos_cache = 0
+    try:
+        stale_dos_cache = (await session.execute(text("""
+            SELECT COUNT(*)
+            FROM dos_cache
+            WHERE cache_key LIKE 'officers:%'
+              AND (expires_at IS NULL OR expires_at <= NOW())
+        """))).scalar() or 0
+    except ProgrammingError:
+        await session.rollback()
+        stale_dos_cache = (await session.execute(text("""
+            SELECT COUNT(*)
+            FROM dos_cache
+            WHERE cache_key LIKE 'officers:%'
+              AND cached_at <= (NOW() - INTERVAL '30 days')
+        """))).scalar() or 0
+
+    buildings_without_contacts = (await session.execute(text("""
+        SELECT COUNT(*)
+        FROM buildings b
+        WHERE NOT EXISTS (
+            SELECT 1 FROM building_contacts bc WHERE bc.bbl = b.bbl
+        )
+    """))).scalar() or 0
+
+    return {
+        "status": "ok",
+        "buildings_with_multiple_current_pm_links": int(buildings_multi_pm),
+        "leads_with_zero_active_links": int(leads_zero_links),
+        "stale_dos_cache_entries": int(stale_dos_cache),
+        "buildings_without_hpd_contacts": int(buildings_without_contacts),
     }
 
 

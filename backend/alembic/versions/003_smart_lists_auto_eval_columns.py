@@ -1,6 +1,6 @@
 """Add smart_lists auto-evaluation scheduling columns.
 
-Revision ID: 003_smart_lists_auto_eval_columns
+Revision ID: 003_smart_lists_auto_eval
 Revises: 002_smart_lists_table
 Create Date: 2026-02-25 15:05:00.000000
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = "003_smart_lists_auto_eval_columns"
+revision: str = "003_smart_lists_auto_eval"
 down_revision: Union[str, None] = "002_smart_lists_table"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

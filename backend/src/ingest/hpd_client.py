@@ -292,7 +292,7 @@ class HPDClient:
         
         # First, get total count estimate
         logger.info("Estimating total building count...")
-        first_page = self._fetch_page(BUILDINGS_ENDPOINT, offset=0, limit=1)
+        self._fetch_page(BUILDINGS_ENDPOINT, offset=0, limit=1)
         # We'll discover total as we go
         
         while True:

@@ -14,8 +14,6 @@ from contextlib import contextmanager
 from functools import lru_cache
 from typing import Optional
 
-from src.agent.types import AgentLeadRow
-
 logger = logging.getLogger(__name__)
 
 
@@ -64,21 +62,29 @@ def _pg_leads_filtered(
     params: dict = {"limit": limit, "offset": offset}
 
     if min_score is not None:
-        wheres.append("score >= :min_score"); params["min_score"] = min_score
+        wheres.append("score >= :min_score")
+        params["min_score"] = min_score
     if max_score is not None:
-        wheres.append("score <= :max_score"); params["max_score"] = max_score
+        wheres.append("score <= :max_score")
+        params["max_score"] = max_score
     if min_units is not None:
-        wheres.append("total_units >= :min_units"); params["min_units"] = min_units
+        wheres.append("total_units >= :min_units")
+        params["min_units"] = min_units
     if max_units is not None:
-        wheres.append("total_units <= :max_units"); params["max_units"] = max_units
+        wheres.append("total_units <= :max_units")
+        params["max_units"] = max_units
     if boro:
-        wheres.append("UPPER(primary_borough) = UPPER(:boro)"); params["boro"] = boro
+        wheres.append("UPPER(primary_borough) = UPPER(:boro)")
+        params["boro"] = boro
     if entity_type:
-        wheres.append("entity_type = :entity_type"); params["entity_type"] = entity_type
+        wheres.append("entity_type = :entity_type")
+        params["entity_type"] = entity_type
     if enrichment_status:
-        wheres.append("enrichment_status = :enr_status"); params["enr_status"] = enrichment_status
+        wheres.append("enrichment_status = :enr_status")
+        params["enr_status"] = enrichment_status
     if pipeline_stage:
-        wheres.append("pipeline_stage = :pipeline_stage"); params["pipeline_stage"] = pipeline_stage
+        wheres.append("pipeline_stage = :pipeline_stage")
+        params["pipeline_stage"] = pipeline_stage
     if has_phone is True:
         wheres.append("phone IS NOT NULL AND phone != ''")
     elif has_phone is False:
@@ -92,17 +98,23 @@ def _pg_leads_filtered(
     elif has_website is False:
         wheres.append("(website IS NULL OR website = '')")
     if min_violations_per_unit is not None:
-        wheres.append("violations_per_unit >= :min_vpu"); params["min_vpu"] = min_violations_per_unit
+        wheres.append("violations_per_unit >= :min_vpu")
+        params["min_vpu"] = min_violations_per_unit
     if max_violations_per_unit is not None:
-        wheres.append("violations_per_unit <= :max_vpu"); params["max_vpu"] = max_violations_per_unit
+        wheres.append("violations_per_unit <= :max_vpu")
+        params["max_vpu"] = max_violations_per_unit
     if min_revenue is not None:
-        wheres.append("estimated_annual_revenue >= :min_rev"); params["min_rev"] = min_revenue
+        wheres.append("estimated_annual_revenue >= :min_rev")
+        params["min_rev"] = min_revenue
     if max_revenue is not None:
-        wheres.append("estimated_annual_revenue <= :max_rev"); params["max_rev"] = max_revenue
+        wheres.append("estimated_annual_revenue <= :max_rev")
+        params["max_rev"] = max_revenue
     if building_type_has:
-        wheres.append("building_types::text ILIKE :bth"); params["bth"] = f"%{building_type_has}%"
+        wheres.append("building_types::text ILIKE :bth")
+        params["bth"] = f"%{building_type_has}%"
     if search:
-        wheres.append("(company_name ILIKE :search OR lead_id ILIKE :search)"); params["search"] = f"%{search}%"
+        wheres.append("(company_name ILIKE :search OR lead_id ILIKE :search OR address ILIKE :search)")
+        params["search"] = f"%{search}%"
 
     where_sql = " AND ".join(wheres) if wheres else "1=1"
     allowed_sorts = {"score", "portfolio_size", "total_units", "estimated_annual_revenue", "violations_per_unit"}
@@ -305,11 +317,14 @@ def update_leads_batch(
     set_clauses = ["updated_at = NOW()"]
     params_base: dict = {}
     if pipeline_stage:
-        set_clauses.append("pipeline_stage = :pipeline_stage"); params_base["pipeline_stage"] = pipeline_stage
+        set_clauses.append("pipeline_stage = :pipeline_stage")
+        params_base["pipeline_stage"] = pipeline_stage
     if priority_rank is not None:
-        set_clauses.append("priority_rank = :priority_rank"); params_base["priority_rank"] = priority_rank
+        set_clauses.append("priority_rank = :priority_rank")
+        params_base["priority_rank"] = priority_rank
     if next_follow_up:
-        set_clauses.append("next_follow_up = :next_follow_up"); params_base["next_follow_up"] = next_follow_up
+        set_clauses.append("next_follow_up = :next_follow_up")
+        params_base["next_follow_up"] = next_follow_up
 
     with _pg_conn() as conn:
         for lid in lead_ids:
@@ -810,6 +825,52 @@ def get_stats() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Tool 9: search_by_address
+# ---------------------------------------------------------------------------
+
+def search_by_address(address: str, limit: int = 10) -> dict:
+    """Search buildings by address and return full contacts roster per match."""
+    limit = min(max(limit, 1), 50)
+
+    from sqlalchemy import text
+    from src.services.contact_roster import get_building_contacts_sync
+    buildings = []
+    with _pg_conn() as conn:
+        rows = conn.execute(text("""
+            SELECT DISTINCT ON (b.bbl)
+                b.bbl, b.address, b.borough, b.unit_count,
+                l.lead_id, l.company_name
+            FROM buildings b
+            LEFT JOIN building_management bm ON bm.bbl = b.bbl AND bm.is_current = true
+            LEFT JOIN leads l ON l.lead_id = bm.lead_id
+            WHERE b.address ILIKE :search
+            ORDER BY b.bbl, b.address
+            LIMIT :limit
+        """), {"search": f"%{address}%", "limit": limit}).fetchall()
+
+        for r in rows:
+            row_dict = dict(r._mapping)
+            contacts, meta = get_building_contacts_sync(
+                conn=conn,
+                bbl=row_dict.get("bbl"),
+                building_address=row_dict.get("address"),
+            )
+            buildings.append({
+                "bbl": row_dict.get("bbl"),
+                "address": row_dict.get("address"),
+                "borough": row_dict.get("borough"),
+                "unit_count": row_dict.get("unit_count"),
+                "lead_id": row_dict.get("lead_id"),
+                "lead_company_name": row_dict.get("company_name"),
+                "management_company": meta.get("management_company"),
+                "corporate_owner": meta.get("corporate_owner"),
+                "contacts": contacts,
+            })
+
+    return {"buildings": buildings, "count": len(buildings)}
+
+
+# ---------------------------------------------------------------------------
 # Tool dispatcher
 # ---------------------------------------------------------------------------
 
@@ -822,6 +883,7 @@ TOOL_FUNCTIONS = {
     "compile_email_briefing": compile_email_briefing,
     "refine_rent_estimates": refine_rent_estimates,
     "get_stats": get_stats,
+    "search_by_address": search_by_address,
 }
 
 

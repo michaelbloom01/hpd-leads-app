@@ -1,7 +1,7 @@
 """Add building_lists and building_list_members tables.
 
 Revision ID: 004_building_lists
-Revises: 003_smart_lists_auto_eval_columns
+Revises: 003_smart_lists_auto_eval
 Create Date: 2026-02-25
 
 Saved collections of buildings for the PM Operator persona.
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 
 revision: str = "004_building_lists"
-down_revision: Union[str, None] = "003_smart_lists_auto_eval_columns"
+down_revision: Union[str, None] = "003_smart_lists_auto_eval"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

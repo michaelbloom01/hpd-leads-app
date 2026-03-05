@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.session import get_session
 from src.auth.auth import AuthUser, get_current_user
 from src.score.revenue import estimate_building_revenue
+from src.services.contact_roster import get_building_contacts
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/buildings", tags=["buildings"])
@@ -94,7 +95,8 @@ async def list_buildings(
         text(f"""
             SELECT b.bbl, b.address, b.borough, b.unit_count, b.building_type,
                    b.churn_score, b.churn_category, b.key_signal,
-                   b.coverage_ratio, b.outreach_status, b.last_scored_at, m.lead_id AS current_lead_id
+                   b.coverage_ratio, b.outreach_status, b.last_scored_at,
+                   m.lead_id AS current_lead_id, pm.pm_company
             FROM buildings b
             LEFT JOIN LATERAL (
                 SELECT bm.lead_id
@@ -104,6 +106,12 @@ async def list_buildings(
                 ORDER BY bm.updated_at DESC NULLS LAST, bm.id DESC
                 LIMIT 1
             ) m ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT bc.corporation_name AS pm_company
+                FROM building_contacts bc
+                WHERE bc.bbl = b.bbl AND bc.contact_type = 'Agent'
+                LIMIT 1
+            ) pm ON TRUE
             WHERE {where_sql}
             ORDER BY b.{sort_col} {direction} NULLS LAST
             LIMIT :limit OFFSET :offset
@@ -210,7 +218,30 @@ async def get_building(
     row = result.first()
     if not row:
         raise HTTPException(404, "Building not found")
-    return dict(row._mapping)
+    building = dict(row._mapping)
+
+    contacts, contact_meta = await get_building_contacts(
+        session=session,
+        bbl=bbl,
+        building_address=building.get("address"),
+    )
+
+    # Queue async DOS refresh when cache is stale/missing.
+    corporate_owner_name = contact_meta.get("corporate_owner")
+    if contact_meta.get("dos_contacts_is_stale") and corporate_owner_name:
+        try:
+            from src.tasks.enrich import refresh_dos_contacts
+            refresh_dos_contacts.delay(bbl, corporate_owner_name)
+        except Exception as exc:
+            logger.warning("Failed to queue DOS refresh for %s: %s", bbl, exc)
+
+    building["all_contacts"] = contacts
+    building["management_company"] = contact_meta.get("management_company")
+    building["corporate_owner"] = corporate_owner_name
+    building["dos_contacts_is_stale"] = bool(contact_meta.get("dos_contacts_is_stale"))
+    building["dos_contacts_last_refreshed_at"] = contact_meta.get("dos_contacts_last_refreshed_at")
+
+    return building
 
 
 @router.get("/{bbl}/timeline")

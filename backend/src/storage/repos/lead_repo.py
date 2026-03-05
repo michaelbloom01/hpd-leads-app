@@ -1,11 +1,7 @@
 """Lead repository mixin — CRUD, filtering, scoring, persistence."""
-import json
 import logging
-from datetime import datetime, date
-from typing import Optional, Dict, List, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from src.transform.aggregate import Lead
+from datetime import datetime
+from typing import Optional, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -91,10 +87,13 @@ class LeadRepo:
             if existing:
                 updates, params = [], []
                 if outreach_status is not None:
-                    updates.append("outreach_status = ?"); params.append(outreach_status)
+                    updates.append("outreach_status = ?")
+                    params.append(outreach_status)
                 if notes is not None:
-                    updates.append("notes = ?"); params.append(notes)
-                updates.append("updated_at = ?"); params.append(datetime.now())
+                    updates.append("notes = ?")
+                    params.append(notes)
+                updates.append("updated_at = ?")
+                params.append(datetime.now())
                 params.append(lead_id)
                 conn.execute(f"UPDATE lead_user_data SET {', '.join(updates)} WHERE lead_id = ?", params)
             else:

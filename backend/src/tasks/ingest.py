@@ -12,7 +12,6 @@ Each task follows the standard pattern from the plan:
 import logging
 import os
 import threading
-from datetime import datetime
 from typing import Optional
 
 import requests
@@ -475,10 +474,10 @@ def ingest_acris_transactions(self, job_id: Optional[int] = None):
             "$order": ":id",
         })
         doc_to_bbl = {}
-        for l in legals:
-            bbl = _compute_bbl(l.get("borough"), l.get("block"), l.get("lot"))
+        for legal_row in legals:
+            bbl = _compute_bbl(legal_row.get("borough"), legal_row.get("block"), legal_row.get("lot"))
             if bbl:
-                doc_to_bbl[l.get("document_id")] = bbl
+                doc_to_bbl[legal_row.get("document_id")] = bbl
 
         masters = _socrata_fetch(DATASETS["acris_master"], {
             "$select": "document_id,doc_type,doc_type_description,recorded_datetime,doc_amount",

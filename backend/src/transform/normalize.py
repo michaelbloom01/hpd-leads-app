@@ -4,7 +4,7 @@ Data normalization functions.
 See docs/02-data-model.md for normalization rules.
 """
 import re
-from typing import Optional, List, Dict
+from typing import Optional, List
 from dataclasses import dataclass, field
 from datetime import date, datetime
 

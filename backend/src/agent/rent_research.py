@@ -13,7 +13,6 @@ Source priority:
 
 import json
 import logging
-import os
 from typing import Optional
 
 import requests
@@ -103,8 +102,6 @@ def research_rents_for_leads(lead_ids: list[str]) -> dict:
         company_name = row.get("company_name") or "Unknown"
         boro = (row.get("primary_borough") or "").upper()
         total_units = row.get("total_units") or 0
-        current_annual = row.get("estimated_annual_revenue") or 0.0
-
         if total_units == 0:
             continue
 

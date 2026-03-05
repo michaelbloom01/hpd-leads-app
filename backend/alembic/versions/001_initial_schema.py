@@ -12,7 +12,6 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 
 revision: str = "001"
 down_revision: Union[str, None] = None
@@ -28,6 +27,7 @@ def upgrade() -> None:
     table_order = [
         "users",
         "leads",
+        "scoring_configs",
         "buildings",
         "building_management",
         "building_contacts",
@@ -35,7 +35,6 @@ def upgrade() -> None:
         "outreach_events",
         "change_alerts",
         "ingestion_jobs",
-        "scoring_configs",
         "building_score_history",
         "hpd_complaints",
         "acris_transactions",
@@ -118,7 +117,6 @@ def downgrade() -> None:
         "acris_transactions",
         "hpd_complaints",
         "building_score_history",
-        "scoring_configs",
         "ingestion_jobs",
         "change_alerts",
         "outreach_events",
@@ -126,6 +124,7 @@ def downgrade() -> None:
         "building_contacts",
         "building_management",
         "buildings",
+        "scoring_configs",
         "leads",
         "users",
     ]

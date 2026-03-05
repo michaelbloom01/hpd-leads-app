@@ -1,14 +1,31 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { toast } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { ApiLead, fetchLead, updateLead, addOutreachAttempt, enrichLeadAll, estimateLeadRevenue, OutreachAttempt } from '../services/api';
-import { addBuildingToPipeline, fetchBuildings, type BuildingRow } from '../services/buildings-api';
+import { ApiLead, fetchLead, updateLead, addOutreachAttempt, enrichLeadAll, estimateLeadRevenue, OutreachAttempt, fetchLeadContacts } from '../services/api';
+import { addBuildingToPipeline, fetchBuildings, type BuildingRow, type BuildingContactEntry } from '../services/buildings-api';
 import { PIPELINE_STAGES, OUTREACH_STATUSES, OUTREACH_METHODS, OUTREACH_OUTCOMES, formatCurrency } from '../utils/format';
 
 // Lazy-load map to avoid large initial bundle
 const PortfolioMap = lazy(() => import('./PortfolioMap'));
 
 type TabId = 'overview' | 'contacts' | 'pipeline' | 'buildings' | 'dd';
+
+const formatRelativeDate = (value: string | null | undefined): string => {
+  if (!value) return '--';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  if (days < 1) return 'Today';
+  if (days === 1) return '1 day ago';
+  if (days < 30) return `${days} days ago`;
+  const months = Math.floor(days / 30);
+  if (months === 1) return '1 month ago';
+  if (months < 12) return `${months} months ago`;
+  const years = Math.floor(months / 12);
+  return years === 1 ? '1 year ago' : `${years} years ago`;
+};
 
 interface Props {
   lead: ApiLead;
@@ -39,6 +56,8 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   const [linkedBuildings, setLinkedBuildings] = useState<BuildingRow[]>([]);
   const [loadingLinkedBuildings, setLoadingLinkedBuildings] = useState(false);
   const [pipelineAddBusy, setPipelineAddBusy] = useState<Record<string, boolean>>({});
+  const [buildingContacts, setBuildingContacts] = useState<{ bbl: string; address: string; outreach_status?: string | null; contacts: BuildingContactEntry[] }[]>([]);
+  const [loadingBuildingContacts, setLoadingBuildingContacts] = useState(false);
 
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -85,7 +104,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   useEffect(() => {
     let cancelled = false;
     const loadLinkedBuildings = async () => {
-      if (activeTab !== 'buildings') return;
+      if (activeTab !== 'buildings' && activeTab !== 'overview') return;
       setLoadingLinkedBuildings(true);
       try {
         const res = await fetchBuildings({
@@ -104,6 +123,26 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
       }
     };
     loadLinkedBuildings();
+    return () => { cancelled = true; };
+  }, [activeTab, enrichedLead.lead_id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadBuildingContacts = async () => {
+      if (activeTab !== 'contacts') return;
+      setLoadingBuildingContacts(true);
+      try {
+        const contactsRes = await fetchLeadContacts(enrichedLead.lead_id);
+        if (cancelled) return;
+        const results = (contactsRes.buildings || []).filter((b) => (b.contacts || []).length > 0);
+        setBuildingContacts(results);
+      } catch {
+        if (!cancelled) setBuildingContacts([]);
+      } finally {
+        if (!cancelled) setLoadingBuildingContacts(false);
+      }
+    };
+    loadBuildingContacts();
     return () => { cancelled = true; };
   }, [activeTab, enrichedLead.lead_id]);
 
@@ -653,13 +692,32 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
               )}
 
               {/* Interactive Map (OpenStreetMap) */}
-              {enrichedLead.buildings && enrichedLead.buildings.length > 0 && (
+              {(linkedBuildings.length > 0 || (enrichedLead.buildings && enrichedLead.buildings.length > 0)) && (
                 <div className="bg-gray-50 rounded-xl p-4">
                   <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-3">Portfolio Footprint</h3>
                   <Suspense fallback={<div className="h-[250px] bg-gray-100 rounded-lg animate-pulse" />}>
-                    <PortfolioMap buildings={enrichedLead.buildings} boro={enrichedLead.boro} boros={enrichedLead.boros} />
+                    <PortfolioMap
+                      buildings={linkedBuildings.length > 0
+                        ? linkedBuildings.map(b => b.address).filter((address): address is string => Boolean(address))
+                        : enrichedLead.buildings}
+                      boro={enrichedLead.boro}
+                      boros={enrichedLead.boros}
+                    />
                   </Suspense>
                 </div>
+              )}
+
+              {/* Building contacts summary → link to Contacts tab */}
+              {buildingContacts.length > 0 && (
+                <button
+                  onClick={() => setActiveTab('contacts')}
+                  className="w-full text-left bg-blue-50 border border-blue-200 rounded-xl p-3 hover:bg-blue-100 transition-colors"
+                >
+                  <span className="text-xs font-bold text-blue-700 uppercase tracking-wider">Building Contacts</span>
+                  <span className="text-sm text-blue-600 ml-2">
+                    {buildingContacts.reduce((sum, b) => sum + b.contacts.length, 0)} contacts found across {buildingContacts.length} buildings →
+                  </span>
+                </button>
               )}
             </>
           )}
@@ -750,6 +808,68 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
 
                 {!enrichedLead.phone && !enrichedLead.email && !enrichedLead.website && (
                   <p className="text-gray-400 text-sm italic">No contact info yet. Click "Find Contacts" above.</p>
+                )}
+              </div>
+
+              {/* Building Contacts — aggregated from linked buildings */}
+              <div className="bg-gray-50 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Building Contacts</h3>
+                  {buildingContacts.length > 0 && (
+                    <span className="text-[10px] text-gray-400">
+                      {buildingContacts.reduce((sum, b) => sum + b.contacts.length, 0)} contacts across {buildingContacts.length} buildings
+                    </span>
+                  )}
+                </div>
+                {loadingBuildingContacts ? (
+                  <div className="flex items-center gap-2 text-gray-500 text-sm py-2">
+                    <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                    Loading building contacts...
+                  </div>
+                ) : buildingContacts.length > 0 ? (
+                  <div className="space-y-4 max-h-80 overflow-y-auto">
+                    {buildingContacts.map(building => (
+                      <div key={building.bbl}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs font-medium text-gray-700">{building.address}</span>
+                          {building.outreach_status && building.outreach_status !== 'none' && (
+                            <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] uppercase">
+                              Contacted
+                            </span>
+                          )}
+                          <button
+                            onClick={() => navigate(`/buildings/${building.bbl}`)}
+                            className="text-[10px] text-blue-600 hover:underline"
+                          >
+                            View →
+                          </button>
+                        </div>
+                        <div className="space-y-1">
+                          {building.contacts.map((c, i) => (
+                            <div key={i} className={`flex items-center gap-2 py-1 px-2 rounded text-xs ${c.is_decision_maker ? 'bg-green-50 border-l-2 border-green-400' : 'bg-white'}`}>
+                              <span className="font-medium text-gray-800 min-w-[120px]">
+                                {c.is_decision_maker ? '★ ' : ''}{c.name}
+                              </span>
+                              <span className="text-gray-500">{c.role}</span>
+                              <span className={`px-1.5 py-0.5 rounded ${
+                                c.source === 'NY DOS Filing' ? 'bg-blue-50 text-blue-600' :
+                                c.source === 'NY DOS Snapshot' ? 'bg-indigo-50 text-indigo-600' :
+                                'bg-gray-100 text-gray-500'
+                              }`}>{c.source}</span>
+                              <span className="text-[10px] text-gray-400">{formatRelativeDate(c.as_of_date)}</span>
+                              {c.confidence_hint && (
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] ${c.confidence_hint === 'Likely board member (resident)' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'}`}>
+                                  {c.confidence_hint}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-gray-400 text-sm italic py-1">No building-level contacts found for linked buildings.</p>
                 )}
               </div>
 
@@ -871,9 +991,15 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-900" />
               
               {/* Interactive Map (OpenStreetMap) */}
-              {enrichedLead.buildings && enrichedLead.buildings.length > 0 && (
+              {(linkedBuildings.length > 0 || (enrichedLead.buildings && enrichedLead.buildings.length > 0)) && (
                 <Suspense fallback={<div className="h-[250px] bg-gray-100 rounded-lg animate-pulse" />}>
-                  <PortfolioMap buildings={enrichedLead.buildings} boro={enrichedLead.boro} boros={enrichedLead.boros} />
+                  <PortfolioMap
+                    buildings={linkedBuildings.length > 0
+                      ? linkedBuildings.map(b => b.address).filter((address): address is string => Boolean(address))
+                      : enrichedLead.buildings}
+                    boro={enrichedLead.boro}
+                    boros={enrichedLead.boros}
+                  />
                 </Suspense>
               )}
 
