@@ -698,7 +698,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                   <Suspense fallback={<div className="h-[250px] bg-gray-100 rounded-lg animate-pulse" />}>
                     <PortfolioMap
                       buildings={linkedBuildings.length > 0
-                        ? linkedBuildings.map(b => ({ address: b.address, borough: b.borough }))
+                        ? linkedBuildings.map(b => b.address).filter((address): address is string => Boolean(address))
                         : enrichedLead.buildings}
                       boro={enrichedLead.boro}
                       boros={enrichedLead.boros}
@@ -995,7 +995,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 <Suspense fallback={<div className="h-[250px] bg-gray-100 rounded-lg animate-pulse" />}>
                   <PortfolioMap
                     buildings={linkedBuildings.length > 0
-                      ? linkedBuildings.map(b => ({ address: b.address, borough: b.borough }))
+                      ? linkedBuildings.map(b => b.address).filter((address): address is string => Boolean(address))
                       : enrichedLead.buildings}
                     boro={enrichedLead.boro}
                     boros={enrichedLead.boros}
