@@ -56,6 +56,29 @@ async function geocodeAddress(address: string, borough?: string): Promise<Geocod
   if (geocodeCache.has(cacheKey)) return geocodeCache.get(cacheKey) ?? null;
 
   try {
+    // NYC Planning geosearch is usually more accurate for NYC addresses.
+    const geosearchUrl = new URL('https://geosearch.planninglabs.nyc/v2/search');
+    geosearchUrl.searchParams.set('text', query);
+    const geoResp = await fetch(geosearchUrl.toString(), {
+      headers: { Accept: 'application/json' },
+    });
+    if (geoResp.ok) {
+      const payload = await geoResp.json() as {
+        features?: Array<{ geometry?: { coordinates?: [number, number] } }>;
+      };
+      const coordinates = payload?.features?.[0]?.geometry?.coordinates;
+      if (Array.isArray(coordinates) && coordinates.length >= 2) {
+        const lon = Number(coordinates[0]);
+        const lat = Number(coordinates[1]);
+        if (Number.isFinite(lat) && Number.isFinite(lon)) {
+          const coords: [number, number] = [lat, lon];
+          geocodeCache.set(cacheKey, coords);
+          return coords;
+        }
+      }
+    }
+
+    // Secondary fallback: Nominatim.
     const url = new URL('https://nominatim.openstreetmap.org/search');
     url.searchParams.set('q', query);
     url.searchParams.set('format', 'jsonv2');
@@ -117,23 +140,34 @@ interface PortfolioMapProps {
 
 const PortfolioMap: React.FC<PortfolioMapProps> = ({ buildings, boro, boros, height = '250px' }) => {
   const mapRef = useRef<any>(null);
+  const [isResolving, setIsResolving] = useState(false);
   const [positions, setPositions] = useState<Array<{ position: [number, number]; address: string; approximate: boolean }>>([]);
 
   const normalizedBuildings = useMemo(() => {
-    return (buildings || []).slice(0, 100).map((building) => {
+    const seen = new Set<string>();
+    const rows = (buildings || []).slice(0, 150).map((building) => {
       const addr = typeof building === 'string' ? building : building.address;
       const entryBoro = typeof building === 'object' && building.borough ? building.borough : undefined;
       // Keep borough attribution deterministic; avoid synthetic spread across borough list.
       const buildingBoro = entryBoro || boro || boros?.[0] || '';
-      return { addr, buildingBoro };
+      return { addr: (addr || '').trim(), buildingBoro };
+    });
+    return rows.filter(({ addr }) => {
+      if (!addr) return false;
+      const key = addr.toUpperCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
     });
   }, [buildings, boro, boros]);
 
   useEffect(() => {
     let cancelled = false;
     const resolvePositions = async () => {
+      setIsResolving(true);
       if (!normalizedBuildings.length) {
         setPositions([]);
+        setIsResolving(false);
         return;
       }
 
@@ -147,6 +181,7 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({ buildings, boro, boros, hei
       }
 
       if (!cancelled) setPositions(resolved);
+      if (!cancelled) setIsResolving(false);
     };
     resolvePositions();
     return () => {
@@ -154,6 +189,13 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({ buildings, boro, boros, hei
     };
   }, [normalizedBuildings]);
 
+  if (isResolving && positions.length === 0) {
+    return (
+      <div style={{ height, width: '100%' }} className="rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center text-xs text-gray-500">
+        Loading map…
+      </div>
+    );
+  }
   if (positions.length === 0) return null;
 
   const center: [number, number] = positions.length > 0 

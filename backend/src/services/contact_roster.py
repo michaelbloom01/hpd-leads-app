@@ -238,6 +238,14 @@ def _get_dos_cache_payload_from_row(
     if refresh_requested_at and now - refresh_requested_at <= timedelta(minutes=DOS_REFRESH_COOLDOWN_MINUTES):
         return payload, "refreshing", cached_at_iso
 
+    # If payload only contains refresh markers (no officers/chairman/entity), keep it stale
+    # so the router can re-queue refresh instead of incorrectly reporting "loaded".
+    has_officers = bool((payload or {}).get("officers"))
+    has_ceo = bool(str((payload or {}).get("ceo_name") or "").strip())
+    has_dos_id = bool(str((payload or {}).get("dos_id") or "").strip())
+    if payload is not None and not (has_officers or has_ceo or has_dos_id):
+        return payload, "stale", cached_at_iso
+
     parsed_cached = _coerce_datetime(cached_at)
     if parsed_cached and now - parsed_cached <= timedelta(days=DOS_CACHE_MAX_AGE_DAYS):
         return payload, "loaded", cached_at_iso
