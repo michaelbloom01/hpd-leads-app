@@ -84,6 +84,8 @@ export interface BuildingDetail {
   management_company?: string | null;
   corporate_owner?: string | null;
   dos_contacts_is_stale?: boolean;
+  dos_contacts_status?: 'loaded' | 'stale' | 'refreshing' | 'not_loaded';
+  dos_refresh_requested_at?: string | null;
   dos_contacts_last_refreshed_at?: string | null;
 }
 
@@ -95,10 +97,12 @@ export interface BuildingContactEntry {
   as_of_date: string | null;
   publication_date?: string | null;
   address: string | null;
-  confidence_hint: 'Likely board member (resident)' | 'PM company employee' | null;
+  confidence_hint: string | null;
   is_decision_maker: boolean;
   source_url?: string | null;
   board_role?: string | null;
+  filing_date?: string | null;
+  snapshot_as_of?: string | null;
 }
 
 export interface BuildingOutreachStats {

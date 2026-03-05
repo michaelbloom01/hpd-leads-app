@@ -5,6 +5,8 @@ probability, understand why, and do outreach.
 """
 import logging
 import re
+import json
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import unquote
 
@@ -22,6 +24,7 @@ from src.services.contact_roster import get_building_contacts
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/buildings", tags=["buildings"])
 limiter = Limiter(key_func=get_remote_address)
+DOS_REFRESH_COOLDOWN = timedelta(minutes=5)
 
 
 def _normalize_bbl_digits(raw_value: Optional[str]) -> Optional[str]:
@@ -78,6 +81,44 @@ async def _resolve_canonical_bbl(session: AsyncSession, raw_bbl: str) -> Optiona
 
     logger.warning("Could not resolve BBL: raw=%r, normalized_digits=%s", raw_bbl, digits)
     return None
+
+
+def _coerce_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+async def _mark_dos_refresh_requested(session: AsyncSession, bbl: str) -> None:
+    cache_key = f"officers:{bbl}"
+    row = (await session.execute(
+        text("SELECT result FROM dos_cache WHERE cache_key = :cache_key"),
+        {"cache_key": cache_key},
+    )).first()
+    payload: dict = {}
+    if row and row[0]:
+        try:
+            parsed = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+            if isinstance(parsed, dict):
+                payload = parsed
+        except Exception:
+            payload = {}
+    payload["refresh_requested_at"] = datetime.now(timezone.utc).isoformat()
+
+    await session.execute(
+        text("""
+            INSERT INTO dos_cache (cache_key, result, cached_at)
+            VALUES (:cache_key, :result, NOW())
+            ON CONFLICT (cache_key)
+            DO UPDATE SET result = EXCLUDED.result
+        """),
+        {"cache_key": cache_key, "result": json.dumps(payload)},
+    )
+    await session.commit()
 
 
 @router.get("")
@@ -302,8 +343,14 @@ async def get_building(
 
     # Queue async DOS refresh when cache is stale/missing.
     corporate_owner_name = contact_meta.get("corporate_owner")
-    if contact_meta.get("dos_contacts_is_stale") and corporate_owner_name:
+    dos_status = str(contact_meta.get("dos_contacts_status") or "not_loaded")
+    refresh_requested_at = _coerce_iso_datetime(contact_meta.get("dos_refresh_requested_at"))
+    recently_requested = bool(
+        refresh_requested_at and (datetime.now(timezone.utc) - refresh_requested_at) < DOS_REFRESH_COOLDOWN
+    )
+    if dos_status in {"stale", "not_loaded"} and corporate_owner_name and not recently_requested:
         try:
+            await _mark_dos_refresh_requested(session, canonical_bbl)
             from src.tasks.enrich import refresh_dos_contacts
             refresh_dos_contacts.delay(canonical_bbl, corporate_owner_name)
         except Exception as exc:
@@ -313,6 +360,8 @@ async def get_building(
     building["management_company"] = contact_meta.get("management_company")
     building["corporate_owner"] = corporate_owner_name
     building["dos_contacts_is_stale"] = bool(contact_meta.get("dos_contacts_is_stale"))
+    building["dos_contacts_status"] = dos_status
+    building["dos_refresh_requested_at"] = contact_meta.get("dos_refresh_requested_at")
     building["dos_contacts_last_refreshed_at"] = contact_meta.get("dos_contacts_last_refreshed_at")
 
     return building

@@ -133,12 +133,16 @@ const BuildingDetailPage: React.FC = () => {
   const hasDosContacts = Boolean(
     building.all_contacts?.some((c: BuildingContactEntry) => c.source === 'NY DOS Filing' || c.source === 'NY DOS Snapshot')
   );
+  const dosStatus = building.dos_contacts_status || (building.dos_contacts_is_stale ? 'stale' : 'loaded');
   const sortedContacts = [...(building.all_contacts || [])].sort((a, b) => {
     if (a.is_decision_maker !== b.is_decision_maker) return a.is_decision_maker ? -1 : 1;
     const aTime = a.as_of_date ? Date.parse(a.as_of_date) : 0;
     const bTime = b.as_of_date ? Date.parse(b.as_of_date) : 0;
     return bTime - aTime;
   });
+  const boardLeaders = sortedContacts.filter((c: BuildingContactEntry) =>
+    c.confidence_hint === 'Likely board member (resident)' || c.role === 'DOS Chairman (Biennial)')
+    .slice(0, 3);
 
   return (
     <div className="space-y-6">
@@ -174,17 +178,50 @@ const BuildingDetailPage: React.FC = () => {
       {/* People & Companies — contacts from all sources */}
       {building.all_contacts && building.all_contacts.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 p-5">
+          {boardLeaders.length > 0 && (
+            <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <h3 className="text-sm font-semibold text-slate-900 mb-3">Board Leadership</h3>
+              <div className="space-y-2">
+                {boardLeaders.map((leader: BuildingContactEntry, idx: number) => (
+                  <div key={`${leader.name}-${idx}`} className="rounded border border-slate-200 bg-white px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-slate-900">{leader.name}</span>
+                      {leader.confidence_hint === 'Likely board member (resident)' ? (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">Resident board officer</span>
+                      ) : (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">DOS Chairman</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-slate-600 mt-1">
+                      {leader.source_url ? (
+                        <a href={leader.source_url} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                          {leader.source}
+                        </a>
+                      ) : leader.source}
+                      {' '}• Filed/Published: {formatAbsoluteDate(leader.filing_date || leader.snapshot_as_of || leader.publication_date || leader.as_of_date)}
+                    </div>
+                    {leader.address && <div className="text-xs text-slate-500">{leader.address}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-gray-900">People & Companies</h2>
             <span className="text-xs text-gray-400">{building.all_contacts.length} contacts from {new Set(building.all_contacts.map((c: BuildingContactEntry) => c.source)).size} sources</span>
           </div>
-          {building.dos_contacts_is_stale && (
+          {dosStatus === 'stale' || dosStatus === 'refreshing' ? (
             <div className="mb-3 text-xs rounded border border-amber-200 bg-amber-50 text-amber-700 px-2 py-1">
-              Refreshing contact data...
+              Refreshing DOS contact data...
               {building.dos_contacts_last_refreshed_at ? ` Last refresh: ${formatRelativeDate(building.dos_contacts_last_refreshed_at)}.` : ''}
             </div>
+          ) : null}
+          {dosStatus === 'not_loaded' && (
+            <div className="mb-3 text-xs rounded border border-gray-200 bg-gray-50 text-gray-500 px-2 py-1">
+              DOS corporate officer data is being loaded.
+            </div>
           )}
-          {!building.dos_contacts_is_stale && !hasDosContacts && (
+          {dosStatus === 'loaded' && !hasDosContacts && (
             <div className="mb-3 text-xs rounded border border-gray-200 bg-gray-50 text-gray-600 px-2 py-1">
               No NY DOS contacts found for this building.
             </div>
@@ -253,9 +290,9 @@ const BuildingDetailPage: React.FC = () => {
                     </td>
                     <td
                       className="px-3 py-2 text-gray-500 text-xs"
-                      title={`Published: ${formatAbsoluteDate(contact.publication_date || contact.as_of_date)}`}
+                      title={`Filed/Published: ${formatAbsoluteDate(contact.filing_date || contact.snapshot_as_of || contact.publication_date || contact.as_of_date)}`}
                     >
-                      {formatRelativeDate(contact.publication_date || contact.as_of_date)}
+                      {formatRelativeDate(contact.filing_date || contact.snapshot_as_of || contact.publication_date || contact.as_of_date)}
                     </td>
                     <td className="px-3 py-2 text-gray-500 text-xs max-w-[200px] truncate">
                       {contact.address ? (

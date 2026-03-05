@@ -8,12 +8,16 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncSession
+
+
+DOS_CACHE_MAX_AGE_DAYS = 30
+DOS_REFRESH_COOLDOWN_MINUTES = 5
 
 
 def _normalize_addr(value: Optional[str]) -> str:
@@ -77,15 +81,12 @@ def _hpd_source_url(registration_contact_id: Optional[str]) -> Optional[str]:
 def _dos_entity_url(dos_id: Optional[str]) -> Optional[str]:
     if not dos_id:
         return None
-    return (
-        "https://appext20.dos.ny.gov/corp_public/CORPSEARCH.ENTITY_INFORMATION"
-        f"?p_nameid={dos_id}"
-    )
+    return f"https://data.ny.gov/resource/n9v6-gdp6.json?dos_id={dos_id}"
 
 
 def _dos_filing_url(filing_num: Optional[str], dos_id: Optional[str]) -> Optional[str]:
     if filing_num:
-        return f"https://data.ny.gov/resource/2tms-hftb.json?filing_num={filing_num}"
+        return f"https://data.ny.gov/resource/2tms-hftb.json?film_num={filing_num}"
     return _dos_entity_url(dos_id)
 
 
@@ -97,7 +98,7 @@ def _detect_board_role(role: Optional[str], title: Optional[str]) -> Optional[st
         return None
     if "HEADOFFICER" in text_value:
         return "Board Head"
-    if re.search(r"\b(PRESIDENT|CHAIR|CHAIRMAN|BOARD)\b", text_value):
+    if re.search(r"\b(PRESIDENT|CHAIR|CHAIRMAN|BOARD|TREASURER|SECRETARY|VICE PRESIDENT|VP)\b", text_value):
         return "Board Officer"
     return None
 
@@ -114,18 +115,40 @@ def _is_condo_or_coop(building_type: Optional[str], building_class: Optional[str
     return False
 
 
+def _extract_street_key(value: Optional[str]) -> str:
+    text_value = _normalize_addr(value)
+    if not text_value:
+        return ""
+    parts = [p.strip(".,") for p in text_value.split() if p.strip(".,")]
+    if not parts:
+        return ""
+    # Drop common care-of prefixes to get the physical street key.
+    while parts and parts[0] in {"C/O", "ATTN", "ATTN:"}:
+        parts.pop(0)
+    if not parts:
+        return ""
+    key: list[str] = []
+    for token in parts:
+        if token in {"APT", "UNIT", "STE", "SUITE", "FL", "FLOOR", "RM", "ROOM"} or token.startswith("#"):
+            break
+        key.append(token)
+        if len(key) >= 3:
+            break
+    return " ".join(key)
+
+
 def _classify_officer_confidence(
     officer_address: Optional[str],
     building_address: Optional[str],
     pm_address: Optional[str],
 ) -> tuple[Optional[str], bool]:
-    officer_upper = _normalize_addr(officer_address)
-    building_upper = _normalize_addr(building_address)
-    pm_upper = _normalize_addr(pm_address)
+    officer_key = _extract_street_key(officer_address)
+    building_key = _extract_street_key(building_address)
+    pm_key = _extract_street_key(pm_address)
 
-    if building_upper and officer_upper and building_upper[:20] in officer_upper:
+    if building_key and officer_key and building_key == officer_key:
         return "Likely board member (resident)", True
-    if pm_upper and officer_upper and pm_upper[:20] in officer_upper:
+    if pm_key and officer_key and pm_key == officer_key:
         return "PM company employee", False
     return None, False
 
@@ -150,10 +173,34 @@ def _dedupe_contacts(contacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         elif incoming_ts == existing_ts and contact.get("is_decision_maker") and not existing.get("is_decision_maker"):
             deduped[key] = contact
 
+    # Prefer the semantic chairman row over generic DOS officer rows for same person.
+    chairman_names = {
+        name for (name, role) in deduped.keys()
+        if "CHAIRMAN" in role
+    }
+    for key in list(deduped.keys()):
+        name, role = key
+        if name in chairman_names and "CHAIRMAN" not in role and "DOS" in role:
+            deduped.pop(key, None)
+
+    def _sort_priority(contact: dict[str, Any]) -> int:
+        hint = str(contact.get("confidence_hint") or "").upper()
+        role = str(contact.get("role") or "").upper()
+        source = str(contact.get("source") or "").upper()
+        if "RESIDENT" in hint:
+            return 0
+        if "CHAIRMAN" in role:
+            return 1
+        if contact.get("is_decision_maker"):
+            return 2
+        if "DOS" in source:
+            return 3
+        return 4
+
     results = list(deduped.values())
     results.sort(
         key=lambda c: (
-            0 if c.get("is_decision_maker") else 1,
+            _sort_priority(c),
             -_parse_date_for_sort(c.get("as_of_date")),
             str(c.get("name") or "").upper(),
         )
@@ -163,30 +210,38 @@ def _dedupe_contacts(contacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _get_dos_cache_payload_from_row(
     row: Any,
-) -> tuple[Optional[dict[str, Any]], bool, Optional[str]]:
+) -> tuple[Optional[dict[str, Any]], str, Optional[str]]:
     if not row:
-        return None, True, None
+        return None, "not_loaded", None
 
     raw = row.get("result")
     cached_at = row.get("cached_at")
-    expires_at = row.get("expires_at")
     now = datetime.now(timezone.utc)
+    cached_at_iso = _coerce_iso(cached_at)
 
-    is_stale = True
-    parsed_expiry = _coerce_datetime(expires_at)
-    if parsed_expiry is not None:
-        is_stale = parsed_expiry <= now
+    payload: Optional[dict[str, Any]] = None
 
     if not raw:
-        return None, is_stale, _coerce_iso(cached_at)
+        parsed_cached = _coerce_datetime(cached_at)
+        if parsed_cached and now - parsed_cached <= timedelta(days=DOS_CACHE_MAX_AGE_DAYS):
+            return None, "loaded", cached_at_iso
+        return None, "stale", cached_at_iso
 
     try:
-        payload = json.loads(raw) if isinstance(raw, str) else raw
-        if not isinstance(payload, dict):
-            return None, is_stale, _coerce_iso(cached_at)
-        return payload, is_stale, _coerce_iso(cached_at)
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+        if isinstance(parsed, dict):
+            payload = parsed
     except json.JSONDecodeError:
-        return None, is_stale, _coerce_iso(cached_at)
+        payload = None
+
+    refresh_requested_at = _coerce_datetime((payload or {}).get("refresh_requested_at"))
+    if refresh_requested_at and now - refresh_requested_at <= timedelta(minutes=DOS_REFRESH_COOLDOWN_MINUTES):
+        return payload, "refreshing", cached_at_iso
+
+    parsed_cached = _coerce_datetime(cached_at)
+    if parsed_cached and now - parsed_cached <= timedelta(days=DOS_CACHE_MAX_AGE_DAYS):
+        return payload, "loaded", cached_at_iso
+    return payload, "stale", cached_at_iso
 
 
 async def get_building_contacts(
@@ -217,7 +272,7 @@ async def get_building_contacts(
     contact_rows = await session.execute(
         text("""
             SELECT id, registration_contact_id, contact_type, corporation_name, first_name, last_name,
-                   business_address, business_city, business_state, business_zip, updated_at
+                   title, business_address, business_city, business_state, business_zip, updated_at
             FROM building_contacts
             WHERE bbl = :bbl
             ORDER BY id ASC
@@ -279,7 +334,7 @@ async def get_building_contacts(
         )
     ).first()
 
-    payload, is_stale, last_refreshed_at = _get_dos_cache_payload_from_row(
+    payload, dos_status, last_refreshed_at = _get_dos_cache_payload_from_row(
         dict(cache_row._mapping) if cache_row else None
     )
 
@@ -314,6 +369,7 @@ async def get_building_contacts(
                         "source_record_id": officer.get("filing_num"),
                         "as_of_date": _coerce_iso(officer.get("filing_date")),
                         "publication_date": _coerce_iso(officer.get("filing_date")),
+                        "filing_date": _coerce_iso(officer.get("filing_date")),
                         "address": officer_address,
                         "confidence_hint": confidence_hint,
                         "is_decision_maker": resident_decision_maker or (
@@ -326,14 +382,16 @@ async def get_building_contacts(
 
         ceo_name = payload.get("ceo_name")
         if ceo_name:
+            snapshot_as_of = _coerce_iso(payload.get("snapshot_as_of")) or last_refreshed_at
             contacts.append(
                 {
                     "name": ceo_name,
                     "role": "DOS Chairman (Biennial)",
                     "source": "NY DOS Snapshot",
                     "source_record_id": payload.get("dos_id"),
-                    "as_of_date": _coerce_iso(payload.get("snapshot_as_of")) or last_refreshed_at,
-                    "publication_date": _coerce_iso(payload.get("snapshot_as_of")) or last_refreshed_at,
+                    "as_of_date": snapshot_as_of,
+                    "publication_date": snapshot_as_of,
+                    "snapshot_as_of": snapshot_as_of,
                     "address": payload.get("ceo_address"),
                     "confidence_hint": None,
                     "is_decision_maker": True,
@@ -346,7 +404,9 @@ async def get_building_contacts(
     metadata = {
         "management_company": management_company,
         "corporate_owner": corporate_owner,
-        "dos_contacts_is_stale": is_stale,
+        "dos_contacts_is_stale": dos_status != "loaded",
+        "dos_contacts_status": dos_status,
+        "dos_refresh_requested_at": _coerce_iso((payload or {}).get("refresh_requested_at")),
         "dos_contacts_last_refreshed_at": last_refreshed_at,
     }
     return deduped, metadata
@@ -414,7 +474,7 @@ def get_building_contacts_sync(
     rows = conn.execute(
         text("""
             SELECT id, registration_contact_id, contact_type, corporation_name, first_name, last_name,
-                   business_address, business_city, business_state, business_zip, updated_at
+                   title, business_address, business_city, business_state, business_zip, updated_at
             FROM building_contacts
             WHERE bbl = :bbl
             ORDER BY id ASC
@@ -469,7 +529,7 @@ def get_building_contacts_sync(
         """),
         {"cache_key": f"officers:{bbl}"},
     ).first()
-    payload, is_stale, last_refreshed_at = _get_dos_cache_payload_from_row(
+    payload, dos_status, last_refreshed_at = _get_dos_cache_payload_from_row(
         dict(cache_row._mapping) if cache_row else None
     )
 
@@ -502,6 +562,7 @@ def get_building_contacts_sync(
                     "source_record_id": officer.get("filing_num"),
                     "as_of_date": _coerce_iso(officer.get("filing_date")),
                     "publication_date": _coerce_iso(officer.get("filing_date")),
+                    "filing_date": _coerce_iso(officer.get("filing_date")),
                     "address": officer_address,
                     "confidence_hint": confidence_hint,
                     "is_decision_maker": resident_decision_maker or (
@@ -514,14 +575,16 @@ def get_building_contacts_sync(
 
         ceo_name = payload.get("ceo_name")
         if ceo_name:
+            snapshot_as_of = _coerce_iso(payload.get("snapshot_as_of")) or last_refreshed_at
             contacts.append(
                 {
                     "name": ceo_name,
                     "role": "DOS Chairman (Biennial)",
                     "source": "NY DOS Snapshot",
                     "source_record_id": payload.get("dos_id"),
-                    "as_of_date": _coerce_iso(payload.get("snapshot_as_of")) or last_refreshed_at,
-                    "publication_date": _coerce_iso(payload.get("snapshot_as_of")) or last_refreshed_at,
+                    "as_of_date": snapshot_as_of,
+                    "publication_date": snapshot_as_of,
+                    "snapshot_as_of": snapshot_as_of,
                     "address": payload.get("ceo_address"),
                     "confidence_hint": None,
                     "is_decision_maker": True,
@@ -533,6 +596,8 @@ def get_building_contacts_sync(
     return _dedupe_contacts(contacts), {
         "management_company": management_company,
         "corporate_owner": corporate_owner,
-        "dos_contacts_is_stale": is_stale,
+        "dos_contacts_is_stale": dos_status != "loaded",
+        "dos_contacts_status": dos_status,
+        "dos_refresh_requested_at": _coerce_iso((payload or {}).get("refresh_requested_at")),
         "dos_contacts_last_refreshed_at": last_refreshed_at,
     }
