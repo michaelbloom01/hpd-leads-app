@@ -405,7 +405,11 @@ const BuildingsPage: React.FC = () => {
                     <tr
                       key={row.id}
                       className="hover:bg-gray-50 cursor-pointer transition-colors"
-                      onClick={() => navigate(`/buildings/${row.original.bbl}`)}
+                      onClick={() => {
+                        const rawBbl = String(row.original.bbl || '').trim();
+                        if (!rawBbl) return;
+                        navigate(`/buildings/${encodeURIComponent(rawBbl)}`);
+                      }}
                     >
                       {row.getVisibleCells().map(cell => (
                         <td key={cell.id} className="px-4 py-3 whitespace-nowrap">

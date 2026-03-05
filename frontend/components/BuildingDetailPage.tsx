@@ -8,6 +8,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import {
   fetchBuildingDetail, fetchBuildingTimeline, fetchBuildingScoreHistory,
   addBuildingToPipeline, fetchBuildingOutreachEvents, logBuildingOutreachEvent,
+  fetchBuildings,
   type BuildingContactEntry, type BuildingDetail,
 } from '../services/buildings-api';
 import { toast } from 'react-hot-toast';
@@ -57,35 +58,88 @@ const eventIcons: Record<string, string> = {
 const BuildingDetailPage: React.FC = () => {
   const { bbl } = useParams<{ bbl: string }>();
   const navigate = useNavigate();
+  const [resolvedBbl, setResolvedBbl] = React.useState<string | null>(null);
+  const [resolvingBbl, setResolvingBbl] = React.useState(true);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    const normalizeBbl = (raw: string | undefined): string | null => {
+      if (!raw) return null;
+      const decoded = decodeURIComponent(raw).trim();
+      const digits = decoded.replace(/\D/g, '');
+      if (digits.length === 10) return digits;
+      if (digits.length > 0 && digits.length < 10) return digits.padStart(10, '0');
+      return null;
+    };
+
+    const resolve = async () => {
+      setResolvingBbl(true);
+      const normalized = normalizeBbl(bbl);
+      if (normalized) {
+        if (!cancelled) {
+          setResolvedBbl(normalized);
+          setResolvingBbl(false);
+        }
+        return;
+      }
+
+      // Fallback: route param may be an address string; resolve to BBL first.
+      try {
+        const raw = decodeURIComponent(bbl || '').trim();
+        if (!raw) {
+          if (!cancelled) {
+            setResolvedBbl(null);
+            setResolvingBbl(false);
+          }
+          return;
+        }
+        const list = await fetchBuildings({ search: raw, limit: 1, offset: 0 });
+        const first = list.buildings?.[0];
+        if (!cancelled) {
+          setResolvedBbl(first?.bbl || null);
+        }
+      } catch {
+        if (!cancelled) setResolvedBbl(null);
+      } finally {
+        if (!cancelled) setResolvingBbl(false);
+      }
+    };
+
+    resolve();
+    return () => {
+      cancelled = true;
+    };
+  }, [bbl]);
 
   const { data: building, isLoading } = useQuery({
-    queryKey: ['building', bbl],
-    queryFn: () => fetchBuildingDetail(bbl!),
-    enabled: !!bbl,
+    queryKey: ['building', resolvedBbl],
+    queryFn: () => fetchBuildingDetail(resolvedBbl!),
+    enabled: !!resolvedBbl,
   });
 
   const { data: timeline } = useQuery({
-    queryKey: ['building-timeline', bbl],
-    queryFn: () => fetchBuildingTimeline(bbl!),
-    enabled: !!bbl,
+    queryKey: ['building-timeline', resolvedBbl],
+    queryFn: () => fetchBuildingTimeline(resolvedBbl!),
+    enabled: !!resolvedBbl,
   });
 
   const { data: scoreHistory } = useQuery({
-    queryKey: ['building-score-history', bbl],
-    queryFn: () => fetchBuildingScoreHistory(bbl!),
-    enabled: !!bbl,
+    queryKey: ['building-score-history', resolvedBbl],
+    queryFn: () => fetchBuildingScoreHistory(resolvedBbl!),
+    enabled: !!resolvedBbl,
   });
 
   const { data: outreachData, refetch: refetchOutreach } = useQuery({
-    queryKey: ['building-outreach', bbl],
-    queryFn: () => fetchBuildingOutreachEvents(bbl!),
-    enabled: !!bbl,
+    queryKey: ['building-outreach', resolvedBbl],
+    queryFn: () => fetchBuildingOutreachEvents(resolvedBbl!),
+    enabled: !!resolvedBbl,
   });
 
   const handleLogOutreach = async (stage: string) => {
-    if (!bbl) return;
+    if (!resolvedBbl) return;
     try {
-      await logBuildingOutreachEvent(bbl, { stage, method: 'manual' });
+      await logBuildingOutreachEvent(resolvedBbl, { stage, method: 'manual' });
       toast.success(`Outreach logged: ${stage}`);
       refetchOutreach();
     } catch {
@@ -94,17 +148,17 @@ const BuildingDetailPage: React.FC = () => {
   };
 
   const handleAddToPipeline = async () => {
-    if (!bbl) return;
+    if (!resolvedBbl) return;
     try {
-      await addBuildingToPipeline(bbl);
+      await addBuildingToPipeline(resolvedBbl);
       toast.success('Building added to pipeline');
     } catch {
       toast.error('Failed to add to pipeline');
     }
   };
 
-  if (isLoading) return <div className="p-8 text-center text-gray-400">Loading...</div>;
-  if (!building) return <div className="p-8 text-center text-red-500">Building not found</div>;
+  if (resolvingBbl || isLoading) return <div className="p-8 text-center text-gray-400">Loading...</div>;
+  if (!resolvedBbl || !building) return <div className="p-8 text-center text-red-500">Building not found</div>;
 
   const latestHistoryBreakdown =
     scoreHistory && scoreHistory.length > 0
