@@ -120,13 +120,11 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({ buildings, boro, boros, hei
   const [positions, setPositions] = useState<Array<{ position: [number, number]; address: string; approximate: boolean }>>([]);
 
   const normalizedBuildings = useMemo(() => {
-    return (buildings || []).slice(0, 100).map((building, i) => {
+    return (buildings || []).slice(0, 100).map((building) => {
       const addr = typeof building === 'string' ? building : building.address;
       const entryBoro = typeof building === 'object' && building.borough ? building.borough : undefined;
-      let buildingBoro = entryBoro || boro || '';
-      if (!entryBoro && boros && boros.length > 0) {
-        buildingBoro = boros[Math.floor((i / Math.max(buildings.length, 1)) * boros.length)] || boros[0] || '';
-      }
+      // Keep borough attribution deterministic; avoid synthetic spread across borough list.
+      const buildingBoro = entryBoro || boro || boros?.[0] || '';
       return { addr, buildingBoro };
     });
   }, [buildings, boro, boros]);
@@ -142,14 +140,8 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({ buildings, boro, boros, hei
       const resolved: Array<{ position: [number, number]; address: string; approximate: boolean }> = [];
       for (let i = 0; i < normalizedBuildings.length; i++) {
         const { addr, buildingBoro } = normalizedBuildings[i];
-        let coords: [number, number] | null = null;
-        let approximate = true;
-
-        // Keep external geocoding bounded; fallback for the rest.
-        if (i < 25) {
-          coords = await geocodeAddress(addr, buildingBoro);
-          approximate = !coords;
-        }
+        let coords: [number, number] | null = await geocodeAddress(addr, buildingBoro);
+        let approximate = !coords;
         if (!coords) coords = approximateCoords(addr, buildingBoro);
         if (coords) resolved.push({ position: coords, address: addr, approximate });
       }

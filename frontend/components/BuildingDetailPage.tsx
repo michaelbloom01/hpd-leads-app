@@ -79,16 +79,6 @@ const BuildingDetailPage: React.FC = () => {
 
     const resolve = async () => {
       setResolvingBbl(true);
-      const normalized = normalizeBbl(bbl);
-      if (normalized) {
-        if (!cancelled) {
-          setResolvedBbl(normalized);
-          setResolvingBbl(false);
-        }
-        return;
-      }
-
-      // Fallback: route param may be an address string; resolve to BBL first.
       try {
         const raw = decodeURIComponent(bbl || '').trim();
         if (!raw) {
@@ -98,10 +88,32 @@ const BuildingDetailPage: React.FC = () => {
           }
           return;
         }
-        const list = await fetchBuildings({ search: raw, limit: 1, offset: 0 });
-        const first = list.buildings?.[0];
+
+        const normalized = normalizeBbl(raw);
+        const searchCandidates = Array.from(new Set([
+          raw,
+          normalized || '',
+        ].filter(Boolean)));
+
+        let resolvedFromSearch: string | null = null;
+        for (const candidate of searchCandidates) {
+          const list = await fetchBuildings({ search: candidate, limit: 10, offset: 0 });
+          const rows = list.buildings || [];
+          if (!rows.length) continue;
+
+          const exactByNormalized = normalized
+            ? rows.find((row) => normalizeBbl(String(row.bbl || '')) === normalized)
+            : null;
+          const chosen = exactByNormalized || rows[0];
+          const chosenBbl = String(chosen?.bbl || '').trim();
+          if (chosenBbl) {
+            resolvedFromSearch = chosenBbl;
+            break;
+          }
+        }
+
         if (!cancelled) {
-          setResolvedBbl(normalizeBbl(first?.bbl ? String(first.bbl) : undefined));
+          setResolvedBbl(resolvedFromSearch || normalized || null);
         }
       } catch {
         if (!cancelled) setResolvedBbl(null);
