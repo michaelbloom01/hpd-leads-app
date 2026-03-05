@@ -421,16 +421,37 @@ def ingest_hpd_complaints(self, job_id: Optional[int] = None):
 
     try:
         records = _socrata_fetch(DATASETS["hpd_complaints"], {
-            "$select": "complaintid,buildingid,boroughid,block,lot,status,"
-                       "statusdate,statusid,majorcategory,"
-                       "minorcategory,receiveddate",
-            "$order": "receiveddate DESC",
+            "$select": "complaint_id,building_id,borough,block,lot,complaint_status,"
+                       "complaint_status_date,major_category,minor_category,received_date",
+            "$order": "received_date DESC",
             "$limit": 50000,
         })
 
         inserted = matched = rejected = 0
+        borough_codes = {
+            "MANHATTAN": "1",
+            "MN": "1",
+            "NEW YORK": "1",
+            "BRONX": "2",
+            "BX": "2",
+            "BROOKLYN": "3",
+            "BK": "3",
+            "K": "3",
+            "QUEENS": "4",
+            "QN": "4",
+            "Q": "4",
+            "STATEN ISLAND": "5",
+            "SI": "5",
+            "R": "5",
+        }
         for r in records:
-            bbl = _compute_bbl(r.get("boroughid"), r.get("block"), r.get("lot"))
+            boro_raw = r.get("boroughid") or r.get("borough")
+            if boro_raw is None:
+                boro_id = None
+            else:
+                boro_text = str(boro_raw).strip().upper()
+                boro_id = borough_codes.get(boro_text, boro_text)
+            bbl = _compute_bbl(boro_id, r.get("block"), r.get("lot"))
             if not bbl:
                 rejected += 1
                 continue
@@ -455,14 +476,14 @@ def ingest_hpd_complaints(self, job_id: Optional[int] = None):
                     ) ON CONFLICT (complaint_id) DO NOTHING
                 """),
                 {
-                    "cid": r.get("complaintid"),
+                    "cid": r.get("complaint_id") or r.get("complaintid"),
                     "bbl": bbl,
-                    "bid": r.get("buildingid"),
-                    "status": r.get("status"),
-                    "status_date": r.get("statusdate", "")[:10] or None,
-                    "major": r.get("majorcategory"),
-                    "minor": r.get("minorcategory"),
-                    "received": r.get("receiveddate", "")[:10] or None,
+                    "bid": r.get("building_id") or r.get("buildingid"),
+                    "status": r.get("complaint_status") or r.get("status"),
+                    "status_date": (r.get("complaint_status_date") or r.get("statusdate") or "")[:10] or None,
+                    "major": r.get("major_category") or r.get("majorcategory"),
+                    "minor": r.get("minor_category") or r.get("minorcategory"),
+                    "received": (r.get("received_date") or r.get("receiveddate") or "")[:10] or None,
                 },
             )
             inserted += 1
