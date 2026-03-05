@@ -51,7 +51,7 @@ def _build_entity_graph(session: Session) -> nx.Graph:
                bc.corporation_name, bc.first_name, bc.last_name,
                bc.business_address, bc.business_city, bc.business_state, bc.business_zip
         FROM building_contacts bc
-        WHERE bc.contact_type IN ('CorporateOwner', 'IndividualOwner', 'Agent', 'ManagementCompany')
+        WHERE bc.contact_type IN ('CorporateOwner', 'IndividualOwner', 'Agent', 'HeadOfficer', 'Owner')
     """)).fetchall()
 
     logger.info(f"Building entity graph from {len(contacts)} contacts")
@@ -153,7 +153,6 @@ def resolve_entities(self):
             if cluster["portfolio_size"] < 1:
                 continue
 
-            import json
             canonical = cluster["canonical_name"]
 
             result = session.execute(
@@ -166,17 +165,13 @@ def resolve_entities(self):
                 session.execute(
                     text("""
                         UPDATE leads SET
-                            portfolio_buildings = :bbls,
                             portfolio_size = :size,
-                            entity_graph = :graph,
                             updated_at = now()
                         WHERE lead_id = :lid
                     """),
                     {
                         "lid": lead_id,
-                        "bbls": json.dumps(cluster["bbls"]),
                         "size": cluster["portfolio_size"],
-                        "graph": json.dumps(cluster["graph_json"]),
                     },
                 )
 

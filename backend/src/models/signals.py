@@ -4,13 +4,12 @@ Each table stores raw records from a data source with a BBL (or BIN) foreign
 key back to buildings. Individual signal views aggregate these into the
 building_signal_summary materialized view consumed by the scoring engine.
 """
-from datetime import date, datetime
+from datetime import date
 from typing import Optional
 
 from sqlalchemy import (
     Boolean,
     Date,
-    DateTime,
     Float,
     ForeignKey,
     Index,

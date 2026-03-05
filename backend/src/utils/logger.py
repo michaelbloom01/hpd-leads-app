@@ -6,7 +6,6 @@ See docs/07-scheduling-ops.md for log format.
 import logging
 import sys
 from datetime import datetime
-from pathlib import Path
 
 from config.settings import settings
 

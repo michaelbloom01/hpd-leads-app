@@ -4,8 +4,7 @@ import threading
 import time
 import re
 from datetime import datetime
-from typing import Optional, Dict
-from collections import Counter
+from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi import APIRouter, Query, HTTPException, BackgroundTasks
@@ -101,8 +100,8 @@ async def enrich_leads(request: EnrichmentRequest):
 
     return {
         "status": "success", "enriched_count": len(enriched),
-        "results": [{"lead_id": l.lead_id, "agent_name": l.agent_name, "website": l.website,
-                      "phone": l.phone, "email": l.email, "status": l.enrichment_status} for l in enriched],
+        "results": [{"lead_id": lead.lead_id, "agent_name": lead.agent_name, "website": lead.website,
+                      "phone": lead.phone, "email": lead.email, "status": lead.enrichment_status} for lead in enriched],
     }
 
 
@@ -118,14 +117,14 @@ def _run_background_enrichment(limit: int, min_score: Optional[float] = None):
 
     with cache.leads_lock:
         snapshot = list(cache.leads)
-    candidates = [l for l in snapshot if l.enrichment_status not in ("complete", "partial") and (min_score is None or l.score >= min_score)]
-    candidates.sort(key=lambda l: l.score, reverse=True)
+    candidates = [lead for lead in snapshot if lead.enrichment_status not in ("complete", "partial") and (min_score is None or lead.score >= min_score)]
+    candidates.sort(key=lambda lead: lead.score, reverse=True)
     batch = candidates[:limit]
     if not batch:
         _set_enrichment_idle(cache, phase="", reset_counts=True)
         return
 
-    lead_ids = [l.lead_id for l in batch]
+    lead_ids = [lead.lead_id for lead in batch]
     job_id = db.create_enrichment_job(job_type="batch", lead_ids=lead_ids, config={"min_score": min_score, "limit": limit})
     _run_background_enrichment_with_job(job_id, set(lead_ids), min_score)
 
@@ -144,8 +143,8 @@ def _run_background_enrichment_with_job(job_id: int, lead_ids_remaining: set, mi
         enricher = Enricher(use_cache=True)
         db = get_database()
         with cache.leads_lock:
-            batch = [l for l in cache.leads if l.lead_id in lead_ids_remaining]
-        batch.sort(key=lambda l: l.score, reverse=True)
+            batch = [lead for lead in cache.leads if lead.lead_id in lead_ids_remaining]
+        batch.sort(key=lambda lead: lead.score, reverse=True)
         cache.enrichment.update(total=len(batch))
         remaining = list(lead_ids_remaining)
         stopped_early = False
@@ -330,14 +329,14 @@ async def enrich_batch_full(
             raise HTTPException(status_code=400, detail="No leads loaded.")
         cache.enrichment.update(running=True, phase="queued")
 
-    candidates = [l for l in snapshot if (l.total_units or 0) >= min_units and l.enrichment_status not in ("complete", "partial") and (min_score is None or (l.score or 0) >= min_score)]
-    candidates.sort(key=lambda l: (l.total_units or 0), reverse=True)
+    candidates = [lead for lead in snapshot if (lead.total_units or 0) >= min_units and lead.enrichment_status not in ("complete", "partial") and (min_score is None or (lead.score or 0) >= min_score)]
+    candidates.sort(key=lambda lead: (lead.total_units or 0), reverse=True)
     batch = candidates[:limit]
     if not batch:
         _set_enrichment_idle(cache, phase="", reset_counts=True)
         return {"status": "no_candidates", "message": f"No unenriched leads with >= {min_units} units found."}
 
-    background_tasks.add_task(_run_full_enrichment_batch, [l.lead_id for l in batch])
+    background_tasks.add_task(_run_full_enrichment_batch, [lead.lead_id for lead in batch])
     return {"status": "started", "message": f"Full enrichment started for {len(batch)} leads", "total": len(batch)}
 
 
@@ -537,9 +536,9 @@ async def enrich_lead_contacts(lead_id: str):
     db = get_database()
     lead = None
     lead_idx = None
-    for i, l in enumerate(cache.leads):
-        if l.lead_id == lead_id:
-            lead = l
+    for i, lead_item in enumerate(cache.leads):
+        if lead_item.lead_id == lead_id:
+            lead = lead_item
             lead_idx = i
             break
     if not lead:
@@ -606,9 +605,9 @@ async def enrich_single_lead_all(lead_id: str):
     lead = None
     lead_idx = None
     with cache.leads_lock:
-        for i, l in enumerate(cache.leads):
-            if l.lead_id == lead_id:
-                lead = l
+        for i, lead_item in enumerate(cache.leads):
+            if lead_item.lead_id == lead_id:
+                lead = lead_item
                 lead_idx = i
                 break
 
@@ -1002,8 +1001,8 @@ def _run_api_enrichment(limit: int, min_portfolio: int = 5, boro: Optional[str] 
 
         with cache.leads_lock:
             snapshot = list(cache.leads)
-        candidates = [l for l in snapshot if not l.phone and not l.email and l.portfolio_size >= min_portfolio and (not boro or l.boro == boro.upper())]
-        candidates.sort(key=lambda l: (l.score, l.portfolio_size), reverse=True)
+        candidates = [lead for lead in snapshot if not lead.phone and not lead.email and lead.portfolio_size >= min_portfolio and (not boro or lead.boro == boro.upper())]
+        candidates.sort(key=lambda lead: (lead.score, lead.portfolio_size), reverse=True)
         batch = candidates[:limit]
         cache.enrichment.update(total=len(batch))
         def enrich_single(lead):
@@ -1050,7 +1049,7 @@ def _run_api_enrichment(limit: int, min_portfolio: int = 5, boro: Optional[str] 
 
         completed_count = 0
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(enrich_single, l): l for l in batch}
+            futures = {executor.submit(enrich_single, lead): lead for lead in batch}
             for future in as_completed(futures):
                 if cache.enrichment_stop_requested:
                     break
@@ -1070,7 +1069,7 @@ def _run_api_enrichment(limit: int, min_portfolio: int = 5, boro: Optional[str] 
                     key = "completed" if enriched_lead.enrichment_status in ("complete", "partial") else "failed"
                     upd[key] = cache.enrichment.get(key, 0) + 1
                     cache.enrichment.update(**upd)
-                except Exception as e:
+                except Exception:
                     cache.enrichment.update(failed=cache.enrichment.get("failed", 0) + 1)
 
     except Exception as e:

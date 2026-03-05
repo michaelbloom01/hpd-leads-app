@@ -48,6 +48,15 @@ const baseColumns = [
     cell: info => <span className="font-medium text-gray-900">{info.getValue() || '--'}</span>,
   }),
   columnHelper.accessor('borough', { header: 'Borough' }),
+  columnHelper.accessor('pm_company', {
+    header: 'PM Company',
+    cell: info => {
+      const v = info.getValue();
+      return v
+        ? <span className="text-gray-700 text-xs truncate max-w-[180px] block">{v}</span>
+        : <span className="text-gray-400 text-xs italic">Unknown</span>;
+    },
+  }),
   columnHelper.accessor('unit_count', {
     header: 'Units',
     cell: info => info.getValue()?.toLocaleString() ?? '--',

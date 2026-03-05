@@ -8,7 +8,6 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, TimestampMixin
@@ -89,6 +88,7 @@ class DOSCache(Base):
     cache_key: Mapped[str] = mapped_column(String(255), primary_key=True)
     result: Mapped[Optional[str]] = mapped_column(Text)
     cached_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
 class PlacesCache(Base):

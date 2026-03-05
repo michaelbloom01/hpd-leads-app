@@ -24,8 +24,6 @@ from urllib.parse import urlparse
 
 import requests
 
-from config.settings import settings
-
 logger = logging.getLogger(__name__)
 
 

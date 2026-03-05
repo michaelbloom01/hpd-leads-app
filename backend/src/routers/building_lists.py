@@ -1,7 +1,6 @@
 """Building Lists — saved collections of buildings for the PM Operator persona."""
 import logging
 import uuid
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from slowapi import Limiter

@@ -4,7 +4,10 @@ Wraps existing enrichment logic to run in background workers
 instead of blocking the API server.
 """
 import asyncio
+import json
 import logging
+import os
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 try:
@@ -148,6 +151,105 @@ def run_enrichment_job(self, job_id: int, limit: int = 500):
     return asyncio.run(_run_enrichment_job_async(job_id=job_id, limit=limit))
 
 
+def _build_dos_cache_payload(corporate_owner_name: str, dos_entity: Any, officers: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "lookup_name": corporate_owner_name,
+        "dos_id": getattr(dos_entity, "dos_id", None),
+        "entity_name": getattr(dos_entity, "name", None),
+        "entity_type": getattr(dos_entity, "entity_type", None),
+        "officers": officers or [],
+        "ceo_name": getattr(dos_entity, "ceo_name", None),
+        "ceo_address": getattr(dos_entity, "ceo_address", None),
+        "snapshot_as_of": datetime.now(timezone.utc).date().isoformat(),
+    }
+
+
+@celery_app.task(bind=True, name="src.tasks.enrich.refresh_dos_contacts")
+def refresh_dos_contacts(self, bbl: str, corporate_owner_name: str):
+    """Refresh DOS officers into dos_cache for a building."""
+    from sqlalchemy import create_engine, text
+    from src.db.session import get_sync_url
+    from src.enrich.ny_dos import NYDOSClient
+
+    owner_name = (corporate_owner_name or "").strip()
+    if not bbl or not owner_name:
+        return {"status": "skipped", "reason": "missing_bbl_or_owner"}
+
+    client = NYDOSClient(app_token=os.environ.get("NY_DATA_APP_TOKEN"))
+    dos_entity = client.lookup_entity(owner_name)
+    if not dos_entity:
+        payload = {
+            "lookup_name": owner_name,
+            "officers": [],
+            "ceo_name": None,
+            "ceo_address": None,
+            "snapshot_as_of": datetime.now(timezone.utc).date().isoformat(),
+        }
+    else:
+        officers = client.get_filing_officers(dos_entity.dos_id)
+        payload = _build_dos_cache_payload(
+            corporate_owner_name=owner_name,
+            dos_entity=dos_entity,
+            officers=officers,
+        )
+
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(days=30)
+    cache_key = f"officers:{bbl}"
+
+    engine = create_engine(get_sync_url())
+    try:
+        with engine.begin() as conn:
+            params = {
+                "cache_key": cache_key,
+                "result": json.dumps(payload),
+                "cached_at": now,
+                "expires_at": expires_at,
+            }
+            try:
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO dos_cache (cache_key, result, cached_at, expires_at)
+                        VALUES (:cache_key, :result, :cached_at, :expires_at)
+                        ON CONFLICT (cache_key)
+                        DO UPDATE SET
+                            result = EXCLUDED.result,
+                            cached_at = EXCLUDED.cached_at,
+                            expires_at = EXCLUDED.expires_at
+                        """
+                    ),
+                    params,
+                )
+            except Exception:
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO dos_cache (cache_key, result, cached_at)
+                        VALUES (:cache_key, :result, :cached_at)
+                        ON CONFLICT (cache_key)
+                        DO UPDATE SET
+                            result = EXCLUDED.result,
+                            cached_at = EXCLUDED.cached_at
+                        """
+                    ),
+                    {
+                        "cache_key": cache_key,
+                        "result": json.dumps(payload),
+                        "cached_at": now,
+                    },
+                )
+    finally:
+        engine.dispose()
+
+    return {
+        "status": "success",
+        "bbl": bbl,
+        "cache_key": cache_key,
+        "officers_count": len(payload.get("officers") or []),
+    }
+
+
 @celery_app.task(bind=True, name="src.tasks.enrich.enrich_lead")
 def enrich_lead(self, lead_id: str):
     """Enrich a single lead using the existing enrichment cascade."""
@@ -164,9 +266,9 @@ def enrich_lead(self, lead_id: str):
         return {"status": "not_found"}
 
     lead = None
-    for l in cache.leads:
-        if l.lead_id == lead_id:
-            lead = l
+    for lead_item in cache.leads:
+        if lead_item.lead_id == lead_id:
+            lead = lead_item
             break
 
     if not lead:
@@ -174,7 +276,7 @@ def enrich_lead(self, lead_id: str):
         return {"status": "not_in_cache"}
 
     enricher = Enricher()
-    result = enricher.enrich_lead(lead, db)
+    enricher.enrich_lead(lead, db)
     return {"status": "completed", "lead_id": lead_id}
 
 
