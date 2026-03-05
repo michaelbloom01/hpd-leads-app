@@ -221,7 +221,11 @@ const BuildingListsPage: React.FC = () => {
                 <div key={building.bbl} className="border border-gray-200 rounded-lg p-3 flex items-center justify-between gap-4">
                   <button
                     type="button"
-                    onClick={() => navigate(`/buildings/${building.bbl}`)}
+                    onClick={() => {
+                      const rawBbl = String(building.bbl || '').trim();
+                      if (!rawBbl) return;
+                      navigate(`/buildings/${encodeURIComponent(rawBbl)}`);
+                    }}
                     className="text-left min-w-0"
                   >
                     <p className="text-sm font-medium text-blue-700 hover:underline truncate">

@@ -252,43 +252,44 @@ def refresh_dos_contacts(self, bbl: str, corporate_owner_name: str):
 
 @celery_app.task(bind=True, name="src.tasks.enrich.enrich_lead")
 def enrich_lead(self, lead_id: str):
-    """Enrich a single lead using the existing enrichment cascade."""
-    from src.storage.database import get_database
-    from src.services.cache_manager import get_cache
-    from src.enrich.enricher import Enricher
+    """Enrich a single lead in worker-safe async DB context."""
+    from src.db.session import get_session_factory
+    from src.routers.leads import enrich_lead_all_core
 
-    db = get_database()
-    cache = get_cache()
+    async def _run() -> dict[str, Any]:
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            try:
+                await enrich_lead_all_core(lead_id=lead_id, session=session)
+                return {"status": "completed", "lead_id": lead_id}
+            except Exception as exc:
+                logger.exception("Enrichment failed for lead %s: %s", lead_id, exc)
+                return {"status": "failed", "lead_id": lead_id, "error": str(exc)[:500]}
 
-    lead_data = db.get_lead_by_id(lead_id)
-    if not lead_data:
-        logger.warning(f"Lead {lead_id} not found for enrichment")
-        return {"status": "not_found"}
-
-    lead = None
-    for lead_item in cache.leads:
-        if lead_item.lead_id == lead_id:
-            lead = lead_item
-            break
-
-    if not lead:
-        logger.warning(f"Lead {lead_id} not in cache")
-        return {"status": "not_in_cache"}
-
-    enricher = Enricher()
-    enricher.enrich_lead(lead, db)
-    return {"status": "completed", "lead_id": lead_id}
+    return asyncio.run(_run())
 
 
 @celery_app.task(bind=True, name="src.tasks.enrich.enrich_batch")
 def enrich_batch(self, lead_ids: list[str]):
-    """Enrich a batch of leads sequentially."""
-    results = {"completed": 0, "failed": 0}
+    """Enrich a batch of leads; queue via Celery when available."""
+    results = {"queued": 0, "completed": 0, "failed": 0}
+    can_queue = hasattr(enrich_lead, "delay")
     for lid in lead_ids:
         try:
-            enrich_lead(lid)
-            results["completed"] += 1
-        except Exception as e:
-            logger.error(f"Enrichment failed for {lid}: {e}")
+            if can_queue:
+                enrich_lead.delay(lid)
+                results["queued"] += 1
+            else:
+                outcome = enrich_lead(None, lid)
+                if outcome.get("status") == "completed":
+                    results["completed"] += 1
+                else:
+                    results["failed"] += 1
+        except Exception as exc:
+            logger.error("Enrichment failed for %s: %s", lid, exc)
             results["failed"] += 1
+    if can_queue:
+        results["status"] = "queued"
+    else:
+        results["status"] = "completed"
     return results

@@ -93,9 +93,12 @@ export interface BuildingContactEntry {
   source: string;
   source_record_id: string | null;
   as_of_date: string | null;
+  publication_date?: string | null;
   address: string | null;
   confidence_hint: 'Likely board member (resident)' | 'PM company employee' | null;
   is_decision_maker: boolean;
+  source_url?: string | null;
+  board_role?: string | null;
 }
 
 export interface BuildingOutreachStats {
@@ -191,27 +194,27 @@ export function fetchHotBuildings(limit = 20): Promise<BuildingRow[]> {
 }
 
 export function fetchBuildingDetail(bbl: string): Promise<BuildingDetail> {
-  return apiGet(`/api/v1/buildings/${bbl}`);
+  return apiGet(`/api/v1/buildings/${encodeURIComponent(String(bbl))}`);
 }
 
 export function fetchBuildingTimeline(bbl: string): Promise<TimelineEvent[]> {
-  return apiGet(`/api/v1/buildings/${bbl}/timeline`);
+  return apiGet(`/api/v1/buildings/${encodeURIComponent(String(bbl))}/timeline`);
 }
 
 export function fetchBuildingScoreHistory(bbl: string): Promise<ScoreHistoryEntry[]> {
-  return apiGet(`/api/v1/buildings/${bbl}/score-history`);
+  return apiGet(`/api/v1/buildings/${encodeURIComponent(String(bbl))}/score-history`);
 }
 
 export function fetchBuildingLineage(bbl: string): Promise<BuildingLineageResponse> {
-  return apiGet(`/api/v1/buildings/${bbl}/lineage`);
+  return apiGet(`/api/v1/buildings/${encodeURIComponent(String(bbl))}/lineage`);
 }
 
 export function addBuildingToPipeline(bbl: string): Promise<{ bbl: string; status: string }> {
-  return apiPost(`/api/v1/buildings/${bbl}/pipeline`);
+  return apiPost(`/api/v1/buildings/${encodeURIComponent(String(bbl))}/pipeline`);
 }
 
 export function fetchBuildingOutreachEvents(bbl: string): Promise<{ bbl: string; events: OutreachEvent[] }> {
-  return apiGet(`/api/v1/buildings/${bbl}/outreach-events`);
+  return apiGet(`/api/v1/buildings/${encodeURIComponent(String(bbl))}/outreach-events`);
 }
 
 export interface BuildingList {
@@ -282,5 +285,5 @@ export function logBuildingOutreachEvent(
   if (event.outcome) params.set('outcome', event.outcome);
   if (event.notes) params.set('notes', event.notes);
   if (event.next_follow_up) params.set('next_follow_up', event.next_follow_up);
-  return apiPost(`/api/v1/buildings/${bbl}/outreach-event?${params}`);
+  return apiPost(`/api/v1/buildings/${encodeURIComponent(String(bbl))}/outreach-event?${params}`);
 }

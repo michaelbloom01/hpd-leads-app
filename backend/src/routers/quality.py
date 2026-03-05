@@ -104,6 +104,58 @@ async def data_health(session: AsyncSession = Depends(get_session)):
     """))
     stale_count = stale_result.scalar() or 0
 
+    entity_row = (await session.execute(text("""
+        WITH source_entities AS (
+            SELECT DISTINCT REGEXP_REPLACE(UPPER(TRIM(corporation_name)), '\\s+', ' ', 'g') AS normalized_name
+            FROM building_contacts
+            WHERE corporation_name IS NOT NULL
+              AND TRIM(corporation_name) != ''
+        ),
+        lead_entities AS (
+            SELECT DISTINCT normalized_name
+            FROM leads
+            WHERE normalized_name IS NOT NULL
+              AND TRIM(normalized_name) != ''
+        )
+        SELECT
+            (SELECT COUNT(*) FROM source_entities) AS distinct_entities_in_contacts,
+            (SELECT COUNT(*) FROM lead_entities) AS distinct_entities_in_leads,
+            (
+                SELECT COUNT(*)
+                FROM source_entities s
+                JOIN lead_entities l ON l.normalized_name = s.normalized_name
+            ) AS matched_entities
+    """))).first()
+    entity_data = dict(entity_row._mapping) if entity_row else {}
+    distinct_entities_in_contacts = int(entity_data.get("distinct_entities_in_contacts") or 0)
+    distinct_entities_in_leads = int(entity_data.get("distinct_entities_in_leads") or 0)
+    matched_entities = int(entity_data.get("matched_entities") or 0)
+    entity_coverage_ratio = round((matched_entities / distinct_entities_in_contacts) * 100, 1) if distinct_entities_in_contacts > 0 else None
+
+    buildings_without_contacts = int((await session.execute(text("""
+        SELECT COUNT(*)
+        FROM buildings b
+        WHERE NOT EXISTS (
+            SELECT 1 FROM building_contacts bc WHERE bc.bbl = b.bbl
+        )
+    """))).scalar() or 0)
+
+    lead_generation_row = (await session.execute(text("""
+        SELECT started_at, finished_at, status
+        FROM ingestion_jobs
+        WHERE job_type = 'lead_generation'
+        ORDER BY started_at DESC NULLS LAST
+        LIMIT 1
+    """))).first()
+    last_lead_generation = None
+    if lead_generation_row:
+        lg = dict(lead_generation_row._mapping)
+        last_lead_generation = {
+            "started_at": lg.get("started_at").isoformat() if lg.get("started_at") else None,
+            "finished_at": lg.get("finished_at").isoformat() if lg.get("finished_at") else None,
+            "status": lg.get("status"),
+        }
+
     staleness_result = await session.execute(text("""
         SELECT
             COALESCE(SUM(CASE WHEN l.updated_at >= NOW() - INTERVAL '7 days'  THEN 1 ELSE 0 END), 0) AS fresh,
@@ -137,6 +189,8 @@ async def data_health(session: AsyncSession = Depends(get_session)):
         warnings.append(f"{stale_count:,} buildings not updated in 90+ days")
     if enrichment_coverage["phone"] < 20:
         warnings.append(f"Low phone coverage: {enrichment_coverage['phone']}%")
+    if entity_coverage_ratio is not None and entity_coverage_ratio < 95:
+        warnings.append(f"Entity coverage gap: only {entity_coverage_ratio}% of source entities materialized into leads")
 
     return {
         "total_leads": row["total_leads"],
@@ -145,9 +199,21 @@ async def data_health(session: AsyncSession = Depends(get_session)):
         "coverage_percent": coverage_pct,
         "last_refresh": last_refresh,
         "stale_buildings_count": stale_count,
+        "buildings_without_contacts": buildings_without_contacts,
         "lead_staleness": {"fresh": st["fresh"], "recent": st["recent"], "stale": st["stale"]},
         "data_age_days": data_age_days,
         "enrichment_coverage": enrichment_coverage,
+        "distinct_entities_in_contacts": distinct_entities_in_contacts,
+        "distinct_entities_in_leads": distinct_entities_in_leads,
+        "matched_entities": matched_entities,
+        "entity_coverage_ratio": entity_coverage_ratio,
+        "coverage_ratio": entity_coverage_ratio,
+        "last_lead_generation": last_lead_generation,
+        "last_lead_generation_at": (
+            last_lead_generation.get("finished_at")
+            if isinstance(last_lead_generation, dict)
+            else None
+        ),
         "warnings": warnings,
     }
 

@@ -8,7 +8,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import {
   fetchBuildingDetail, fetchBuildingTimeline, fetchBuildingScoreHistory,
   addBuildingToPipeline, fetchBuildingOutreachEvents, logBuildingOutreachEvent,
-  type BuildingContactEntry,
+  type BuildingContactEntry, type BuildingDetail,
 } from '../services/buildings-api';
 import { toast } from 'react-hot-toast';
 
@@ -26,6 +26,13 @@ const formatRelativeDate = (value: string | null | undefined): string => {
   if (months < 12) return `${months} months ago`;
   const years = Math.floor(months / 12);
   return years === 1 ? '1 year ago' : `${years} years ago`;
+};
+
+const formatAbsoluteDate = (value: string | null | undefined): string => {
+  if (!value) return '--';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString();
 };
 
 const signalLabels: Record<string, string> = {
@@ -55,37 +62,45 @@ const eventIcons: Record<string, string> = {
 };
 
 const BuildingDetailPage: React.FC = () => {
-  const { bbl } = useParams<{ bbl: string }>();
+  const { bbl: rawBbl } = useParams<{ bbl: string }>();
   const navigate = useNavigate();
 
-  const { data: building, isLoading } = useQuery({
-    queryKey: ['building', bbl],
-    queryFn: () => fetchBuildingDetail(bbl!),
-    enabled: !!bbl,
+  const decodedBbl = React.useMemo(() => {
+    if (!rawBbl) return null;
+    return decodeURIComponent(rawBbl).trim() || null;
+  }, [rawBbl]);
+
+  const { data: building, isLoading, error } = useQuery({
+    queryKey: ['building', decodedBbl],
+    queryFn: () => fetchBuildingDetail(decodedBbl!),
+    enabled: !!decodedBbl,
+    retry: 1,
   });
 
+  const activeBbl = building?.bbl || decodedBbl;
+
   const { data: timeline } = useQuery({
-    queryKey: ['building-timeline', bbl],
-    queryFn: () => fetchBuildingTimeline(bbl!),
-    enabled: !!bbl,
+    queryKey: ['building-timeline', activeBbl],
+    queryFn: () => fetchBuildingTimeline(activeBbl!),
+    enabled: !!activeBbl && !!building,
   });
 
   const { data: scoreHistory } = useQuery({
-    queryKey: ['building-score-history', bbl],
-    queryFn: () => fetchBuildingScoreHistory(bbl!),
-    enabled: !!bbl,
+    queryKey: ['building-score-history', activeBbl],
+    queryFn: () => fetchBuildingScoreHistory(activeBbl!),
+    enabled: !!activeBbl && !!building,
   });
 
   const { data: outreachData, refetch: refetchOutreach } = useQuery({
-    queryKey: ['building-outreach', bbl],
-    queryFn: () => fetchBuildingOutreachEvents(bbl!),
-    enabled: !!bbl,
+    queryKey: ['building-outreach', activeBbl],
+    queryFn: () => fetchBuildingOutreachEvents(activeBbl!),
+    enabled: !!activeBbl && !!building,
   });
 
   const handleLogOutreach = async (stage: string) => {
-    if (!bbl) return;
+    if (!activeBbl) return;
     try {
-      await logBuildingOutreachEvent(bbl, { stage, method: 'manual' });
+      await logBuildingOutreachEvent(activeBbl, { stage, method: 'manual' });
       toast.success(`Outreach logged: ${stage}`);
       refetchOutreach();
     } catch {
@@ -94,9 +109,9 @@ const BuildingDetailPage: React.FC = () => {
   };
 
   const handleAddToPipeline = async () => {
-    if (!bbl) return;
+    if (!activeBbl) return;
     try {
-      await addBuildingToPipeline(bbl);
+      await addBuildingToPipeline(activeBbl);
       toast.success('Building added to pipeline');
     } catch {
       toast.error('Failed to add to pipeline');
@@ -104,9 +119,13 @@ const BuildingDetailPage: React.FC = () => {
   };
 
   if (isLoading) return <div className="p-8 text-center text-gray-400">Loading...</div>;
-  if (!building) return <div className="p-8 text-center text-red-500">Building not found</div>;
+  if (!decodedBbl || !building) return <div className="p-8 text-center text-red-500">Building not found{error ? ` — ${(error as Error).message}` : ''}</div>;
 
-  const breakdown = building.churn_breakdown;
+  const latestHistoryBreakdown =
+    scoreHistory && scoreHistory.length > 0
+      ? (scoreHistory[0]?.churn_breakdown as BuildingDetail['churn_breakdown'])
+      : null;
+  const breakdown: BuildingDetail['churn_breakdown'] = building.churn_breakdown || latestHistoryBreakdown;
   const chartData = scoreHistory?.slice().reverse().map(h => ({
     date: new Date(h.scored_at).toLocaleDateString(),
     score: h.churn_score,
@@ -203,17 +222,40 @@ const BuildingDetailPage: React.FC = () => {
                       >
                         {contact.is_decision_maker ? '★ ' : ''}{contact.name}
                       </button>
+                      {contact.board_role && (
+                        <span className="ml-2 px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 text-[10px]">
+                          {contact.board_role}
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-gray-600">{contact.role}</td>
                     <td className="px-3 py-2">
-                      <span className={`text-xs px-2 py-0.5 rounded ${
-                        contact.source === 'NY DOS Filing' ? 'bg-blue-50 text-blue-700' :
-                        contact.source === 'NY DOS Snapshot' ? 'bg-indigo-50 text-indigo-700' :
-                        'bg-gray-100 text-gray-600'
-                      }`}>{contact.source}</span>
+                      {contact.source_url ? (
+                        <a
+                          href={contact.source_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`text-xs px-2 py-0.5 rounded hover:underline ${
+                            contact.source === 'NY DOS Filing' ? 'bg-blue-50 text-blue-700' :
+                            contact.source === 'NY DOS Snapshot' ? 'bg-indigo-50 text-indigo-700' :
+                            'bg-gray-100 text-gray-600'
+                          }`}
+                        >
+                          {contact.source}
+                        </a>
+                      ) : (
+                        <span className={`text-xs px-2 py-0.5 rounded ${
+                          contact.source === 'NY DOS Filing' ? 'bg-blue-50 text-blue-700' :
+                          contact.source === 'NY DOS Snapshot' ? 'bg-indigo-50 text-indigo-700' :
+                          'bg-gray-100 text-gray-600'
+                        }`}>{contact.source}</span>
+                      )}
                     </td>
-                    <td className="px-3 py-2 text-gray-500 text-xs" title={contact.as_of_date || ''}>
-                      {formatRelativeDate(contact.as_of_date)}
+                    <td
+                      className="px-3 py-2 text-gray-500 text-xs"
+                      title={`Published: ${formatAbsoluteDate(contact.publication_date || contact.as_of_date)}`}
+                    >
+                      {formatRelativeDate(contact.publication_date || contact.as_of_date)}
                     </td>
                     <td className="px-3 py-2 text-gray-500 text-xs max-w-[200px] truncate">
                       {contact.address ? (

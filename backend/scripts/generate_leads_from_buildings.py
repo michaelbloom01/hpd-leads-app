@@ -232,6 +232,12 @@ def main(min_portfolio: int = 1):
             :outreach_status, :priority_rank,
             :created_at, :updated_at
         ) ON CONFLICT (lead_id) DO UPDATE SET
+            normalized_name = EXCLUDED.normalized_name,
+            agent_name = EXCLUDED.agent_name,
+            owner_name = EXCLUDED.owner_name,
+            company_name = EXCLUDED.company_name,
+            entity_type = EXCLUDED.entity_type,
+            address = EXCLUDED.address,
             portfolio_size = EXCLUDED.portfolio_size,
             total_units = EXCLUDED.total_units,
             score = EXCLUDED.score,
@@ -261,10 +267,41 @@ def main(min_portfolio: int = 1):
 
     logger.info(f"Done: {inserted:,} leads upserted into PostgreSQL")
 
+    # Backfill building_management table
+    logger.info("Backfilling building_management from building_contacts + leads...")
+    try:
+        bm_result = session.execute(text("""
+            INSERT INTO building_management (bbl, lead_id, role, is_current, created_at, updated_at)
+            SELECT DISTINCT ON (bc.bbl, l.lead_id)
+                bc.bbl, l.lead_id, 'agent', true, now(), now()
+            FROM building_contacts bc
+            JOIN leads l ON l.normalized_name = REGEXP_REPLACE(UPPER(TRIM(bc.corporation_name)), '\s+', ' ', 'g')
+            WHERE bc.contact_type IN ('Agent', 'CorporateOwner', 'Owner')
+              AND bc.corporation_name IS NOT NULL AND TRIM(bc.corporation_name) != ''
+              AND NOT EXISTS (
+                SELECT 1
+                FROM building_management bm
+                WHERE bm.bbl = bc.bbl
+                  AND bm.lead_id = l.lead_id
+                  AND bm.is_current = true
+              )
+        """))
+        session.commit()
+        bm_count = bm_result.rowcount
+        logger.info(f"  building_management: {bm_count:,} rows backfilled")
+    except Exception as e:
+        session.rollback()
+        logger.error(f"building_management backfill failed: {e}")
+
     # Final count
     final_count = session.execute(text("SELECT COUNT(*) FROM leads")).scalar()
     logger.info(f"Total leads in DB: {final_count:,}")
     session.close()
+    return {
+        "upserted": inserted,
+        "building_management_backfilled": bm_count if "bm_count" in locals() else 0,
+        "total_leads": int(final_count or 0),
+    }
 
 
 if __name__ == "__main__":

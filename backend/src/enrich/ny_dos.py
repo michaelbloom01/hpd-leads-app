@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 # NY State Open Data endpoint for Active Corporations
 # Updated endpoint as of Feb 2026 (old endpoint 7tqb-y2d4 is no longer available)
 NY_DOS_ENDPOINT = "https://data.ny.gov/resource/n9v6-gdp6.json"
+NY_DOS_FILINGS_ADDR_ENDPOINT = "https://data.ny.gov/resource/2tms-hftb.json"
 
 
 @dataclass
@@ -31,6 +32,8 @@ class DOSEntity:
     county: Optional[str]
     process_name: Optional[str]  # Registered agent name
     process_address: Optional[str]  # Registered agent address
+    ceo_name: Optional[str] = None
+    ceo_address: Optional[str] = None
 
 
 class NYDOSClient:
@@ -178,6 +181,11 @@ class NYDOSClient:
             if record.get(field):
                 process_addr_parts.append(record[field])
         
+        ceo_addr_parts = []
+        for field in ['chairman_address_1', 'chairman_address_2', 'chairman_city', 'chairman_state', 'chairman_zip']:
+            if record.get(field):
+                ceo_addr_parts.append(record[field])
+        
         return DOSEntity(
             dos_id=record.get('dos_id', ''),
             name=record.get('current_entity_name', ''),
@@ -187,7 +195,9 @@ class NYDOSClient:
             formation_date=record.get('initial_dos_filing_date'),  # Changed from dos_file_date
             county=record.get('county'),
             process_name=record.get('dos_process_name'),
-            process_address=', '.join(process_addr_parts) if process_addr_parts else None
+            process_address=', '.join(process_addr_parts) if process_addr_parts else None,
+            ceo_name=record.get('chairman_name'),
+            ceo_address=', '.join(ceo_addr_parts) if ceo_addr_parts else None,
         )
     
     def search_entities(self, name: str, limit: int = 10) -> List[DOSEntity]:
@@ -223,6 +233,53 @@ class NYDOSClient:
             logger.error(f"NY DOS search failed: {e}")
             return []
 
+    def get_filing_officers(self, dos_id: str) -> list[dict]:
+        """Fetch all addr_type=3 officers from the most recent DOS filing for this entity.
+        
+        Uses the NY DOS All Filings Address dataset (2tms-hftb).
+        Returns list of dicts with name, address, city, state, zip, filing_date, filing_num.
+        """
+        try:
+            escaped_id = self._escape_soql(dos_id)
+            params = {
+                "$where": f"corpid_num='{escaped_id}' AND addr_type='3'",
+                "$order": "date_filed DESC",
+                "$limit": 50,
+            }
+            response = self.session.get(NY_DOS_FILINGS_ADDR_ENDPOINT, params=params, timeout=15)
+            response.raise_for_status()
+            results = response.json()
+            
+            if not results:
+                return []
+            
+            most_recent_film = results[0].get('film_num')
+            officers = []
+            for r in results:
+                if r.get('film_num') != most_recent_film:
+                    break
+                
+                addr_parts = [r.get('addr1', ''), r.get('addr2', '')]
+                addr_str = ', '.join(p for p in addr_parts if p and p.strip())
+                
+                officers.append({
+                    'name': r.get('name', '').strip(),
+                    'address': addr_str,
+                    'city': r.get('city', '').strip(),
+                    'state': r.get('state', '').strip(),
+                    'zip': r.get('zip5', '').strip(),
+                    'filing_date': r.get('date_filed'),
+                    'filing_num': r.get('film_num'),
+                })
+            
+            return officers
+        except requests.RequestException as e:
+            logger.error(f"DOS filing officers lookup failed for DOS ID {dos_id}: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error in DOS filing officers lookup: {e}")
+            return []
+
     def search_corporation(self, name: str, limit: int = 10) -> List[DOSEntity]:
         """Backward-compatible alias for legacy API naming."""
         return self.search_entities(name, limit=limit)
@@ -238,8 +295,9 @@ class NYDOSClient:
             Registered agent name or None
         """
         try:
+            escaped_id = self._escape_soql(dos_id)
             params = {
-                "$where": f"dos_id = '{dos_id}'",
+                "$where": f"dos_id = '{escaped_id}'",
                 "$limit": 1
             }
             

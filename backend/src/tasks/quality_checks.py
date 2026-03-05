@@ -32,12 +32,16 @@ def _get_pg_session() -> Session:
 
 
 @celery_app.task(bind=True, name="src.tasks.quality_checks.run_quality_checks")
-def run_quality_checks(self):
+def run_quality_checks(self, job_id: int | None = None):
     """Run all quality checks and create alerts for issues found."""
     session = _get_pg_session()
     alerts = []
 
     try:
+        from src.tasks.ingest import _ensure_or_create_job, _finish_job
+        job_id = _ensure_or_create_job(session, job_id, "quality_checks", "quality")
+        session.commit()
+
         alerts.extend(_check_match_rates(session))
         alerts.extend(_check_volume_anomalies(session))
         alerts.extend(_check_freshness(session))
@@ -57,11 +61,19 @@ def run_quality_checks(self):
                 },
             )
 
+        _finish_job(session, job_id, "completed", len(alerts), len(alerts), 0)
         session.commit()
         logger.info(f"Quality checks complete: {len(alerts)} alerts created")
-        return {"alerts_created": len(alerts)}
+        return {"job_id": job_id, "alerts_created": len(alerts)}
     except Exception as e:
         logger.error(f"Quality checks failed: {e}", exc_info=True)
+        try:
+            from src.tasks.ingest import _finish_job
+            if job_id is not None:
+                _finish_job(session, job_id, "failed", 0, 0, 1, str(e)[:500])
+                session.commit()
+        except Exception:
+            session.rollback()
         session.rollback()
         raise
     finally:
@@ -122,8 +134,13 @@ def _check_volume_anomalies(session: Session) -> list[dict]:
                 session.execute(
                     text("""
                         UPDATE data_quality_log SET volume_anomaly = true
-                        WHERE source_name = :source
-                        ORDER BY run_timestamp DESC LIMIT 1
+                        WHERE id = (
+                            SELECT id
+                            FROM data_quality_log
+                            WHERE source_name = :source
+                            ORDER BY run_timestamp DESC
+                            LIMIT 1
+                        )
                     """),
                     {"source": source},
                 )

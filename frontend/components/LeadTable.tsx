@@ -6,6 +6,7 @@ import { getAuthHeaders } from '../services/auth';
 import { BOROUGHS, BOROUGH_SHORT, formatCurrency, scoreColor } from '../utils/format';
 import { useLeadFilters } from '../hooks/useLeadFilters';
 import { useFilterUrl } from '../hooks/useFilterUrl';
+import LeadKanban from './leads/LeadKanban';
 
 export interface LeadFilterPreset {
   outreachStatuses?: string[];
@@ -52,6 +53,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
   // Selection for bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [enriching, setEnriching] = useState(false);
+  const [viewMode, setViewMode] = useState<'table' | 'kanban'>('table');
 
   const isMounted = useRef(true);
   useEffect(() => {
@@ -603,6 +605,28 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
               <span className="ml-3 text-blue-600">({selectedIds.size} selected)</span>
             )}
           </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setViewMode('table')}
+              className={`px-2 py-1 text-[11px] rounded border transition-colors ${
+                viewMode === 'table'
+                  ? 'bg-blue-50 border-blue-300 text-blue-700'
+                  : 'bg-white border-gray-200 text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Table
+            </button>
+            <button
+              onClick={() => setViewMode('kanban')}
+              className={`px-2 py-1 text-[11px] rounded border transition-colors ${
+                viewMode === 'kanban'
+                  ? 'bg-blue-50 border-blue-300 text-blue-700'
+                  : 'bg-white border-gray-200 text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Kanban
+            </button>
+          </div>
           {selectedIds.size > 0 && (
             <button
               onClick={handleEnrichSelected}
@@ -659,6 +683,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
 
       {/* Data Table — desktop table, mobile cards */}
       <div className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
+        {viewMode === 'kanban' ? (
+          <LeadKanban leads={displayLeads} onSelectLead={onSelectLead} />
+        ) : (
+          <>
         {/* Desktop Table */}
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left">
@@ -1021,6 +1049,8 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
             </select>
           </div>
         </div>
+          </>
+        )}
       </div>
     </div>
   );

@@ -9,9 +9,12 @@ from sqlalchemy import text
 try:
     from src.worker import app as celery_app
 except ImportError:  # pragma: no cover - local fallback when celery unavailable
-    from celery import Celery
+    class _FakeCelery:
+        @staticmethod
+        def task(*args, **kwargs):
+            return lambda fn: fn
 
-    celery_app = Celery("smart_lists_fallback")
+    celery_app = _FakeCelery()
 
 logger = logging.getLogger(__name__)
 

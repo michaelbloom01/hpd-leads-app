@@ -136,13 +136,13 @@ def _resolve_clusters(G: nx.Graph) -> list[dict]:
 
 
 @celery_app.task(bind=True, name="src.tasks.entity_resolution.resolve_entities")
-def resolve_entities(self):
+def resolve_entities(self, job_id: Optional[int] = None):
     """Run graph-based entity resolution and update lead-building relationships."""
     session = _get_pg_session()
 
     try:
-        from src.tasks.ingest import _create_job, _finish_job
-        job_id = _create_job(session, "entity_resolution", "leads")
+        from src.tasks.ingest import _ensure_or_create_job, _finish_job
+        job_id = _ensure_or_create_job(session, job_id, "entity_resolution", "leads")
         session.commit()
 
         G = _build_entity_graph(session)
@@ -178,9 +178,12 @@ def resolve_entities(self):
                 for bbl in cluster["bbls"]:
                     session.execute(
                         text("""
-                            INSERT INTO building_management (bbl, lead_id, is_current, source, effective_date, created_at, updated_at)
-                            VALUES (:bbl, :lid, true, 'entity_resolution', now(), now(), now())
-                            ON CONFLICT DO NOTHING
+                            INSERT INTO building_management (bbl, lead_id, role, is_current, created_at, updated_at)
+                            SELECT :bbl, :lid, 'agent', true, now(), now()
+                            WHERE NOT EXISTS (
+                                SELECT 1 FROM building_management
+                                WHERE bbl = :bbl AND lead_id = :lid AND is_current = true
+                            )
                         """),
                         {"bbl": bbl, "lid": lead_id},
                     )
@@ -193,10 +196,17 @@ def resolve_entities(self):
         _finish_job(session, job_id, "completed", len(clusters), updated, 0)
         session.commit()
         logger.info(f"Entity resolution: {len(clusters)} clusters, {updated} leads updated")
-        return {"clusters": len(clusters), "updated": updated}
+        return {"job_id": job_id, "clusters": len(clusters), "updated": updated}
 
     except Exception as e:
         logger.error(f"Entity resolution failed: {e}", exc_info=True)
+        try:
+            from src.tasks.ingest import _finish_job
+            if job_id is not None:
+                _finish_job(session, job_id, "failed", 0, 0, 1, str(e)[:500])
+                session.commit()
+        except Exception:
+            session.rollback()
         session.rollback()
         session.close()
         raise

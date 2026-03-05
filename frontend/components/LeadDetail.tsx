@@ -27,6 +27,13 @@ const formatRelativeDate = (value: string | null | undefined): string => {
   return years === 1 ? '1 year ago' : `${years} years ago`;
 };
 
+const formatAbsoluteDate = (value: string | null | undefined): string => {
+  if (!value) return '--';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString();
+};
+
 interface Props {
   lead: ApiLead;
   onClose: () => void;
@@ -352,9 +359,17 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     window.open(url, '_blank');
   };
 
+  const toBuildingRouteParam = (raw: string | null | undefined): string | null => {
+    const trimmed = String(raw ?? '').trim();
+    if (!trimmed) return null;
+    return encodeURIComponent(trimmed);
+  };
+
   const openBuildingDetail = (bbl: string) => {
+    const routeParam = toBuildingRouteParam(bbl);
+    if (!routeParam) return;
     onClose();
-    navigate(`/buildings/${bbl}`);
+    navigate(`/buildings/${routeParam}`);
   };
 
   const handleAddBuildingToPipeline = async (bbl: string) => {
@@ -698,7 +713,9 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                   <Suspense fallback={<div className="h-[250px] bg-gray-100 rounded-lg animate-pulse" />}>
                     <PortfolioMap
                       buildings={linkedBuildings.length > 0
-                        ? linkedBuildings.map(b => b.address).filter((address): address is string => Boolean(address))
+                        ? linkedBuildings
+                            .filter((b) => Boolean(b.address))
+                            .map((b) => ({ address: b.address, borough: b.borough || undefined }))
                         : enrichedLead.buildings}
                       boro={enrichedLead.boro}
                       boros={enrichedLead.boros}
@@ -767,7 +784,19 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                     {enrichedLead.phones?.length > 0 ? enrichedLead.phones.map((p, i) => (
                       <div key={i} className="flex items-center justify-between py-1">
                         <a href={`tel:${p.value}`} className="text-emerald-600 text-sm font-mono hover:underline">{p.value}</a>
-                        <span className="text-[10px] text-gray-400">{p.source}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-gray-400">{p.source}</span>
+                          {p.source_url && (
+                            <a
+                              href={p.source_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[10px] text-blue-600 hover:underline"
+                            >
+                              Verify
+                            </a>
+                          )}
+                        </div>
                       </div>
                     )) : enrichedLead.phone && (
                       <a href={`tel:${enrichedLead.phone}`} className="text-emerald-600 text-sm font-mono hover:underline block">{enrichedLead.phone}</a>
@@ -782,7 +811,19 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                     {enrichedLead.emails?.length > 0 ? enrichedLead.emails.map((e, i) => (
                       <div key={i} className="flex items-center justify-between py-1">
                         <a href={`mailto:${e.value}`} className="text-blue-600 text-sm hover:underline">{e.value}</a>
-                        <span className="text-[10px] text-gray-400">{e.source}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-gray-400">{e.source}</span>
+                          {e.source_url && (
+                            <a
+                              href={e.source_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[10px] text-blue-600 hover:underline"
+                            >
+                              Verify
+                            </a>
+                          )}
+                        </div>
                       </div>
                     )) : enrichedLead.email && (
                       <a href={`mailto:${enrichedLead.email}`} className="text-blue-600 text-sm hover:underline block">{enrichedLead.email}</a>
@@ -838,7 +879,11 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                             </span>
                           )}
                           <button
-                            onClick={() => navigate(`/buildings/${building.bbl}`)}
+                            onClick={() => {
+                              const routeParam = toBuildingRouteParam(building.bbl);
+                              if (!routeParam) return;
+                              navigate(`/buildings/${routeParam}`);
+                            }}
                             className="text-[10px] text-blue-600 hover:underline"
                           >
                             View →
@@ -851,12 +896,37 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                                 {c.is_decision_maker ? '★ ' : ''}{c.name}
                               </span>
                               <span className="text-gray-500">{c.role}</span>
-                              <span className={`px-1.5 py-0.5 rounded ${
-                                c.source === 'NY DOS Filing' ? 'bg-blue-50 text-blue-600' :
-                                c.source === 'NY DOS Snapshot' ? 'bg-indigo-50 text-indigo-600' :
-                                'bg-gray-100 text-gray-500'
-                              }`}>{c.source}</span>
-                              <span className="text-[10px] text-gray-400">{formatRelativeDate(c.as_of_date)}</span>
+                              {c.board_role && (
+                                <span className="px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 text-[10px]">
+                                  {c.board_role}
+                                </span>
+                              )}
+                              {c.source_url ? (
+                                <a
+                                  href={c.source_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={`px-1.5 py-0.5 rounded hover:underline ${
+                                    c.source === 'NY DOS Filing' ? 'bg-blue-50 text-blue-600' :
+                                    c.source === 'NY DOS Snapshot' ? 'bg-indigo-50 text-indigo-600' :
+                                    'bg-gray-100 text-gray-500'
+                                  }`}
+                                >
+                                  {c.source}
+                                </a>
+                              ) : (
+                                <span className={`px-1.5 py-0.5 rounded ${
+                                  c.source === 'NY DOS Filing' ? 'bg-blue-50 text-blue-600' :
+                                  c.source === 'NY DOS Snapshot' ? 'bg-indigo-50 text-indigo-600' :
+                                  'bg-gray-100 text-gray-500'
+                                }`}>{c.source}</span>
+                              )}
+                              <span
+                                className="text-[10px] text-gray-400"
+                                title={`Published: ${formatAbsoluteDate(c.publication_date || c.as_of_date)}`}
+                              >
+                                {formatRelativeDate(c.publication_date || c.as_of_date)}
+                              </span>
                               {c.confidence_hint && (
                                 <span className={`px-1.5 py-0.5 rounded text-[10px] ${c.confidence_hint === 'Likely board member (resident)' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'}`}>
                                   {c.confidence_hint}
@@ -995,7 +1065,9 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 <Suspense fallback={<div className="h-[250px] bg-gray-100 rounded-lg animate-pulse" />}>
                   <PortfolioMap
                     buildings={linkedBuildings.length > 0
-                      ? linkedBuildings.map(b => b.address).filter((address): address is string => Boolean(address))
+                      ? linkedBuildings
+                          .filter((b) => Boolean(b.address))
+                          .map((b) => ({ address: b.address, borough: b.borough || undefined }))
                       : enrichedLead.buildings}
                     boro={enrichedLead.boro}
                     boros={enrichedLead.boros}
@@ -1060,21 +1132,37 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
 
           {/* TAB: DUE DILIGENCE */}
           {activeTab === 'dd' && (
-            <div className="flex flex-col items-center justify-center py-16 text-center space-y-4">
-              <div className="w-16 h-16 rounded-full bg-indigo-50 flex items-center justify-center">
-                <svg className="w-8 h-8 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-gray-900 mb-1">Due Diligence Reports</h3>
-                <p className="text-sm text-gray-500 max-w-sm">
-                  Automated DD reports with portfolio analysis, financials, violation history, and comparable companies are coming soon.
+            <div className="space-y-4">
+              <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
+                <h3 className="text-sm font-bold text-indigo-800">Due Diligence Snapshot</h3>
+                <p className="text-xs text-indigo-700 mt-1">
+                  Auto-generated from current lead, building, enrichment, and outreach data.
                 </p>
               </div>
 
-              {/* Quick Risk Snapshot (available now) */}
-              <div className="w-full max-w-md bg-gray-50 border border-gray-200 rounded-xl p-4 text-left mt-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="bg-white border border-gray-200 rounded-xl p-4">
+                  <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Portfolio & Revenue</h4>
+                  <div className="space-y-1.5 text-sm text-gray-700">
+                    <div>Buildings: <span className="font-medium">{enrichedLead.portfolio_size || 0}</span></div>
+                    <div>Units: <span className="font-medium">{(enrichedLead.total_units || 0).toLocaleString()}</span></div>
+                    <div>Avg units/building: <span className="font-medium">{(enrichedLead.portfolio_size || 0) > 0 ? ((enrichedLead.total_units || 0) / enrichedLead.portfolio_size).toFixed(1) : '--'}</span></div>
+                    <div>Estimated annual fee: <span className="font-medium">{enrichedLead.estimated_annual_revenue ? formatCurrency(enrichedLead.estimated_annual_revenue) : '--'}</span></div>
+                  </div>
+                </div>
+
+                <div className="bg-white border border-gray-200 rounded-xl p-4">
+                  <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Data Confidence</h4>
+                  <div className="space-y-1.5 text-sm text-gray-700">
+                    <div>Lead score: <span className="font-medium">{(enrichedLead.score || 0).toFixed(1)}</span></div>
+                    <div>Enrichment status: <span className="font-medium capitalize">{enrichedLead.enrichment_status || 'none'}</span></div>
+                    <div>Contact coverage: <span className="font-medium">{enrichedLead.phone || enrichedLead.email ? 'Direct contact found' : 'No direct contact found'}</span></div>
+                    <div>Pipeline stage: <span className="font-medium capitalize">{(enrichedLead.pipeline_stage || 'research').replace(/_/g, ' ')}</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-left">
                 <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-3">Quick Risk Snapshot</h4>
                 <div className="space-y-2 text-sm">
                   {enrichedLead.violations_per_unit > 1.0 && (
@@ -1108,6 +1196,15 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                     </div>
                   )}
                 </div>
+              </div>
+
+              <div className="bg-white border border-gray-200 rounded-xl p-4">
+                <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Recommended Next Actions</h4>
+                <ul className="text-sm text-gray-700 space-y-1">
+                  <li>Prioritize decision-maker outreach for top-contact buildings in this lead.</li>
+                  <li>Validate one high-signal building (violations/permits/litigation) before first call.</li>
+                  <li>Move to <span className="font-medium">first_contact</span> when script + contact owner are confirmed.</li>
+                </ul>
               </div>
             </div>
           )}
