@@ -6,6 +6,7 @@ probability, understand why, and do outreach.
 import logging
 import re
 from typing import Optional
+from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from slowapi import Limiter
@@ -40,7 +41,7 @@ def _normalize_bbl_digits(raw_value: Optional[str]) -> Optional[str]:
 
 
 async def _resolve_canonical_bbl(session: AsyncSession, raw_bbl: str) -> Optional[str]:
-    candidate = (raw_bbl or "").strip()
+    candidate = unquote(raw_bbl or "").strip()
     if not candidate:
         return None
 
@@ -55,6 +56,13 @@ async def _resolve_canonical_bbl(session: AsyncSession, raw_bbl: str) -> Optiona
     if not digits:
         return None
 
+    digits_row = (await session.execute(
+        text("SELECT bbl FROM buildings WHERE bbl = :digits LIMIT 1"),
+        {"digits": digits},
+    )).first()
+    if digits_row:
+        return str(digits_row[0])
+
     normalized_row = (await session.execute(
         text("""
             SELECT bbl
@@ -67,6 +75,8 @@ async def _resolve_canonical_bbl(session: AsyncSession, raw_bbl: str) -> Optiona
     )).first()
     if normalized_row:
         return str(normalized_row[0])
+
+    logger.warning("Could not resolve BBL: raw=%r, normalized_digits=%s", raw_bbl, digits)
     return None
 
 

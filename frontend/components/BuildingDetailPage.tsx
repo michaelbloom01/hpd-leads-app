@@ -8,7 +8,6 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import {
   fetchBuildingDetail, fetchBuildingTimeline, fetchBuildingScoreHistory,
   addBuildingToPipeline, fetchBuildingOutreachEvents, logBuildingOutreachEvent,
-  fetchBuildings,
   type BuildingContactEntry, type BuildingDetail,
 } from '../services/buildings-api';
 import { toast } from 'react-hot-toast';
@@ -63,106 +62,45 @@ const eventIcons: Record<string, string> = {
 };
 
 const BuildingDetailPage: React.FC = () => {
-  const { bbl } = useParams<{ bbl: string }>();
+  const { bbl: rawBbl } = useParams<{ bbl: string }>();
   const navigate = useNavigate();
-  const [resolvedBbl, setResolvedBbl] = React.useState<string | null>(null);
-  const [resolvingBbl, setResolvingBbl] = React.useState(true);
 
-  React.useEffect(() => {
-    let cancelled = false;
+  const decodedBbl = React.useMemo(() => {
+    if (!rawBbl) return null;
+    return decodeURIComponent(rawBbl).trim() || null;
+  }, [rawBbl]);
 
-    const normalizeBbl = (raw: string | undefined): string | null => {
-      if (!raw) return null;
-      let decoded = decodeURIComponent(raw).trim();
-      // Accept common decimal serialization artifacts like "3010850001.0".
-      if (/^\d{10}\.0+$/.test(decoded)) {
-        decoded = decoded.split('.')[0];
-      }
-      const digits = decoded.replace(/\D/g, '');
-      if (digits.length === 10) return digits;
-      if (digits.length > 0 && digits.length < 10) return digits.padStart(10, '0');
-      return null;
-    };
-
-    const resolve = async () => {
-      setResolvingBbl(true);
-      try {
-        const raw = decodeURIComponent(bbl || '').trim();
-        if (!raw) {
-          if (!cancelled) {
-            setResolvedBbl(null);
-            setResolvingBbl(false);
-          }
-          return;
-        }
-
-        const normalized = normalizeBbl(raw);
-        const searchCandidates = Array.from(new Set([
-          raw,
-          normalized || '',
-        ].filter(Boolean)));
-
-        let resolvedFromSearch: string | null = null;
-        for (const candidate of searchCandidates) {
-          const list = await fetchBuildings({ search: candidate, limit: 10, offset: 0 });
-          const rows = list.buildings || [];
-          if (!rows.length) continue;
-
-          const exactByNormalized = normalized
-            ? rows.find((row) => normalizeBbl(String(row.bbl || '')) === normalized)
-            : null;
-          const chosen = exactByNormalized || rows[0];
-          const chosenBbl = String(chosen?.bbl || '').trim();
-          if (chosenBbl) {
-            resolvedFromSearch = chosenBbl;
-            break;
-          }
-        }
-
-        if (!cancelled) {
-          setResolvedBbl(resolvedFromSearch || normalized || null);
-        }
-      } catch {
-        if (!cancelled) setResolvedBbl(null);
-      } finally {
-        if (!cancelled) setResolvingBbl(false);
-      }
-    };
-
-    resolve();
-    return () => {
-      cancelled = true;
-    };
-  }, [bbl]);
-
-  const { data: building, isLoading } = useQuery({
-    queryKey: ['building', resolvedBbl],
-    queryFn: () => fetchBuildingDetail(resolvedBbl!),
-    enabled: !!resolvedBbl,
+  const { data: building, isLoading, error } = useQuery({
+    queryKey: ['building', decodedBbl],
+    queryFn: () => fetchBuildingDetail(decodedBbl!),
+    enabled: !!decodedBbl,
+    retry: 1,
   });
 
+  const activeBbl = building?.bbl || decodedBbl;
+
   const { data: timeline } = useQuery({
-    queryKey: ['building-timeline', resolvedBbl],
-    queryFn: () => fetchBuildingTimeline(resolvedBbl!),
-    enabled: !!resolvedBbl,
+    queryKey: ['building-timeline', activeBbl],
+    queryFn: () => fetchBuildingTimeline(activeBbl!),
+    enabled: !!activeBbl && !!building,
   });
 
   const { data: scoreHistory } = useQuery({
-    queryKey: ['building-score-history', resolvedBbl],
-    queryFn: () => fetchBuildingScoreHistory(resolvedBbl!),
-    enabled: !!resolvedBbl,
+    queryKey: ['building-score-history', activeBbl],
+    queryFn: () => fetchBuildingScoreHistory(activeBbl!),
+    enabled: !!activeBbl && !!building,
   });
 
   const { data: outreachData, refetch: refetchOutreach } = useQuery({
-    queryKey: ['building-outreach', resolvedBbl],
-    queryFn: () => fetchBuildingOutreachEvents(resolvedBbl!),
-    enabled: !!resolvedBbl,
+    queryKey: ['building-outreach', activeBbl],
+    queryFn: () => fetchBuildingOutreachEvents(activeBbl!),
+    enabled: !!activeBbl && !!building,
   });
 
   const handleLogOutreach = async (stage: string) => {
-    if (!resolvedBbl) return;
+    if (!activeBbl) return;
     try {
-      await logBuildingOutreachEvent(resolvedBbl, { stage, method: 'manual' });
+      await logBuildingOutreachEvent(activeBbl, { stage, method: 'manual' });
       toast.success(`Outreach logged: ${stage}`);
       refetchOutreach();
     } catch {
@@ -171,17 +109,17 @@ const BuildingDetailPage: React.FC = () => {
   };
 
   const handleAddToPipeline = async () => {
-    if (!resolvedBbl) return;
+    if (!activeBbl) return;
     try {
-      await addBuildingToPipeline(resolvedBbl);
+      await addBuildingToPipeline(activeBbl);
       toast.success('Building added to pipeline');
     } catch {
       toast.error('Failed to add to pipeline');
     }
   };
 
-  if (resolvingBbl || isLoading) return <div className="p-8 text-center text-gray-400">Loading...</div>;
-  if (!resolvedBbl || !building) return <div className="p-8 text-center text-red-500">Building not found</div>;
+  if (isLoading) return <div className="p-8 text-center text-gray-400">Loading...</div>;
+  if (!decodedBbl || !building) return <div className="p-8 text-center text-red-500">Building not found{error ? ` — ${(error as Error).message}` : ''}</div>;
 
   const latestHistoryBreakdown =
     scoreHistory && scoreHistory.length > 0
