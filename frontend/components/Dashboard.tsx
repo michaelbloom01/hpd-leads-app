@@ -34,7 +34,7 @@ import {
   formatCurrency,
   scoreColor,
 } from '../utils/format';
-import { fetchBuildingStats, type BuildingStats, type BuildingOutreachStats } from '../services/buildings-api';
+import { fetchBuildingStats, fetchBuildings, type BuildingStats, type BuildingOutreachStats, type BuildingRow } from '../services/buildings-api';
 
 interface LeadFilterPreset {
   outreachStatuses?: string[];
@@ -74,6 +74,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
   const [selectedStage, setSelectedStage] = useState<string | null>(null);
   const [drawerLeads, setDrawerLeads] = useState<ApiLead[]>([]);
   const [drawerLoading, setDrawerLoading] = useState(false);
+  const [selectedBuildingStage, setSelectedBuildingStage] = useState<keyof Pick<BuildingOutreachStats, 'pipeline' | 'contacted' | 'meeting' | 'won' | 'lost'> | null>(null);
+  const [buildingDrawerRows, setBuildingDrawerRows] = useState<BuildingRow[]>([]);
+  const [buildingDrawerLoading, setBuildingDrawerLoading] = useState(false);
 
   const isMounted = useRef(true);
   useEffect(() => {
@@ -275,6 +278,32 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
     if (filters.has_email) preset.hasEmail = true;
     if (filters.min_portfolio) preset.minPortfolio = String(filters.min_portfolio);
     onNavigateToLeads?.(preset);
+  };
+
+  const handleBuildingStageClick = async (
+    stageKey: keyof Pick<BuildingOutreachStats, 'pipeline' | 'contacted' | 'meeting' | 'won' | 'lost'>,
+  ) => {
+    if (selectedBuildingStage === stageKey) {
+      setSelectedBuildingStage(null);
+      setBuildingDrawerRows([]);
+      return;
+    }
+    setSelectedBuildingStage(stageKey);
+    setBuildingDrawerLoading(true);
+    try {
+      const result = await fetchBuildings({
+        outreach_status: stageKey,
+        sort_by: 'churn_score',
+        sort_dir: 'desc',
+        limit: 50,
+        offset: 0,
+      });
+      if (isMounted.current) setBuildingDrawerRows(result.buildings || []);
+    } catch {
+      if (isMounted.current) setBuildingDrawerRows([]);
+    } finally {
+      if (isMounted.current) setBuildingDrawerLoading(false);
+    }
   };
 
   // ─── Derived data ────────────────────────────────────────────
@@ -644,10 +673,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
               { key: 'lost', label: 'Lost', tw: 'bg-gray-400' },
             ] as Array<{ key: keyof Pick<BuildingOutreachStats, 'pipeline' | 'contacted' | 'meeting' | 'won' | 'lost'>; label: string; tw: string }>).map((stage) => {
               const count = buildingStats.outreach?.[stage.key] ?? 0;
+              const isSelected = selectedBuildingStage === stage.key;
               return (
-                <div
+                <button
                   key={stage.key}
-                  className="flex-1 rounded-xl overflow-hidden"
+                  onClick={() => handleBuildingStageClick(stage.key)}
+                  className={`flex-1 rounded-xl overflow-hidden transition-all duration-200 ${isSelected ? 'ring-2 ring-offset-2 ring-blue-500' : ''}`}
                 >
                   <div
                     className={`${count > 0 ? stage.tw : 'bg-gray-100'} rounded-xl px-2 text-center flex flex-col items-center justify-center`}
@@ -656,10 +687,65 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
                     <div className={`text-lg font-bold font-mono ${count > 0 ? 'text-white' : 'text-gray-400'}`}>{count}</div>
                     <div className={`text-[9px] uppercase tracking-wider font-medium ${count > 0 ? 'text-white/70' : 'text-gray-400'}`}>{stage.label}</div>
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
+
+          {selectedBuildingStage && (
+            <div className="mt-4 pt-4 border-t border-gray-200 animate-in slide-in-from-top duration-300">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-sm font-bold text-gray-700">
+                  {selectedBuildingStage.charAt(0).toUpperCase() + selectedBuildingStage.slice(1)} — {buildingDrawerRows.length} building{buildingDrawerRows.length !== 1 ? 's' : ''}
+                </h4>
+                <button
+                  onClick={() => { setSelectedBuildingStage(null); setBuildingDrawerRows([]); }}
+                  className="p-1 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+              {buildingDrawerLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : buildingDrawerRows.length === 0 ? (
+                <p className="text-sm text-gray-400 py-4 text-center">No buildings in this stage</p>
+              ) : (
+                <div className="overflow-x-auto max-h-80 overflow-y-auto">
+                  <table className="w-full">
+                    <thead className="sticky top-0 bg-white z-10">
+                      <tr className="text-[10px] text-gray-400 uppercase tracking-wider border-b border-gray-100">
+                        <th className="text-left py-2 px-3">Building</th>
+                        <th className="text-right py-2 px-3">Units</th>
+                        <th className="text-right py-2 px-3">Score</th>
+                        <th className="text-left py-2 px-3">PM Company</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {buildingDrawerRows.map((row) => (
+                        <tr key={row.bbl} className="hover:bg-blue-50/50 transition-colors">
+                          <td className="py-2.5 px-3">
+                            <p className="text-sm font-medium text-gray-900 truncate max-w-[280px]">{row.address || row.bbl}</p>
+                            <p className="text-[10px] text-gray-400">{row.borough || 'N/A'} • {row.bbl}</p>
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono text-sm text-gray-700">{(row.unit_count || 0).toLocaleString()}</td>
+                          <td className="py-2.5 px-3 text-right">
+                            {row.churn_score != null ? (
+                              <span className="font-mono font-bold text-sm text-gray-700">{row.churn_score.toFixed(1)}</span>
+                            ) : (
+                              <span className="text-xs text-gray-300">—</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-xs text-gray-600">{row.pm_company || 'Unknown'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
