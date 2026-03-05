@@ -471,7 +471,7 @@ def ingest_acris_transactions(self, job_id: Optional[int] = None):
             "$select": "document_id,borough,block,lot",
             "$where": "borough IS NOT NULL AND block IS NOT NULL AND lot IS NOT NULL",
             "$limit": 50000,
-            "$order": ":id",
+            "$order": "document_id DESC",
         })
         doc_to_bbl = {}
         for legal_row in legals:

@@ -242,7 +242,7 @@ const AgentChat: React.FC<AgentChatProps> = ({
       }
     };
 
-    // Safety timeout: if no events received for 150 seconds, surface an error.
+    // Safety timeout: if no events received for 180 seconds, surface an error.
     // Re-armed on every event (including keepalives) so a mid-stream hang is also caught.
     let safetyTimer: ReturnType<typeof setTimeout>;
     const armSafetyTimeout = () => {
@@ -254,10 +254,10 @@ const AgentChat: React.FC<AgentChatProps> = ({
           setIsStreaming(false);
           setStatus(null);
           setLastFailedMsg(text.trim());
-          accumulatedError = 'No response received after 90 seconds. The server may be starting up - try again.';
+          accumulatedError = 'No response received after 180 seconds. The server may be waking up or processing a large request. Please retry.';
           updateAssistant();
         }
-      }, 150_000);
+      }, 180_000);
     };
     armSafetyTimeout();
 
@@ -404,9 +404,14 @@ const AgentChat: React.FC<AgentChatProps> = ({
                       AI is analyzing your data...
                     </p>
                   )}
-                  {elapsedSecs >= 30 && (
+                  {elapsedSecs >= 30 && elapsedSecs < 90 && (
                     <p className="text-xs text-amber-500 mt-0.5">
                       Taking longer than usual. Complex queries can take up to 2 minutes.
+                    </p>
+                  )}
+                  {elapsedSecs >= 90 && (
+                    <p className="text-xs text-amber-600 mt-0.5">
+                      Still processing. If this is the first request after idle, the backend may be warming up.
                     </p>
                   )}
                 </div>

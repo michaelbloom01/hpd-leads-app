@@ -1,4 +1,4 @@
-import React, { useMemo, useEffect, useRef } from 'react';
+import React, { useMemo, useEffect, useRef, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -47,6 +47,51 @@ function approximateCoords(address: string, boro?: string): [number, number] | n
   return [base[0] + latOffset, base[1] + lngOffset];
 }
 
+type GeocodeResult = [number, number] | null;
+const geocodeCache = new Map<string, GeocodeResult>();
+
+async function geocodeAddress(address: string, borough?: string): Promise<GeocodeResult> {
+  const query = `${address}, ${borough || 'New York'}, NY`;
+  const cacheKey = query.toUpperCase();
+  if (geocodeCache.has(cacheKey)) return geocodeCache.get(cacheKey) ?? null;
+
+  try {
+    const url = new URL('https://nominatim.openstreetmap.org/search');
+    url.searchParams.set('q', query);
+    url.searchParams.set('format', 'jsonv2');
+    url.searchParams.set('limit', '1');
+    url.searchParams.set('countrycodes', 'us');
+
+    const response = await fetch(url.toString(), {
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+    if (!response.ok) {
+      geocodeCache.set(cacheKey, null);
+      return null;
+    }
+    const payload = await response.json() as Array<{ lat: string; lon: string }>;
+    const first = payload?.[0];
+    if (!first) {
+      geocodeCache.set(cacheKey, null);
+      return null;
+    }
+    const lat = Number(first.lat);
+    const lon = Number(first.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      geocodeCache.set(cacheKey, null);
+      return null;
+    }
+    const coords: [number, number] = [lat, lon];
+    geocodeCache.set(cacheKey, coords);
+    return coords;
+  } catch {
+    geocodeCache.set(cacheKey, null);
+    return null;
+  }
+}
+
 // Auto-fit bounds component
 function FitBounds({ positions }: { positions: [number, number][] }) {
   const map = useMap();
@@ -61,8 +106,10 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
   return null;
 }
 
+export type BuildingMapEntry = string | { address: string; borough?: string };
+
 interface PortfolioMapProps {
-  buildings: string[];
+  buildings: (string | BuildingMapEntry)[];
   boro?: string;
   boros?: string[];
   height?: string;
@@ -70,25 +117,50 @@ interface PortfolioMapProps {
 
 const PortfolioMap: React.FC<PortfolioMapProps> = ({ buildings, boro, boros, height = '250px' }) => {
   const mapRef = useRef<any>(null);
-  
-  const positions = useMemo(() => {
-    if (!buildings || buildings.length === 0) return [];
-    
-    return buildings.slice(0, 100).map((building, i) => {
-      // Try to determine borough from building address or use provided boro
-      let buildingBoro = boro || '';
-      if (boros && boros.length > 0) {
-        // Distribute buildings across boroughs proportionally
-        buildingBoro = boros[Math.floor(i / buildings.length * boros.length)] || boros[0] || '';
+  const [positions, setPositions] = useState<Array<{ position: [number, number]; address: string; approximate: boolean }>>([]);
+
+  const normalizedBuildings = useMemo(() => {
+    return (buildings || []).slice(0, 100).map((building, i) => {
+      const addr = typeof building === 'string' ? building : building.address;
+      const entryBoro = typeof building === 'object' && building.borough ? building.borough : undefined;
+      let buildingBoro = entryBoro || boro || '';
+      if (!entryBoro && boros && boros.length > 0) {
+        buildingBoro = boros[Math.floor((i / Math.max(buildings.length, 1)) * boros.length)] || boros[0] || '';
       }
-      
-      const coords = approximateCoords(building, buildingBoro);
-      return {
-        position: coords as [number, number],
-        address: building,
-      };
-    }).filter(p => p.position !== null);
+      return { addr, buildingBoro };
+    });
   }, [buildings, boro, boros]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const resolvePositions = async () => {
+      if (!normalizedBuildings.length) {
+        setPositions([]);
+        return;
+      }
+
+      const resolved: Array<{ position: [number, number]; address: string; approximate: boolean }> = [];
+      for (let i = 0; i < normalizedBuildings.length; i++) {
+        const { addr, buildingBoro } = normalizedBuildings[i];
+        let coords: [number, number] | null = null;
+        let approximate = true;
+
+        // Keep external geocoding bounded; fallback for the rest.
+        if (i < 25) {
+          coords = await geocodeAddress(addr, buildingBoro);
+          approximate = !coords;
+        }
+        if (!coords) coords = approximateCoords(addr, buildingBoro);
+        if (coords) resolved.push({ position: coords, address: addr, approximate });
+      }
+
+      if (!cancelled) setPositions(resolved);
+    };
+    resolvePositions();
+    return () => {
+      cancelled = true;
+    };
+  }, [normalizedBuildings]);
 
   if (positions.length === 0) return null;
 
@@ -117,7 +189,10 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({ buildings, boro, boros, hei
         {positions.map((p, i) => (
           <Marker key={i} position={p.position} icon={smallMarker}>
             <Popup>
-              <span className="text-xs">{p.address}</span>
+              <span className="text-xs">
+                {p.address}
+                {p.approximate ? ' (approximate)' : ''}
+              </span>
             </Popup>
           </Marker>
         ))}

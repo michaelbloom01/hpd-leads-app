@@ -8,7 +8,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import {
   fetchBuildingDetail, fetchBuildingTimeline, fetchBuildingScoreHistory,
   addBuildingToPipeline, fetchBuildingOutreachEvents, logBuildingOutreachEvent,
-  type BuildingContactEntry,
+  type BuildingContactEntry, type BuildingDetail,
 } from '../services/buildings-api';
 import { toast } from 'react-hot-toast';
 
@@ -106,7 +106,11 @@ const BuildingDetailPage: React.FC = () => {
   if (isLoading) return <div className="p-8 text-center text-gray-400">Loading...</div>;
   if (!building) return <div className="p-8 text-center text-red-500">Building not found</div>;
 
-  const breakdown = building.churn_breakdown;
+  const latestHistoryBreakdown =
+    scoreHistory && scoreHistory.length > 0
+      ? (scoreHistory[0]?.churn_breakdown as BuildingDetail['churn_breakdown'])
+      : null;
+  const breakdown: BuildingDetail['churn_breakdown'] = building.churn_breakdown || latestHistoryBreakdown;
   const chartData = scoreHistory?.slice().reverse().map(h => ({
     date: new Date(h.scored_at).toLocaleDateString(),
     score: h.churn_score,

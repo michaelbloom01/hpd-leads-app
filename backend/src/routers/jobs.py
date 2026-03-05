@@ -228,7 +228,7 @@ async def start_job(
         "buildings", "hpd_complaints", "acris", "hpd_violations",
         "dob_permits", "hpd_litigation", "emergency_repairs", "aep",
         "evictions", "energy", "facades", "pad", "scoring", "enrichment",
-        "smart_lists_evaluation",
+        "smart_lists_evaluation", "entity_resolution", "quality_checks",
     ]
     if job_type not in valid_types:
         raise HTTPException(400, f"Unknown job type: {job_type}. Valid: {valid_types}")
@@ -365,6 +365,56 @@ async def start_job(
             )
             from src.tasks.smart_lists import run_auto_evaluate_job
             asyncio.create_task(asyncio.to_thread(run_auto_evaluate_job.run, job_id=job_id, limit=limit))
+            dispatch_mode = "in_process"
+
+        return {
+            "status": "queued",
+            "job_type": job_type,
+            "requested_job_type": original_job_type,
+            "job_id": job_id,
+            "limit": limit,
+            "dispatch_mode": dispatch_mode,
+        }
+
+    if job_type == "entity_resolution":
+        dispatch_mode = "celery"
+        try:
+            from src.tasks.entity_resolution import resolve_entities
+            resolve_entities.delay(job_id=job_id)
+        except Exception as exc:
+            logger.warning(
+                "Celery dispatch failed for entity_resolution job %s, falling back to in-process execution: %s",
+                job_id,
+                exc,
+            )
+            from src.tasks.entity_resolution import resolve_entities
+            fn = resolve_entities.run if hasattr(resolve_entities, "run") else resolve_entities
+            asyncio.create_task(asyncio.to_thread(fn, job_id=job_id))
+            dispatch_mode = "in_process"
+
+        return {
+            "status": "queued",
+            "job_type": job_type,
+            "requested_job_type": original_job_type,
+            "job_id": job_id,
+            "limit": limit,
+            "dispatch_mode": dispatch_mode,
+        }
+
+    if job_type == "quality_checks":
+        dispatch_mode = "celery"
+        try:
+            from src.tasks.quality_checks import run_quality_checks
+            run_quality_checks.delay(job_id=job_id)
+        except Exception as exc:
+            logger.warning(
+                "Celery dispatch failed for quality_checks job %s, falling back to in-process execution: %s",
+                job_id,
+                exc,
+            )
+            from src.tasks.quality_checks import run_quality_checks
+            fn = run_quality_checks.run if hasattr(run_quality_checks, "run") else run_quality_checks
+            asyncio.create_task(asyncio.to_thread(fn, job_id=job_id))
             dispatch_mode = "in_process"
 
         return {
