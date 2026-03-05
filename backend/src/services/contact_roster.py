@@ -268,28 +268,16 @@ async def get_building_contacts(
         if role == "CorporateOwner" and not corporate_owner:
             corporate_owner = name
 
-    try:
-        cache_row = (
-            await session.execute(
-                text("""
-                    SELECT result, cached_at, expires_at
-                    FROM dos_cache
-                    WHERE cache_key = :cache_key
-                """),
-                {"cache_key": f"officers:{bbl}"},
-            )
-        ).first()
-    except Exception:
-        cache_row = (
-            await session.execute(
-                text("""
-                    SELECT result, cached_at
-                    FROM dos_cache
-                    WHERE cache_key = :cache_key
-                """),
-                {"cache_key": f"officers:{bbl}"},
-            )
-        ).first()
+    cache_row = (
+        await session.execute(
+            text("""
+                SELECT result, cached_at
+                FROM dos_cache
+                WHERE cache_key = :cache_key
+            """),
+            {"cache_key": f"officers:{bbl}"},
+        )
+    ).first()
 
     payload, is_stale, last_refreshed_at = _get_dos_cache_payload_from_row(
         dict(cache_row._mapping) if cache_row else None
@@ -473,24 +461,14 @@ def get_building_contacts_sync(
         if role == "CorporateOwner" and not corporate_owner:
             corporate_owner = name
 
-    try:
-        cache_row = conn.execute(
-            text("""
-                SELECT result, cached_at, expires_at
-                FROM dos_cache
-                WHERE cache_key = :cache_key
-            """),
-            {"cache_key": f"officers:{bbl}"},
-        ).first()
-    except Exception:
-        cache_row = conn.execute(
-            text("""
-                SELECT result, cached_at
-                FROM dos_cache
-                WHERE cache_key = :cache_key
-            """),
-            {"cache_key": f"officers:{bbl}"},
-        ).first()
+    cache_row = conn.execute(
+        text("""
+            SELECT result, cached_at
+            FROM dos_cache
+            WHERE cache_key = :cache_key
+        """),
+        {"cache_key": f"officers:{bbl}"},
+    ).first()
     payload, is_stale, last_refreshed_at = _get_dos_cache_payload_from_row(
         dict(cache_row._mapping) if cache_row else None
     )

@@ -7,7 +7,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 try:
@@ -194,7 +194,6 @@ def refresh_dos_contacts(self, bbl: str, corporate_owner_name: str):
         )
 
     now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(days=30)
     cache_key = f"officers:{bbl}"
 
     engine = create_engine(get_sync_url())
@@ -204,41 +203,20 @@ def refresh_dos_contacts(self, bbl: str, corporate_owner_name: str):
                 "cache_key": cache_key,
                 "result": json.dumps(payload),
                 "cached_at": now,
-                "expires_at": expires_at,
             }
-            try:
-                conn.execute(
-                    text(
-                        """
-                        INSERT INTO dos_cache (cache_key, result, cached_at, expires_at)
-                        VALUES (:cache_key, :result, :cached_at, :expires_at)
-                        ON CONFLICT (cache_key)
-                        DO UPDATE SET
-                            result = EXCLUDED.result,
-                            cached_at = EXCLUDED.cached_at,
-                            expires_at = EXCLUDED.expires_at
-                        """
-                    ),
-                    params,
-                )
-            except Exception:
-                conn.execute(
-                    text(
-                        """
-                        INSERT INTO dos_cache (cache_key, result, cached_at)
-                        VALUES (:cache_key, :result, :cached_at)
-                        ON CONFLICT (cache_key)
-                        DO UPDATE SET
-                            result = EXCLUDED.result,
-                            cached_at = EXCLUDED.cached_at
-                        """
-                    ),
-                    {
-                        "cache_key": cache_key,
-                        "result": json.dumps(payload),
-                        "cached_at": now,
-                    },
-                )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO dos_cache (cache_key, result, cached_at)
+                    VALUES (:cache_key, :result, :cached_at)
+                    ON CONFLICT (cache_key)
+                    DO UPDATE SET
+                        result = EXCLUDED.result,
+                        cached_at = EXCLUDED.cached_at
+                    """
+                ),
+                params,
+            )
     finally:
         engine.dispose()
 
