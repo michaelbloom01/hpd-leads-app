@@ -19,6 +19,9 @@ app = Celery(
         "src.tasks.smart_lists",
         "src.tasks.quality_checks",
         "src.tasks.entity_resolution",
+        "src.tasks.lead_materialization",
+        "src.tasks.generate_leads",
+        "src.tasks.reconcile",
     ],
 )
 
