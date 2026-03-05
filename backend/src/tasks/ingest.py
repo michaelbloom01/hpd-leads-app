@@ -422,7 +422,7 @@ def ingest_hpd_complaints(self, job_id: Optional[int] = None):
     try:
         records = _socrata_fetch(DATASETS["hpd_complaints"], {
             "$select": "complaintid,buildingid,boroughid,block,lot,status,"
-                       "statusdate,statusid,complaintid,majorcategory,"
+                       "statusdate,statusid,majorcategory,"
                        "minorcategory,receiveddate",
             "$order": "receiveddate DESC",
             "$limit": 50000,
