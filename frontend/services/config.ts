@@ -4,6 +4,8 @@
  */
 
 export const API_BASE_URL = (import.meta.env.VITE_API_URL || '')
+  .replace(/\\r/g, '')
+  .replace(/\\n/g, '')
+  .replace(/[\r\n]+/g, '')
   .trim()
-  .replace(/\\r\\n$/, '')
-  .replace(/[\r\n]+$/, '');
+  .replace(/\/+$/, '');

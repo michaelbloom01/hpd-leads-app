@@ -114,11 +114,7 @@ if _env != "production":
         "http://localhost:3001", "http://localhost:3002",
     ])
 
-_origin_regex = None
-if _env == "production" and _cors_origins_env:
-    _origin_regex = None
-else:
-    _origin_regex = r"https://hpd-leads.*\.vercel\.app"
+_origin_regex = r"https://[-\w]+\.vercel\.app"
 
 app.add_middleware(
     CORSMiddleware,
