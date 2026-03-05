@@ -352,9 +352,17 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     window.open(url, '_blank');
   };
 
+  const toBuildingRouteParam = (raw: string | null | undefined): string | null => {
+    const trimmed = String(raw ?? '').trim();
+    if (!trimmed) return null;
+    return encodeURIComponent(trimmed);
+  };
+
   const openBuildingDetail = (bbl: string) => {
+    const routeParam = toBuildingRouteParam(bbl);
+    if (!routeParam) return;
     onClose();
-    navigate(`/buildings/${bbl}`);
+    navigate(`/buildings/${routeParam}`);
   };
 
   const handleAddBuildingToPipeline = async (bbl: string) => {
@@ -838,7 +846,11 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                             </span>
                           )}
                           <button
-                            onClick={() => navigate(`/buildings/${building.bbl}`)}
+                            onClick={() => {
+                              const routeParam = toBuildingRouteParam(building.bbl);
+                              if (!routeParam) return;
+                              navigate(`/buildings/${routeParam}`);
+                            }}
                             className="text-[10px] text-blue-600 hover:underline"
                           >
                             View →

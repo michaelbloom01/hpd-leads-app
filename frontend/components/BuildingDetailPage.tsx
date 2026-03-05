@@ -66,7 +66,11 @@ const BuildingDetailPage: React.FC = () => {
 
     const normalizeBbl = (raw: string | undefined): string | null => {
       if (!raw) return null;
-      const decoded = decodeURIComponent(raw).trim();
+      let decoded = decodeURIComponent(raw).trim();
+      // Accept common decimal serialization artifacts like "3010850001.0".
+      if (/^\d{10}\.0+$/.test(decoded)) {
+        decoded = decoded.split('.')[0];
+      }
       const digits = decoded.replace(/\D/g, '');
       if (digits.length === 10) return digits;
       if (digits.length > 0 && digits.length < 10) return digits.padStart(10, '0');
@@ -97,7 +101,7 @@ const BuildingDetailPage: React.FC = () => {
         const list = await fetchBuildings({ search: raw, limit: 1, offset: 0 });
         const first = list.buildings?.[0];
         if (!cancelled) {
-          setResolvedBbl(first?.bbl || null);
+          setResolvedBbl(normalizeBbl(first?.bbl ? String(first.bbl) : undefined));
         }
       } catch {
         if (!cancelled) setResolvedBbl(null);
