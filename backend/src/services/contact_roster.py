@@ -7,6 +7,7 @@ calls external APIs in request paths.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -62,6 +63,55 @@ def _format_contact_address(parts: list[Optional[str]]) -> Optional[str]:
     if not cleaned:
         return None
     return ", ".join(cleaned)
+
+
+def _hpd_source_url(registration_contact_id: Optional[str]) -> Optional[str]:
+    if not registration_contact_id:
+        return None
+    return (
+        "https://data.cityofnewyork.us/resource/feu5-w2e2.json"
+        f"?registrationcontactid={registration_contact_id}"
+    )
+
+
+def _dos_entity_url(dos_id: Optional[str]) -> Optional[str]:
+    if not dos_id:
+        return None
+    return (
+        "https://appext20.dos.ny.gov/corp_public/CORPSEARCH.ENTITY_INFORMATION"
+        f"?p_nameid={dos_id}"
+    )
+
+
+def _dos_filing_url(filing_num: Optional[str], dos_id: Optional[str]) -> Optional[str]:
+    if filing_num:
+        return f"https://data.ny.gov/resource/2tms-hftb.json?filing_num={filing_num}"
+    return _dos_entity_url(dos_id)
+
+
+def _detect_board_role(role: Optional[str], title: Optional[str]) -> Optional[str]:
+    role_upper = (role or "").strip().upper()
+    title_upper = (title or "").strip().upper()
+    text_value = f"{role_upper} {title_upper}".strip()
+    if not text_value:
+        return None
+    if "HEADOFFICER" in text_value:
+        return "Board Head"
+    if re.search(r"\b(PRESIDENT|CHAIR|CHAIRMAN|BOARD)\b", text_value):
+        return "Board Officer"
+    return None
+
+
+def _is_condo_or_coop(building_type: Optional[str], building_class: Optional[str]) -> bool:
+    bt = (building_type or "").strip().upper()
+    bc = (building_class or "").strip().upper()
+    if "CONDO" in bt or "COOP" in bt or "CO-OP" in bt:
+        return True
+    if bc.startswith("R"):  # PLUTO condo classes often R1-R9 / RR
+        return True
+    if bc in {"C6", "C8", "D0", "D4"}:  # common coop classes
+        return True
+    return False
 
 
 def _classify_officer_confidence(
@@ -148,15 +198,21 @@ async def get_building_contacts(
     pm_address: Optional[str] = None
     management_company: Optional[str] = None
     corporate_owner: Optional[str] = None
+    building_type: Optional[str] = None
+    building_class: Optional[str] = None
 
-    if not building_address:
-        b_row = (
-            await session.execute(
-                text("SELECT address FROM buildings WHERE bbl = :bbl"),
-                {"bbl": bbl},
-            )
-        ).first()
-        building_address = b_row[0] if b_row else None
+    b_row = (
+        await session.execute(
+            text("SELECT address, building_type, building_class FROM buildings WHERE bbl = :bbl"),
+            {"bbl": bbl},
+        )
+    ).first()
+    if b_row:
+        if not building_address:
+            building_address = b_row[0]
+        building_type = b_row[1]
+        building_class = b_row[2]
+    is_condo_coop = _is_condo_or_coop(building_type, building_class)
 
     contact_rows = await session.execute(
         text("""
@@ -176,6 +232,7 @@ async def get_building_contacts(
             continue
 
         role = data.get("contact_type") or "Unknown"
+        board_role = _detect_board_role(role, data.get("title"))
         address = _format_contact_address(
             [
                 data.get("business_address"),
@@ -185,7 +242,9 @@ async def get_building_contacts(
             ]
         )
         as_of_date = _coerce_iso(data.get("updated_at"))
-        is_decision_maker = role in {"CorporateOwner", "Owner", "IndividualOwner"}
+        is_decision_maker = role in {"CorporateOwner", "Owner", "IndividualOwner", "HeadOfficer"}
+        if board_role and is_condo_coop:
+            is_decision_maker = True
 
         contacts.append(
             {
@@ -194,9 +253,12 @@ async def get_building_contacts(
                 "source": "HPD Registration",
                 "source_record_id": data.get("registration_contact_id"),
                 "as_of_date": as_of_date,
+                "publication_date": as_of_date,
                 "address": address,
                 "confidence_hint": None,
                 "is_decision_maker": is_decision_maker,
+                "source_url": _hpd_source_url(data.get("registration_contact_id")),
+                "board_role": board_role,
             }
         )
 
@@ -234,6 +296,7 @@ async def get_building_contacts(
     )
 
     if payload:
+        dos_id = str(payload.get("dos_id") or "").strip() or None
         officers = payload.get("officers") or []
         if isinstance(officers, list):
             for officer in officers:
@@ -258,13 +321,18 @@ async def get_building_contacts(
                 contacts.append(
                     {
                         "name": officer_name,
-                        "role": "DOS Officer",
+                        "role": str(officer.get("title") or "").strip() or "DOS Officer",
                         "source": "NY DOS Filing",
                         "source_record_id": officer.get("filing_num"),
                         "as_of_date": _coerce_iso(officer.get("filing_date")),
+                        "publication_date": _coerce_iso(officer.get("filing_date")),
                         "address": officer_address,
                         "confidence_hint": confidence_hint,
-                        "is_decision_maker": resident_decision_maker,
+                        "is_decision_maker": resident_decision_maker or (
+                            bool(_detect_board_role("DOS Officer", officer.get("title"))) and is_condo_coop
+                        ),
+                        "source_url": _dos_filing_url(officer.get("filing_num"), dos_id),
+                        "board_role": _detect_board_role("DOS Officer", officer.get("title")),
                     }
                 )
 
@@ -277,9 +345,12 @@ async def get_building_contacts(
                     "source": "NY DOS Snapshot",
                     "source_record_id": payload.get("dos_id"),
                     "as_of_date": _coerce_iso(payload.get("snapshot_as_of")) or last_refreshed_at,
+                    "publication_date": _coerce_iso(payload.get("snapshot_as_of")) or last_refreshed_at,
                     "address": payload.get("ceo_address"),
                     "confidence_hint": None,
                     "is_decision_maker": True,
+                    "source_url": _dos_entity_url(payload.get("dos_id")),
+                    "board_role": _detect_board_role("DOS Chairman", "Chairman"),
                 }
             )
 
@@ -339,13 +410,18 @@ def get_building_contacts_sync(
     pm_address: Optional[str] = None
     management_company: Optional[str] = None
     corporate_owner: Optional[str] = None
-
-    if not building_address:
-        row = conn.execute(
-            text("SELECT address FROM buildings WHERE bbl = :bbl"),
-            {"bbl": bbl},
-        ).first()
-        building_address = row[0] if row else None
+    building_type: Optional[str] = None
+    building_class: Optional[str] = None
+    row = conn.execute(
+        text("SELECT address, building_type, building_class FROM buildings WHERE bbl = :bbl"),
+        {"bbl": bbl},
+    ).first()
+    if row:
+        if not building_address:
+            building_address = row[0]
+        building_type = row[1]
+        building_class = row[2]
+    is_condo_coop = _is_condo_or_coop(building_type, building_class)
 
     rows = conn.execute(
         text("""
@@ -364,6 +440,7 @@ def get_building_contacts_sync(
         if not name:
             continue
         role = data.get("contact_type") or "Unknown"
+        board_role = _detect_board_role(role, data.get("title"))
         address = _format_contact_address(
             [
                 data.get("business_address"),
@@ -379,9 +456,15 @@ def get_building_contacts_sync(
                 "source": "HPD Registration",
                 "source_record_id": data.get("registration_contact_id"),
                 "as_of_date": _coerce_iso(data.get("updated_at")),
+                "publication_date": _coerce_iso(data.get("updated_at")),
                 "address": address,
                 "confidence_hint": None,
-                "is_decision_maker": role in {"CorporateOwner", "Owner", "IndividualOwner"},
+                "is_decision_maker": (
+                    role in {"CorporateOwner", "Owner", "IndividualOwner", "HeadOfficer"}
+                    or (bool(board_role) and is_condo_coop)
+                ),
+                "source_url": _hpd_source_url(data.get("registration_contact_id")),
+                "board_role": board_role,
             }
         )
         if role == "Agent" and not pm_address:
@@ -413,6 +496,7 @@ def get_building_contacts_sync(
     )
 
     if payload:
+        dos_id = str(payload.get("dos_id") or "").strip() or None
         for officer in payload.get("officers") or []:
             if not isinstance(officer, dict):
                 continue
@@ -435,13 +519,18 @@ def get_building_contacts_sync(
             contacts.append(
                 {
                     "name": officer_name,
-                    "role": "DOS Officer",
+                    "role": str(officer.get("title") or "").strip() or "DOS Officer",
                     "source": "NY DOS Filing",
                     "source_record_id": officer.get("filing_num"),
                     "as_of_date": _coerce_iso(officer.get("filing_date")),
+                    "publication_date": _coerce_iso(officer.get("filing_date")),
                     "address": officer_address,
                     "confidence_hint": confidence_hint,
-                    "is_decision_maker": resident_decision_maker,
+                    "is_decision_maker": resident_decision_maker or (
+                        bool(_detect_board_role("DOS Officer", officer.get("title"))) and is_condo_coop
+                    ),
+                    "source_url": _dos_filing_url(officer.get("filing_num"), dos_id),
+                    "board_role": _detect_board_role("DOS Officer", officer.get("title")),
                 }
             )
 
@@ -454,9 +543,12 @@ def get_building_contacts_sync(
                     "source": "NY DOS Snapshot",
                     "source_record_id": payload.get("dos_id"),
                     "as_of_date": _coerce_iso(payload.get("snapshot_as_of")) or last_refreshed_at,
+                    "publication_date": _coerce_iso(payload.get("snapshot_as_of")) or last_refreshed_at,
                     "address": payload.get("ceo_address"),
                     "confidence_hint": None,
                     "is_decision_maker": True,
+                    "source_url": _dos_entity_url(payload.get("dos_id")),
+                    "board_role": _detect_board_role("DOS Chairman", "Chairman"),
                 }
             )
 

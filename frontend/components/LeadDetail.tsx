@@ -27,6 +27,13 @@ const formatRelativeDate = (value: string | null | undefined): string => {
   return years === 1 ? '1 year ago' : `${years} years ago`;
 };
 
+const formatAbsoluteDate = (value: string | null | undefined): string => {
+  if (!value) return '--';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString();
+};
+
 interface Props {
   lead: ApiLead;
   onClose: () => void;
@@ -777,7 +784,19 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                     {enrichedLead.phones?.length > 0 ? enrichedLead.phones.map((p, i) => (
                       <div key={i} className="flex items-center justify-between py-1">
                         <a href={`tel:${p.value}`} className="text-emerald-600 text-sm font-mono hover:underline">{p.value}</a>
-                        <span className="text-[10px] text-gray-400">{p.source}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-gray-400">{p.source}</span>
+                          {p.source_url && (
+                            <a
+                              href={p.source_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[10px] text-blue-600 hover:underline"
+                            >
+                              Verify
+                            </a>
+                          )}
+                        </div>
                       </div>
                     )) : enrichedLead.phone && (
                       <a href={`tel:${enrichedLead.phone}`} className="text-emerald-600 text-sm font-mono hover:underline block">{enrichedLead.phone}</a>
@@ -792,7 +811,19 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                     {enrichedLead.emails?.length > 0 ? enrichedLead.emails.map((e, i) => (
                       <div key={i} className="flex items-center justify-between py-1">
                         <a href={`mailto:${e.value}`} className="text-blue-600 text-sm hover:underline">{e.value}</a>
-                        <span className="text-[10px] text-gray-400">{e.source}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-gray-400">{e.source}</span>
+                          {e.source_url && (
+                            <a
+                              href={e.source_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[10px] text-blue-600 hover:underline"
+                            >
+                              Verify
+                            </a>
+                          )}
+                        </div>
                       </div>
                     )) : enrichedLead.email && (
                       <a href={`mailto:${enrichedLead.email}`} className="text-blue-600 text-sm hover:underline block">{enrichedLead.email}</a>
@@ -865,12 +896,37 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                                 {c.is_decision_maker ? '★ ' : ''}{c.name}
                               </span>
                               <span className="text-gray-500">{c.role}</span>
-                              <span className={`px-1.5 py-0.5 rounded ${
-                                c.source === 'NY DOS Filing' ? 'bg-blue-50 text-blue-600' :
-                                c.source === 'NY DOS Snapshot' ? 'bg-indigo-50 text-indigo-600' :
-                                'bg-gray-100 text-gray-500'
-                              }`}>{c.source}</span>
-                              <span className="text-[10px] text-gray-400">{formatRelativeDate(c.as_of_date)}</span>
+                              {c.board_role && (
+                                <span className="px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 text-[10px]">
+                                  {c.board_role}
+                                </span>
+                              )}
+                              {c.source_url ? (
+                                <a
+                                  href={c.source_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={`px-1.5 py-0.5 rounded hover:underline ${
+                                    c.source === 'NY DOS Filing' ? 'bg-blue-50 text-blue-600' :
+                                    c.source === 'NY DOS Snapshot' ? 'bg-indigo-50 text-indigo-600' :
+                                    'bg-gray-100 text-gray-500'
+                                  }`}
+                                >
+                                  {c.source}
+                                </a>
+                              ) : (
+                                <span className={`px-1.5 py-0.5 rounded ${
+                                  c.source === 'NY DOS Filing' ? 'bg-blue-50 text-blue-600' :
+                                  c.source === 'NY DOS Snapshot' ? 'bg-indigo-50 text-indigo-600' :
+                                  'bg-gray-100 text-gray-500'
+                                }`}>{c.source}</span>
+                              )}
+                              <span
+                                className="text-[10px] text-gray-400"
+                                title={`Published: ${formatAbsoluteDate(c.publication_date || c.as_of_date)}`}
+                              >
+                                {formatRelativeDate(c.publication_date || c.as_of_date)}
+                              </span>
                               {c.confidence_hint && (
                                 <span className={`px-1.5 py-0.5 rounded text-[10px] ${c.confidence_hint === 'Likely board member (resident)' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'}`}>
                                   {c.confidence_hint}

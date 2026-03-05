@@ -93,9 +93,12 @@ export interface BuildingContactEntry {
   source: string;
   source_record_id: string | null;
   as_of_date: string | null;
+  publication_date?: string | null;
   address: string | null;
   confidence_hint: 'Likely board member (resident)' | 'PM company employee' | null;
   is_decision_maker: boolean;
+  source_url?: string | null;
+  board_role?: string | null;
 }
 
 export interface BuildingOutreachStats {
@@ -282,5 +285,5 @@ export function logBuildingOutreachEvent(
   if (event.outcome) params.set('outcome', event.outcome);
   if (event.notes) params.set('notes', event.notes);
   if (event.next_follow_up) params.set('next_follow_up', event.next_follow_up);
-  return apiPost(`/api/v1/buildings/${bbl}/outreach-event?${params}`);
+  return apiPost(`/api/v1/buildings/${encodeURIComponent(String(bbl))}/outreach-event?${params}`);
 }

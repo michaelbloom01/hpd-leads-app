@@ -299,7 +299,15 @@ async def get_leads(
                 wheres.append(f"COALESCE((building_types->>:{key})::int, 0) > 0")
                 params[key] = btype
     if search:
-        wheres.append("(owner_name ILIKE :search OR company_name ILIKE :search OR agent_name ILIKE :search)")
+        wheres.append("""
+            (
+                owner_name ILIKE :search
+                OR company_name ILIKE :search
+                OR agent_name ILIKE :search
+                OR primary_contact ILIKE :search
+                OR normalized_name ILIKE :search
+            )
+        """)
         params["search"] = f"%{search}%"
 
     where_sql = " AND ".join(wheres) if wheres else "1=1"

@@ -1249,9 +1249,21 @@ export interface DataHealthResponse {
     buildings_fetched: number;
   } | null;
   stale_buildings_count: number;
+  buildings_without_contacts: number;
   lead_staleness: Record<string, number>;
   data_age_days: number | null;
   enrichment_coverage: Record<string, number>;
+  distinct_entities_in_contacts: number;
+  distinct_entities_in_leads: number;
+  matched_entities: number;
+  entity_coverage_ratio: number | null;
+  coverage_ratio?: number | null;
+  last_lead_generation: {
+    started_at: string | null;
+    finished_at: string | null;
+    status: string;
+  } | null;
+  last_lead_generation_at?: string | null;
   warnings: string[];
 }
 

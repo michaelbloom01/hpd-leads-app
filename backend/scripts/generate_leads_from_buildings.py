@@ -232,6 +232,12 @@ def main(min_portfolio: int = 1):
             :outreach_status, :priority_rank,
             :created_at, :updated_at
         ) ON CONFLICT (lead_id) DO UPDATE SET
+            normalized_name = EXCLUDED.normalized_name,
+            agent_name = EXCLUDED.agent_name,
+            owner_name = EXCLUDED.owner_name,
+            company_name = EXCLUDED.company_name,
+            entity_type = EXCLUDED.entity_type,
+            address = EXCLUDED.address,
             portfolio_size = EXCLUDED.portfolio_size,
             total_units = EXCLUDED.total_units,
             score = EXCLUDED.score,
@@ -291,6 +297,11 @@ def main(min_portfolio: int = 1):
     final_count = session.execute(text("SELECT COUNT(*) FROM leads")).scalar()
     logger.info(f"Total leads in DB: {final_count:,}")
     session.close()
+    return {
+        "upserted": inserted,
+        "building_management_backfilled": bm_count if "bm_count" in locals() else 0,
+        "total_leads": int(final_count or 0),
+    }
 
 
 if __name__ == "__main__":

@@ -543,6 +543,20 @@ def _classify_entity(agent_name: str, owner_name: str, owner_type: str, contacts
         elif owner_name:
             result['entity_type'] = 'owner_operator'
             result['primary_contact'] = owner_name if looks_like_person(owner_name) else None
+
+    # Integrity guardrail: if source contacts provide a corporation/entity name,
+    # never leave company_name empty even when heuristics are inconclusive.
+    if not result.get('company_name'):
+        for c in contacts:
+            ct = (c.get('type') or '').lower()
+            cn = str(c.get('name') or '').strip()
+            if not cn:
+                continue
+            if ct in ('corporateowner', 'agent', 'managementcompany', 'headofficer', 'officer', 'shareholder'):
+                result['company_name'] = cn
+                if result.get('entity_type') == 'unknown':
+                    result['entity_type'] = 'company'
+                break
     
     return result
 

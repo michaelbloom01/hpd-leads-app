@@ -4,6 +4,7 @@ The PM Operator's primary workspace: find buildings with high churn
 probability, understand why, and do outreach.
 """
 import logging
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -20,6 +21,53 @@ from src.services.contact_roster import get_building_contacts
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/buildings", tags=["buildings"])
 limiter = Limiter(key_func=get_remote_address)
+
+
+def _normalize_bbl_digits(raw_value: Optional[str]) -> Optional[str]:
+    if not raw_value:
+        return None
+    value = str(raw_value).strip()
+    if not value:
+        return None
+    if re.fullmatch(r"\d{10}\.0+", value):
+        value = value.split(".", 1)[0]
+    digits = re.sub(r"\D", "", value)
+    if len(digits) == 10:
+        return digits
+    if 0 < len(digits) < 10:
+        return digits.zfill(10)
+    return None
+
+
+async def _resolve_canonical_bbl(session: AsyncSession, raw_bbl: str) -> Optional[str]:
+    candidate = (raw_bbl or "").strip()
+    if not candidate:
+        return None
+
+    exact_row = (await session.execute(
+        text("SELECT bbl FROM buildings WHERE bbl = :bbl LIMIT 1"),
+        {"bbl": candidate},
+    )).first()
+    if exact_row:
+        return str(exact_row[0])
+
+    digits = _normalize_bbl_digits(candidate)
+    if not digits:
+        return None
+
+    normalized_row = (await session.execute(
+        text("""
+            SELECT bbl
+            FROM buildings
+            WHERE regexp_replace(bbl, '[^0-9]', '', 'g') = :digits
+            ORDER BY updated_at DESC NULLS LAST, bbl ASC
+            LIMIT 1
+        """),
+        {"digits": digits},
+    )).first()
+    if normalized_row:
+        return str(normalized_row[0])
+    return None
 
 
 @router.get("")
@@ -77,7 +125,19 @@ async def list_buildings(
             wheres.append("b.outreach_status = :ostatus")
             params["ostatus"] = outreach_status
     if search:
-        wheres.append("(b.address ILIKE :search OR b.bbl ILIKE :search)")
+        wheres.append("""
+            (
+                b.address ILIKE :search
+                OR b.bbl ILIKE :search
+                OR EXISTS (
+                    SELECT 1
+                    FROM building_contacts bc_search
+                    WHERE bc_search.bbl = b.bbl
+                      AND bc_search.contact_type = 'Agent'
+                      AND bc_search.corporation_name ILIKE :search
+                )
+            )
+        """)
         params["search"] = f"%{search}%"
 
     where_sql = " AND ".join(wheres) if wheres else "1=1"
@@ -199,6 +259,10 @@ async def get_building(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
+    canonical_bbl = await _resolve_canonical_bbl(session, bbl)
+    if not canonical_bbl:
+        raise HTTPException(404, "Building not found")
+
     result = await session.execute(
         text("""
             SELECT b.*, m.lead_id AS current_lead_id
@@ -213,7 +277,7 @@ async def get_building(
             ) m ON TRUE
             WHERE b.bbl = :bbl
         """),
-        {"bbl": bbl},
+        {"bbl": canonical_bbl},
     )
     row = result.first()
     if not row:
@@ -222,7 +286,7 @@ async def get_building(
 
     contacts, contact_meta = await get_building_contacts(
         session=session,
-        bbl=bbl,
+        bbl=canonical_bbl,
         building_address=building.get("address"),
     )
 
@@ -231,9 +295,9 @@ async def get_building(
     if contact_meta.get("dos_contacts_is_stale") and corporate_owner_name:
         try:
             from src.tasks.enrich import refresh_dos_contacts
-            refresh_dos_contacts.delay(bbl, corporate_owner_name)
+            refresh_dos_contacts.delay(canonical_bbl, corporate_owner_name)
         except Exception as exc:
-            logger.warning("Failed to queue DOS refresh for %s: %s", bbl, exc)
+            logger.warning("Failed to queue DOS refresh for %s: %s", canonical_bbl, exc)
 
     building["all_contacts"] = contacts
     building["management_company"] = contact_meta.get("management_company")
@@ -253,35 +317,39 @@ async def building_timeline(
     user: AuthUser = Depends(get_current_user),
 ):
     """Chronological event feed merging all signal sources."""
+    canonical_bbl = await _resolve_canonical_bbl(session, bbl)
+    if not canonical_bbl:
+        raise HTTPException(404, "Building not found")
+
     events = []
 
     complaints = await session.execute(
         text("SELECT 'complaint' AS type, received_date AS date, major_category AS detail FROM hpd_complaints WHERE bbl = :bbl ORDER BY received_date DESC LIMIT 50"),
-        {"bbl": bbl},
+        {"bbl": canonical_bbl},
     )
     events.extend([dict(r._mapping) for r in complaints])
 
     violations = await session.execute(
         text("SELECT 'violation' AS type, inspection_date AS date, nov_description AS detail FROM hpd_violations WHERE bbl = :bbl ORDER BY inspection_date DESC LIMIT 50"),
-        {"bbl": bbl},
+        {"bbl": canonical_bbl},
     )
     events.extend([dict(r._mapping) for r in violations])
 
     transactions = await session.execute(
         text("SELECT 'transaction' AS type, recorded_date AS date, doc_type_description AS detail FROM acris_transactions WHERE bbl = :bbl ORDER BY recorded_date DESC LIMIT 20"),
-        {"bbl": bbl},
+        {"bbl": canonical_bbl},
     )
     events.extend([dict(r._mapping) for r in transactions])
 
     permits = await session.execute(
         text("SELECT 'permit' AS type, filing_date AS date, job_description AS detail FROM dob_permits WHERE bbl = :bbl ORDER BY filing_date DESC LIMIT 20"),
-        {"bbl": bbl},
+        {"bbl": canonical_bbl},
     )
     events.extend([dict(r._mapping) for r in permits])
 
     litigation = await session.execute(
         text("SELECT 'litigation' AS type, case_open_date AS date, case_type AS detail FROM hpd_litigation WHERE bbl = :bbl ORDER BY case_open_date DESC LIMIT 20"),
-        {"bbl": bbl},
+        {"bbl": canonical_bbl},
     )
     events.extend([dict(r._mapping) for r in litigation])
 
@@ -294,7 +362,7 @@ async def building_timeline(
             ORDER BY order_date DESC
             LIMIT 20
         """),
-        {"bbl": bbl},
+        {"bbl": canonical_bbl},
     )
     events.extend([dict(r._mapping) for r in emergency_repairs])
 
@@ -307,7 +375,7 @@ async def building_timeline(
             ORDER BY executed_date DESC
             LIMIT 20
         """),
-        {"bbl": bbl},
+        {"bbl": canonical_bbl},
     )
     events.extend([dict(r._mapping) for r in evictions])
 
@@ -321,7 +389,7 @@ async def building_timeline(
             ORDER BY year DESC NULLS LAST
             LIMIT 10
         """),
-        {"bbl": bbl},
+        {"bbl": canonical_bbl},
     )
     events.extend([dict(r._mapping) for r in energy])
 
@@ -334,7 +402,7 @@ async def building_timeline(
             ORDER BY filing_date DESC
             LIMIT 20
         """),
-        {"bbl": bbl},
+        {"bbl": canonical_bbl},
     )
     events.extend([dict(r._mapping) for r in facades])
 
@@ -347,7 +415,7 @@ async def building_timeline(
             ORDER BY designation_date DESC
             LIMIT 10
         """),
-        {"bbl": bbl},
+        {"bbl": canonical_bbl},
     )
     events.extend([dict(r._mapping) for r in aep])
 
@@ -363,9 +431,13 @@ async def get_building_lineage(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
+    canonical_bbl = await _resolve_canonical_bbl(session, bbl)
+    if not canonical_bbl:
+        raise HTTPException(status_code=404, detail="Building not found")
+
     building_row = (await session.execute(
         text("SELECT bbl, address, updated_at FROM buildings WHERE bbl = :bbl"),
-        {"bbl": bbl},
+        {"bbl": canonical_bbl},
     )).first()
     if not building_row:
         raise HTTPException(status_code=404, detail="Building not found")
@@ -405,7 +477,7 @@ async def get_building_lineage(
                 FROM {table_name}
                 WHERE bbl = :bbl
             """),
-            {"bbl": bbl},
+            {"bbl": canonical_bbl},
         )).first()
         sources.append(
             build_source_row(
@@ -418,7 +490,7 @@ async def get_building_lineage(
         )
 
     return {
-        "bbl": bbl,
+        "bbl": canonical_bbl,
         "address": building.get("address"),
         "last_updated": building.get("updated_at").isoformat() if building.get("updated_at") else None,
         "sources": sources,
@@ -433,6 +505,10 @@ async def building_score_history(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
+    canonical_bbl = await _resolve_canonical_bbl(session, bbl)
+    if not canonical_bbl:
+        raise HTTPException(404, "Building not found")
+
     result = await session.execute(
         text("""
             SELECT churn_score, churn_category, churn_breakdown, scored_at
@@ -441,7 +517,7 @@ async def building_score_history(
             ORDER BY scored_at DESC
             LIMIT 52
         """),
-        {"bbl": bbl},
+        {"bbl": canonical_bbl},
     )
     return [dict(r._mapping) for r in result]
 
@@ -454,18 +530,22 @@ async def add_to_pipeline(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
+    canonical_bbl = await _resolve_canonical_bbl(session, bbl)
+    if not canonical_bbl:
+        raise HTTPException(404, "Building not found")
+
     result = await session.execute(
-        text("SELECT 1 FROM buildings WHERE bbl = :bbl"), {"bbl": bbl}
+        text("SELECT 1 FROM buildings WHERE bbl = :bbl"), {"bbl": canonical_bbl}
     )
     if not result.first():
         raise HTTPException(404, "Building not found")
 
     await session.execute(
         text("UPDATE buildings SET outreach_status = 'pipeline', updated_at = now() WHERE bbl = :bbl"),
-        {"bbl": bbl},
+        {"bbl": canonical_bbl},
     )
     await session.commit()
-    return {"bbl": bbl, "status": "added_to_pipeline"}
+    return {"bbl": canonical_bbl, "status": "added_to_pipeline"}
 
 
 @router.patch("/{bbl}/pipeline")
@@ -482,14 +562,18 @@ async def update_pipeline_status(
     valid = {"none", "pipeline", "contacted", "meeting", "won", "lost"}
     if outreach_status not in valid:
         raise HTTPException(400, f"Invalid outreach_status. Must be one of: {', '.join(valid)}")
+    canonical_bbl = await _resolve_canonical_bbl(session, bbl)
+    if not canonical_bbl:
+        raise HTTPException(404, "Building not found")
+
     result = await session.execute(
-        text("SELECT 1 FROM buildings WHERE bbl = :bbl"), {"bbl": bbl}
+        text("SELECT 1 FROM buildings WHERE bbl = :bbl"), {"bbl": canonical_bbl}
     )
     if not result.first():
         raise HTTPException(404, "Building not found")
 
     sets = ["outreach_status = :os", "updated_at = now()"]
-    params: dict = {"bbl": bbl, "os": outreach_status}
+    params: dict = {"bbl": canonical_bbl, "os": outreach_status}
     if outreach_priority is not None:
         sets.append("outreach_priority = :op")
         params["op"] = outreach_priority
@@ -497,7 +581,7 @@ async def update_pipeline_status(
         text(f"UPDATE buildings SET {', '.join(sets)} WHERE bbl = :bbl"), params
     )
     await session.commit()
-    return {"bbl": bbl, "outreach_status": outreach_status}
+    return {"bbl": canonical_bbl, "outreach_status": outreach_status}
 
 
 @router.post("/{bbl}/outreach-event")
@@ -514,9 +598,13 @@ async def log_building_outreach_event(
     user: AuthUser = Depends(get_current_user),
 ):
     """Log an outreach event for a building."""
+    canonical_bbl = await _resolve_canonical_bbl(session, bbl)
+    if not canonical_bbl:
+        raise HTTPException(404, "Building not found")
+
     from datetime import datetime, timezone
     exists = (await session.execute(
-        text("SELECT 1 FROM buildings WHERE bbl = :bbl"), {"bbl": bbl}
+        text("SELECT 1 FROM buildings WHERE bbl = :bbl"), {"bbl": canonical_bbl}
     )).first()
     if not exists:
         raise HTTPException(404, "Building not found")
@@ -527,14 +615,14 @@ async def log_building_outreach_event(
             VALUES (:bbl, :stage, :method, :outcome, :notes, :nfu, :ts, NOW(), NOW())
         """),
         {
-            "bbl": bbl, "stage": stage, "method": method,
+            "bbl": canonical_bbl, "stage": stage, "method": method,
             "outcome": outcome, "notes": notes, "nfu": next_follow_up,
             "ts": datetime.now(timezone.utc),
         },
     )
 
     update_sql = "UPDATE buildings SET outreach_status = :os, updated_at = now()"
-    update_params: dict = {"bbl": bbl, "os": stage}
+    update_params: dict = {"bbl": canonical_bbl, "os": stage}
     if next_follow_up:
         update_sql += ", next_outreach_date = :nod"
         update_params["nod"] = next_follow_up
@@ -542,7 +630,7 @@ async def log_building_outreach_event(
     await session.execute(text(update_sql), update_params)
     await session.commit()
 
-    return {"status": "success", "bbl": bbl, "stage": stage}
+    return {"status": "success", "bbl": canonical_bbl, "stage": stage}
 
 
 @router.get("/{bbl}/outreach-events")
@@ -554,6 +642,10 @@ async def get_building_outreach_events(
     user: AuthUser = Depends(get_current_user),
 ):
     """Get outreach event history for a building."""
+    canonical_bbl = await _resolve_canonical_bbl(session, bbl)
+    if not canonical_bbl:
+        raise HTTPException(404, "Building not found")
+
     result = await session.execute(
         text("""
             SELECT id, bbl, stage, method, outcome, notes, next_follow_up,
@@ -562,11 +654,11 @@ async def get_building_outreach_events(
             WHERE bbl = :bbl
             ORDER BY event_timestamp DESC
         """),
-        {"bbl": bbl},
+        {"bbl": canonical_bbl},
     )
     events = [dict(r._mapping) for r in result]
     for e in events:
         for k in ("event_timestamp", "created_at", "next_follow_up"):
             if e.get(k) and hasattr(e[k], "isoformat"):
                 e[k] = e[k].isoformat()
-    return {"bbl": bbl, "events": events}
+    return {"bbl": canonical_bbl, "events": events}

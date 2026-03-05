@@ -243,6 +243,8 @@ def ingest_buildings_from_hpd(self, job_id: Optional[int] = None):
         logger.info(f"Fetched {len(contacts)} contacts for {len(contacts_by_reg)} registrations")
 
         logger.info("Fetching PLUTO for geographic fields...")
+        # _socrata_fetch paginates until exhaustion via $offset/$limit loop;
+        # this retrieves the full PLUTO dataset, not just one 50k page.
         pluto_data = _socrata_fetch(DATASETS["pluto"], {
             "$select": "bbl,cd,council,ct2010,assesstot,unitsres,yearbuilt,bldgclass",
             "$limit": 50000,
@@ -379,6 +381,27 @@ def ingest_buildings_from_hpd(self, job_id: Optional[int] = None):
                 t.start()
         except Exception as score_exc:
             logger.warning("Failed to queue follow-up scoring job after buildings ingestion: %s", score_exc)
+        try:
+            lead_job_id = _create_job(session, "lead_generation", "lead_generation")
+            session.commit()
+            from src.tasks.lead_materialization import generate_leads_job
+            try:
+                generate_leads_job.delay(job_id=lead_job_id, min_portfolio=1)
+                logger.info("Queued follow-up lead generation job %s after buildings ingestion", lead_job_id)
+            except Exception as dispatch_exc:
+                logger.warning(
+                    "Celery dispatch failed for follow-up lead generation job %s, using in-process fallback: %s",
+                    lead_job_id,
+                    dispatch_exc,
+                )
+                t = threading.Thread(
+                    target=generate_leads_job.run,
+                    kwargs={"job_id": lead_job_id, "min_portfolio": 1},
+                    daemon=True,
+                )
+                t.start()
+        except Exception as lead_exc:
+            logger.warning("Failed to queue follow-up lead generation job after buildings ingestion: %s", lead_exc)
         logger.info(f"Buildings backfill complete: {inserted} inserted, {rejected} rejected")
         return {"inserted": inserted, "rejected": rejected}
 

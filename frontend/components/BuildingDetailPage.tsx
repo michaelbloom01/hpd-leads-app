@@ -29,6 +29,13 @@ const formatRelativeDate = (value: string | null | undefined): string => {
   return years === 1 ? '1 year ago' : `${years} years ago`;
 };
 
+const formatAbsoluteDate = (value: string | null | undefined): string => {
+  if (!value) return '--';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString();
+};
+
 const signalLabels: Record<string, string> = {
   ownership_change: 'Ownership Change',
   complaint_spike: 'Complaint Spike',
@@ -277,17 +284,40 @@ const BuildingDetailPage: React.FC = () => {
                       >
                         {contact.is_decision_maker ? '★ ' : ''}{contact.name}
                       </button>
+                      {contact.board_role && (
+                        <span className="ml-2 px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 text-[10px]">
+                          {contact.board_role}
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-gray-600">{contact.role}</td>
                     <td className="px-3 py-2">
-                      <span className={`text-xs px-2 py-0.5 rounded ${
-                        contact.source === 'NY DOS Filing' ? 'bg-blue-50 text-blue-700' :
-                        contact.source === 'NY DOS Snapshot' ? 'bg-indigo-50 text-indigo-700' :
-                        'bg-gray-100 text-gray-600'
-                      }`}>{contact.source}</span>
+                      {contact.source_url ? (
+                        <a
+                          href={contact.source_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`text-xs px-2 py-0.5 rounded hover:underline ${
+                            contact.source === 'NY DOS Filing' ? 'bg-blue-50 text-blue-700' :
+                            contact.source === 'NY DOS Snapshot' ? 'bg-indigo-50 text-indigo-700' :
+                            'bg-gray-100 text-gray-600'
+                          }`}
+                        >
+                          {contact.source}
+                        </a>
+                      ) : (
+                        <span className={`text-xs px-2 py-0.5 rounded ${
+                          contact.source === 'NY DOS Filing' ? 'bg-blue-50 text-blue-700' :
+                          contact.source === 'NY DOS Snapshot' ? 'bg-indigo-50 text-indigo-700' :
+                          'bg-gray-100 text-gray-600'
+                        }`}>{contact.source}</span>
+                      )}
                     </td>
-                    <td className="px-3 py-2 text-gray-500 text-xs" title={contact.as_of_date || ''}>
-                      {formatRelativeDate(contact.as_of_date)}
+                    <td
+                      className="px-3 py-2 text-gray-500 text-xs"
+                      title={`Published: ${formatAbsoluteDate(contact.publication_date || contact.as_of_date)}`}
+                    >
+                      {formatRelativeDate(contact.publication_date || contact.as_of_date)}
                     </td>
                     <td className="px-3 py-2 text-gray-500 text-xs max-w-[200px] truncate">
                       {contact.address ? (

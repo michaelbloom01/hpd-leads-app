@@ -934,6 +934,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
                 {dataHealth.total_leads.toLocaleString()} leads
                 {dataHealth.coverage_percent != null && ` · ${dataHealth.coverage_percent}% data coverage`}
                 {dataHealth.total_buildings_registered > 0 && ` · ${dataHealth.total_buildings_registered.toLocaleString()} buildings`}
+                {dataHealth.entity_coverage_ratio != null && ` · ${dataHealth.entity_coverage_ratio}% entity coverage`}
+                {dataHealth.last_lead_generation?.finished_at && ` · leads gen ${new Date(dataHealth.last_lead_generation.finished_at).toLocaleDateString()}`}
                 {dataHealth.last_refresh?.finished_at && ` · refreshed ${new Date(dataHealth.last_refresh.finished_at).toLocaleDateString()}`}
               </>
             ) : (
