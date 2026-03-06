@@ -1,7 +1,11 @@
-from src.transform.normalize import normalize_name, normalize_name_for_grouping
-from src.routers.leads import _row_to_response
 from pathlib import Path
-from scripts.generate_leads_from_buildings import _collapse_duplicate_company_leads, _is_probably_junk_name
+
+from src.routers.leads import _row_to_response
+from src.services.lead_generation import (
+    _collapse_duplicate_company_leads,
+    _is_probably_junk_name,
+)
+from src.transform.normalize import normalize_name, normalize_name_for_grouping
 
 
 def test_normalize_name_expands_common_abbreviations():

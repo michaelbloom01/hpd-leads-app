@@ -16,6 +16,7 @@ from typing import Optional
 
 import requests
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 try:
@@ -109,22 +110,41 @@ def _log_quality(session: Session, source: str, job_id: int | None,
                  notes: str = ""):
     """Write a data quality log entry."""
     match_rate = matched / fetched if fetched > 0 else 0.0
-    session.execute(
-        text("""
-            INSERT INTO data_quality_log
-                (source_name, job_id, run_timestamp, records_fetched,
-                 records_matched, records_rejected, records_inserted,
-                 match_rate, volume_anomaly, notes, created_at, updated_at)
-            VALUES
-                (:source, :job_id, now(), :fetched, :matched, :rejected,
-                 :inserted, :match_rate, false, :notes, now(), now())
-        """),
-        {
-            "source": source, "job_id": job_id, "fetched": fetched,
-            "matched": matched, "rejected": rejected, "inserted": inserted,
-            "match_rate": match_rate, "notes": notes,
-        },
-    )
+    params = {
+        "source": source,
+        "job_id": job_id,
+        "fetched": fetched,
+        "matched": matched,
+        "rejected": rejected,
+        "inserted": inserted,
+        "match_rate": match_rate,
+        "notes": notes,
+    }
+    insert_sql = text("""
+        INSERT INTO data_quality_log
+            (source_name, job_id, run_timestamp, records_fetched,
+             records_matched, records_rejected, records_inserted,
+             match_rate, volume_anomaly, notes, created_at, updated_at)
+        VALUES
+            (:source, :job_id, now(), :fetched, :matched, :rejected,
+             :inserted, :match_rate, false, :notes, now(), now())
+    """)
+    try:
+        session.execute(insert_sql, params)
+    except IntegrityError as exc:
+        message = str(getattr(exc, "orig", exc))
+        if "data_quality_log_pkey" not in message:
+            raise
+        logger.warning("Resetting data_quality_log sequence after duplicate PK: %s", message)
+        session.rollback()
+        session.execute(text("""
+            SELECT setval(
+                pg_get_serial_sequence('data_quality_log', 'id'),
+                COALESCE((SELECT MAX(id) FROM data_quality_log), 0) + 1,
+                false
+            )
+        """))
+        session.execute(insert_sql, params)
 
 
 def _create_job(session: Session, job_type: str, source: str) -> int:

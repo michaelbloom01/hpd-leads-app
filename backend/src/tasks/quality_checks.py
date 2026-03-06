@@ -8,7 +8,7 @@ Runs periodically after ingestion to detect:
 5. Cross-source consistency
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
@@ -51,8 +51,8 @@ def run_quality_checks(self, job_id: int | None = None):
         for alert in alerts:
             session.execute(
                 text("""
-                    INSERT INTO change_alerts (alert_type, description, details, created_at, updated_at)
-                    VALUES (:type, :desc, :details, now(), now())
+                    INSERT INTO change_alerts (alert_type, description, details, dismissed, created_at, updated_at)
+                    VALUES (:type, :desc, :details, false, now(), now())
                 """),
                 {
                     "type": alert["type"],
@@ -175,7 +175,10 @@ def _check_freshness(session: Session) -> list[dict]:
         ).first()
 
         if row:
-            age = (datetime.utcnow() - row[0]).days if row[0] else 999
+            last_run = row[0]
+            if last_run and last_run.tzinfo is None:
+                last_run = last_run.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - last_run).days if last_run else 999
             if age > max_days:
                 alerts.append({
                     "type": "stale_data",

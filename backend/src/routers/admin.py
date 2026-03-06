@@ -2,6 +2,7 @@
 
 Migrated to PostgreSQL (AsyncSession).
 """
+import asyncio
 import re
 import time
 import logging
@@ -116,6 +117,42 @@ async def recompute_lead_portfolio(
     return {
         "status": "ok",
         **snapshot,
+    }
+
+
+@router.post("/admin/lead-cleanup/preview")
+@limiter.limit("20/minute")
+async def preview_lead_cleanup(
+    request: Request,
+    sample_limit: int = Query(default=10, ge=1, le=50),
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Preview conservative orphan-lead cleanup cohorts."""
+    del session, user
+    from src.services.lead_cleanup import preview_orphan_lead_cleanup
+
+    return {
+        "status": "ok",
+        **await asyncio.to_thread(preview_orphan_lead_cleanup, sample_limit),
+    }
+
+
+@router.post("/admin/lead-cleanup/orphans")
+@limiter.limit("10/minute")
+async def cleanup_orphan_leads(
+    request: Request,
+    batch_size: int = Query(default=500, ge=50, le=5000),
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Migrate state from zero-link orphan leads into a clear keeper, then retire them."""
+    del session, user
+    from src.services.lead_cleanup import execute_orphan_lead_cleanup
+
+    return {
+        "status": "ok",
+        **await asyncio.to_thread(execute_orphan_lead_cleanup, batch_size),
     }
 
 

@@ -151,16 +151,46 @@ async def data_health(session: AsyncSession = Depends(get_session)):
         )
     """))).scalar() or 0)
 
-    buildings_with_multiple_current_pm_links = int((await session.execute(text("""
-        SELECT COUNT(*)
-        FROM (
-            SELECT bm.bbl
+    multilink_row = (await session.execute(text("""
+        WITH current_links AS (
+            SELECT bm.bbl, bm.role, bm.lead_id, COALESCE(NULLIF(TRIM(l.normalized_name), ''), bm.lead_id) AS normalized_entity
             FROM building_management bm
+            LEFT JOIN leads l ON l.lead_id = bm.lead_id
             WHERE bm.is_current = true
-            GROUP BY bm.bbl
-            HAVING COUNT(*) > 1
-        ) t
-    """))).scalar() or 0)
+        )
+        SELECT
+            COALESCE((
+                SELECT COUNT(*)
+                FROM (
+                    SELECT bbl
+                    FROM current_links
+                    GROUP BY bbl
+                    HAVING COUNT(*) > 1
+                ) any_role
+            ), 0) AS any_role_count,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM (
+                    SELECT bbl
+                    FROM current_links
+                    GROUP BY bbl, COALESCE(role, '')
+                    HAVING COUNT(*) > 1
+                ) same_role
+            ), 0) AS same_role_count,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM (
+                    SELECT bbl
+                    FROM current_links
+                    GROUP BY bbl, normalized_entity
+                    HAVING COUNT(*) > 1
+                ) same_entity
+            ), 0) AS same_entity_count
+    """))).first()
+    multilink_counts = dict(multilink_row._mapping) if multilink_row else {}
+    buildings_with_multiple_current_pm_links = int(multilink_counts.get("any_role_count") or 0)
+    buildings_with_multiple_current_same_role_links = int(multilink_counts.get("same_role_count") or 0)
+    buildings_with_multiple_current_same_entity_links = int(multilink_counts.get("same_entity_count") or 0)
 
     blank_display_name_leads = int((await session.execute(text("""
         SELECT COUNT(*)
@@ -223,6 +253,10 @@ async def data_health(session: AsyncSession = Depends(get_session)):
         warnings.append(f"{leads_with_zero_active_links:,} leads have no active building links")
     if blank_display_name_leads > 0:
         warnings.append(f"{blank_display_name_leads:,} leads are missing a display name")
+    if buildings_with_multiple_current_same_entity_links > 0:
+        warnings.append(
+            f"{buildings_with_multiple_current_same_entity_links:,} buildings have duplicate current links to the same entity"
+        )
 
     return {
         "total_leads": row["total_leads"],
@@ -243,6 +277,8 @@ async def data_health(session: AsyncSession = Depends(get_session)):
         "integrity": {
             "leads_with_zero_active_links": leads_with_zero_active_links,
             "buildings_with_multiple_current_pm_links": buildings_with_multiple_current_pm_links,
+            "buildings_with_multiple_current_same_role_links": buildings_with_multiple_current_same_role_links,
+            "buildings_with_multiple_current_same_entity_links": buildings_with_multiple_current_same_entity_links,
             "blank_display_name_leads": blank_display_name_leads,
         },
         "last_lead_generation": last_lead_generation,

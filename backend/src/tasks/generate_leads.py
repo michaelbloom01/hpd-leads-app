@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 
 
 def run_generate_leads(min_portfolio: int = 1) -> dict[str, Any]:
-    from scripts.generate_leads_from_buildings import main as generate_main
+    from src.services.lead_generation import generate_leads
 
-    result = generate_main(min_portfolio=min_portfolio)
+    result = generate_leads(min_portfolio=min_portfolio)
     if isinstance(result, dict):
         return result
     return {"status": "completed"}
