@@ -34,6 +34,14 @@ const formatAbsoluteDate = (value: string | null | undefined): string => {
   return d.toLocaleDateString();
 };
 
+const getLeadDisplayName = (lead: ApiLead): string =>
+  lead.company_name ||
+  lead.agent_name ||
+  lead.owner_name ||
+  lead.primary_contact ||
+  lead.address ||
+  lead.lead_id;
+
 interface Props {
   lead: ApiLead;
   onClose: () => void;
@@ -355,7 +363,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   const openWebsite = () => {
     let url = enrichedLead.website;
     if (url && !url.startsWith('http')) url = `https://${url}`;
-    if (!url) url = `https://www.google.com/search?q=${encodeURIComponent((enrichedLead.agent_name || enrichedLead.owner_name) + ' property management NYC')}`;
+    if (!url) url = `https://www.google.com/search?q=${encodeURIComponent(`${getLeadDisplayName(enrichedLead)} property management NYC`)}`;
     window.open(url, '_blank');
   };
 
@@ -423,7 +431,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                     </span>
                   ))}
                 </div>
-                <h2 id="lead-detail-title" className="text-lg sm:text-xl font-bold text-gray-900 truncate">{enrichedLead.company_name || enrichedLead.agent_name || enrichedLead.owner_name}</h2>
+                <h2 id="lead-detail-title" className="text-lg sm:text-xl font-bold text-gray-900 truncate">{getLeadDisplayName(enrichedLead)}</h2>
               </div>
               <button onClick={onClose} aria-label="Close lead detail" className="p-2 text-gray-400 hover:text-gray-900 transition-colors ml-2 flex-shrink-0">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -471,12 +479,12 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 </button>
                 {showEmailMenu && (
                 <div className="absolute top-full left-0 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-xl z-50 py-1">
-                  <a href={`mailto:${enrichedLead.email}?subject=Property Management Services — ${enrichedLead.company_name || enrichedLead.agent_name || 'Introduction'}&body=Hi ${enrichedLead.primary_contact || 'there'},%0D%0A%0D%0AI noticed your portfolio of ${enrichedLead.portfolio_size} buildings across ${(enrichedLead.boros || [enrichedLead.boro]).join(', ')} and wanted to introduce our property management services.%0D%0A%0D%0AWould you have time for a brief call this week?%0D%0A%0D%0ABest regards`}
+                  <a href={`mailto:${enrichedLead.email}?subject=Property Management Services — ${getLeadDisplayName(enrichedLead) || 'Introduction'}&body=Hi ${enrichedLead.primary_contact || 'there'},%0D%0A%0D%0AI noticed your portfolio of ${enrichedLead.portfolio_size} buildings across ${(enrichedLead.boros || [enrichedLead.boro]).join(', ')} and wanted to introduce our property management services.%0D%0A%0D%0AWould you have time for a brief call this week?%0D%0A%0D%0ABest regards`}
                     onClick={() => { setShowEmailMenu(false); addOutreachAttempt(lead.lead_id, { method: 'email', outcome: 'sent_email', notes: 'Intro template sent' }).catch(() => toast.error('Failed to log outreach')); }}
                     className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors">
                     Intro Template
                   </a>
-                  <a href={`mailto:${enrichedLead.email}?subject=Following up — ${enrichedLead.company_name || enrichedLead.agent_name || ''}&body=Hi ${enrichedLead.primary_contact || 'there'},%0D%0A%0D%0AI wanted to follow up on my previous message regarding your ${enrichedLead.portfolio_size}-building portfolio.%0D%0A%0D%0AWe specialize in portfolios like yours in ${(enrichedLead.boros || [enrichedLead.boro]).join(' and ')} and believe we can add value.%0D%0A%0D%0AWould you be open to a brief conversation?%0D%0A%0D%0ABest regards`}
+                  <a href={`mailto:${enrichedLead.email}?subject=Following up — ${getLeadDisplayName(enrichedLead)}&body=Hi ${enrichedLead.primary_contact || 'there'},%0D%0A%0D%0AI wanted to follow up on my previous message regarding your ${enrichedLead.portfolio_size}-building portfolio.%0D%0A%0D%0AWe specialize in portfolios like yours in ${(enrichedLead.boros || [enrichedLead.boro]).join(' and ')} and believe we can add value.%0D%0A%0D%0AWould you be open to a brief conversation?%0D%0A%0D%0ABest regards`}
                     onClick={() => { setShowEmailMenu(false); addOutreachAttempt(lead.lead_id, { method: 'email', outcome: 'sent_email', notes: 'Follow-up template sent' }).catch(() => toast.error('Failed to log outreach')); }}
                     className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors">
                     Follow-Up Template
@@ -862,6 +870,9 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                     </span>
                   )}
                 </div>
+                <p className="text-[11px] text-gray-500">
+                  Building-linked evidence from HPD and NY DOS. Useful for board and ownership research, but not always the direct PM company contact.
+                </p>
                 {loadingBuildingContacts ? (
                   <div className="flex items-center gap-2 text-gray-500 text-sm py-2">
                     <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
@@ -923,9 +934,9 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                               )}
                               <span
                                 className="text-[10px] text-gray-400"
-                                title={`Published: ${formatAbsoluteDate(c.publication_date || c.as_of_date)}`}
+                                title={`Published: ${formatAbsoluteDate(c.filing_date || c.snapshot_as_of || c.publication_date || c.as_of_date)}`}
                               >
-                                {formatRelativeDate(c.publication_date || c.as_of_date)}
+                                {formatRelativeDate(c.filing_date || c.snapshot_as_of || c.publication_date || c.as_of_date)}
                               </span>
                               {c.confidence_hint && (
                                 <span className={`px-1.5 py-0.5 rounded text-[10px] ${c.confidence_hint === 'Likely board member (resident)' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'}`}>

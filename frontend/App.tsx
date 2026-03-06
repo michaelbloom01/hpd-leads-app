@@ -1,6 +1,6 @@
 
 import React, { Component, useState, useCallback, useEffect, Suspense, lazy } from 'react';
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster, toast } from 'react-hot-toast';
 import Sidebar from './components/Sidebar';
@@ -93,6 +93,7 @@ const AppContent: React.FC = () => {
 const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const { user } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [selectedLead, setSelectedLead] = useState<ApiLead | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -234,6 +235,7 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                         onSelectLead={setSelectedLead}
                         onNavigateToLeads={(filters) => {
                           if (filters) setLeadFilterPreset(filters);
+                          navigate('/leads');
                         }}
                       />
                     </RouteErrorBoundary>

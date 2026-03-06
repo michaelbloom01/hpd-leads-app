@@ -399,9 +399,57 @@ async def search_buildings(
 
     result = await session.execute(
         text(f"""
-            SELECT b.bbl, b.address, b.borough, b.unit_count, b.building_class,
-                   b.year_built, b.churn_score
+            SELECT
+                b.bbl,
+                b.address,
+                b.borough,
+                b.unit_count,
+                b.building_class,
+                b.year_built,
+                b.churn_score,
+                lead_match.lead_id,
+                lead_match.lead_name,
+                lead_match.entity_type,
+                lead_match.score,
+                lead_match.portfolio_size,
+                lead_match.total_units,
+                pm_match.corporation_name AS pm_company
             FROM buildings b
+            LEFT JOIN LATERAL (
+                SELECT
+                    l.lead_id,
+                    COALESCE(
+                        NULLIF(l.company_name, ''),
+                        NULLIF(l.agent_name, ''),
+                        NULLIF(l.owner_name, ''),
+                        NULLIF(l.primary_contact, ''),
+                        NULLIF(l.normalized_name, '')
+                    ) AS lead_name,
+                    l.entity_type,
+                    l.score,
+                    l.portfolio_size,
+                    l.total_units
+                FROM building_management bm
+                JOIN leads l ON l.lead_id = bm.lead_id
+                WHERE bm.bbl = b.bbl
+                  AND bm.is_current = true
+                ORDER BY l.score DESC NULLS LAST, l.updated_at DESC NULLS LAST
+                LIMIT 1
+            ) lead_match ON true
+            LEFT JOIN LATERAL (
+                SELECT bc_search.corporation_name
+                FROM building_contacts bc_search
+                WHERE bc_search.bbl = b.bbl
+                  AND bc_search.contact_type IN ('Agent', 'ManagementCompany', 'CorporateOwner')
+                  AND bc_search.corporation_name IS NOT NULL
+                  AND TRIM(bc_search.corporation_name) != ''
+                ORDER BY CASE
+                    WHEN bc_search.contact_type IN ('Agent', 'ManagementCompany') THEN 0
+                    ELSE 1
+                END,
+                bc_search.corporation_name
+                LIMIT 1
+            ) pm_match ON true
             WHERE ({like_clauses})
             ORDER BY b.churn_score DESC NULLS LAST
             LIMIT :limit
@@ -421,7 +469,18 @@ async def search_buildings(
             "boro": r.get("borough") or "",
             "units_res": r.get("unit_count") or 0,
             "building_class": r.get("building_class") or "",
+            "building_type": None,
             "year_built": r.get("year_built"),
             "churn_score": r.get("churn_score"),
+            "lead_id": r.get("lead_id"),
+            "lead_name": r.get("lead_name"),
+            "lead_entity_type": r.get("entity_type"),
+            "score": r.get("score"),
+            "portfolio_size": r.get("portfolio_size"),
+            "total_units": r.get("total_units"),
+            "agent_name": r.get("lead_name") or r.get("pm_company") or "",
+            "owner_name": "",
+            "pm_company": r.get("pm_company"),
+            "status": "linked" if r.get("lead_id") else ("discovered" if r.get("pm_company") else "unlinked"),
         })
     return {"query": address, "buildings": buildings, "total": len(buildings)}

@@ -306,6 +306,20 @@ async def get_leads(
                 OR agent_name ILIKE :search
                 OR primary_contact ILIKE :search
                 OR normalized_name ILIKE :search
+                OR phone ILIKE :search
+                OR email ILIKE :search
+                OR website ILIKE :search
+                OR EXISTS (
+                    SELECT 1
+                    FROM building_management bm
+                    JOIN buildings b ON b.bbl = bm.bbl
+                    WHERE bm.lead_id = leads.lead_id
+                      AND bm.is_current = true
+                      AND (
+                        b.address ILIKE :search
+                        OR CAST(b.bbl AS TEXT) ILIKE :search
+                      )
+                )
             )
         """)
         params["search"] = f"%{search}%"

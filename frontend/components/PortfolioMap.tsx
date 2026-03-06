@@ -148,8 +148,7 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({ buildings, boro, boros, hei
     const rows = (buildings || []).slice(0, 150).map((building) => {
       const addr = typeof building === 'string' ? building : building.address;
       const entryBoro = typeof building === 'object' && building.borough ? building.borough : undefined;
-      // Keep borough attribution deterministic; avoid synthetic spread across borough list.
-      const buildingBoro = entryBoro || boro || boros?.[0] || '';
+      const buildingBoro = entryBoro || boro || '';
       return { addr: (addr || '').trim(), buildingBoro };
     });
     return rows.filter(({ addr }) => {
@@ -207,6 +206,11 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({ buildings, boro, boros, hei
 
   return (
     <div style={{ height, width: '100%' }} className="rounded-lg overflow-hidden">
+      {positions.some((p) => p.approximate) && (
+        <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
+          Some markers are approximate because a precise geocode was not available.
+        </div>
+      )}
       <MapContainer
         ref={mapRef}
         center={center}

@@ -1226,13 +1226,16 @@ export interface BuildingSearchResult {
   boro: string;
   units_res: number;
   building_class: string;
-  building_type: string;
-  lead_id: string;
+  building_type: string | null;
+  lead_id: string | null;
+  lead_name?: string | null;
+  lead_entity_type?: string | null;
   agent_name: string;
   owner_name: string;
-  score: number;
-  portfolio_size: number;
-  total_units: number;
+  score: number | null;
+  portfolio_size: number | null;
+  total_units: number | null;
+  pm_company?: string | null;
   status: string;
 }
 
@@ -1258,6 +1261,11 @@ export interface DataHealthResponse {
   matched_entities: number;
   entity_coverage_ratio: number | null;
   coverage_ratio?: number | null;
+  integrity?: {
+    leads_with_zero_active_links: number;
+    buildings_with_multiple_current_pm_links: number;
+    blank_display_name_leads: number;
+  };
   last_lead_generation: {
     started_at: string | null;
     finished_at: string | null;

@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'react-hot-toast';
+import { useNavigate } from 'react-router-dom';
 import { fetchLeads, ApiLead, enrichLeads, API_BASE_URL, checkHealth, searchBuildings, BuildingSearchResult, createSmartList } from '../services/api';
 import { getAuthHeaders } from '../services/auth';
 import { BOROUGHS, BOROUGH_SHORT, formatCurrency, scoreColor } from '../utils/format';
@@ -30,7 +31,16 @@ const HEALTH_POLL_INTERVAL = 5000;
 type SortField = 'agent_name' | 'portfolio_size' | 'total_units' | 'units_per_bldg' | 'score' | 'boro' | 'enrichment_status' | 'estimated_annual_revenue' | 'violations_per_unit';
 type SortDir = 'asc' | 'desc';
 
+const getLeadDisplayName = (lead: ApiLead): string =>
+  lead.company_name ||
+  lead.agent_name ||
+  lead.owner_name ||
+  lead.primary_contact ||
+  lead.address ||
+  lead.lead_id;
+
 const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPresetConsumed }) => {
+  const navigate = useNavigate();
   const { filters, setField, toggle, clearAll: clearFilterState, applyPreset, activeFiltersCount, toApiParams } = useLeadFilters();
   useFilterUrl(filters, applyPreset);
 
@@ -138,29 +148,41 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
 
-  // Detect if search term looks like a building address (starts with a number)
-  const looksLikeAddress = (term: string) => /^\d/.test(term.trim());
-
-  // Apply filters — called by the "Go" button
-  // Auto-detects address-like searches and triggers building search alongside lead search
+  // Apply filters within the currently selected workspace.
   const applyFilters = () => {
     setPage(0);
-    loadLeads(0);
+    setError(null);
 
-    const term = filters.searchTerm.trim();
-    if (term && looksLikeAddress(term)) {
+    if (filters.searchMode === 'address') {
+      const term = filters.searchTerm.trim();
+      setLeads([]);
+      setTotalLeads(0);
+      if (!term) {
+        setAddressResults([]);
+        setAddressSearching(false);
+        return;
+      }
       setAddressSearching(true);
-      searchBuildings(term).then(res => {
-        if (!isMounted.current) return;
-        setAddressResults(res.buildings || []);
-        if ((res.buildings || []).length > 0) {
-          setField('searchMode', 'address');
-        }
-      }).catch(() => { if (isMounted.current) setAddressResults([]); }).finally(() => { if (isMounted.current) setAddressSearching(false); });
-    } else {
-      setAddressResults([]);
-      if (filters.searchMode === 'address' && !term) setField('searchMode', 'leads');
+      searchBuildings(term)
+        .then((res) => {
+          if (!isMounted.current) return;
+          setAddressResults(res.buildings || []);
+        })
+        .catch(() => {
+          if (!isMounted.current) return;
+          setAddressResults([]);
+          setError('Failed to search buildings. Make sure the backend is running.');
+        })
+        .finally(() => {
+          if (isMounted.current) setAddressSearching(false);
+        });
+      return;
     }
+
+    if (addressResults.length > 0) {
+      setAddressResults([]);
+    }
+    loadLeads(0);
   };
   useEffect(() => {
     if (!filterPreset) return;
@@ -180,6 +202,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
 
 
   const totalPages = Math.ceil(totalLeads / pageSize);
+  const showLeadWorkspace = filters.searchMode === 'leads';
 
   // Server handles filtering, sorting, and search — display leads directly
   const displayLeads = leads;
@@ -600,12 +623,17 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
         {/* Results count and bulk actions */}
         <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-200">
           <div className="text-sm text-gray-400">
-            Showing <span className="text-gray-700 font-medium">{displayLeads.length}</span> of <span className="text-gray-700 font-medium">{totalLeads.toLocaleString()}</span> leads
+            {showLeadWorkspace ? (
+              <>Showing <span className="text-gray-700 font-medium">{displayLeads.length}</span> of <span className="text-gray-700 font-medium">{totalLeads.toLocaleString()}</span> leads</>
+            ) : (
+              <>Address lookup returns buildings first, then linked PM leads when available.</>
+            )}
             {selectedIds.size > 0 && (
               <span className="ml-3 text-blue-600">({selectedIds.size} selected)</span>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          {showLeadWorkspace && (
+            <div className="flex items-center gap-2">
             <button
               onClick={() => setViewMode('table')}
               className={`px-2 py-1 text-[11px] rounded border transition-colors ${
@@ -626,8 +654,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
             >
               Kanban
             </button>
-          </div>
-          {selectedIds.size > 0 && (
+            </div>
+          )}
+          {showLeadWorkspace && selectedIds.size > 0 && (
             <button
               onClick={handleEnrichSelected}
               disabled={enriching}
@@ -649,21 +678,34 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
               <div key={b.building_id || `${b.address}-${idx}`} className="flex items-center justify-between p-2 rounded-lg bg-blue-50/50 hover:bg-blue-50 transition-colors">
                 <div>
                   <div className="text-sm font-medium text-gray-900">{b.address}</div>
-                  <div className="text-xs text-gray-500">{b.boro} · {b.units_res} units · {b.building_type || 'unknown'}</div>
+                  <div className="text-xs text-gray-500">
+                    {b.boro} · {b.units_res} units · {b.pm_company || b.building_type || 'building record'}
+                  </div>
                 </div>
                 <div className="text-right">
-                  {b.agent_name ? (
+                  <button
+                    onClick={() => navigate(`/buildings/${encodeURIComponent(String(b.building_id))}`)}
+                    className="block text-xs text-gray-500 hover:text-gray-700 hover:underline mb-1"
+                  >
+                    Open building
+                  </button>
+                  {b.lead_id ? (
                     <button
                       onClick={() => {
                         setField('searchMode', 'leads');
-                        setField('searchTerm', b.agent_name);
+                        setField('searchTerm', b.lead_name || b.agent_name || b.pm_company || '');
                         setAddressResults([]);
                         setTimeout(() => applyFilters(), 0);
                       }}
                       className="text-xs text-blue-600 hover:underline font-medium"
                     >
-                      {b.agent_name} (score: {b.score?.toFixed(1)})
+                      {b.lead_name || b.agent_name} {b.score != null ? `(score: ${b.score.toFixed(1)})` : ''}
                     </button>
+                  ) : b.pm_company ? (
+                    <div className="text-xs text-gray-600">
+                      <div className="font-medium">{b.pm_company}</div>
+                      <div className="text-gray-400">Company found, but no linked lead yet</div>
+                    </div>
                   ) : (
                     <span className="text-xs text-gray-400">No managing lead</span>
                   )}
@@ -680,8 +722,22 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
         </div>
       )}
 
+      {filters.searchMode === 'address' && !addressSearching && filters.searchTerm.trim() && addressResults.length === 0 && !error && (
+        <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6 text-center">
+          <p className="text-sm font-medium text-gray-700">No buildings matched that address.</p>
+          <p className="text-xs text-gray-400 mt-1">Try a shorter street name or a nearby address variant.</p>
+        </div>
+      )}
+
+      {filters.searchMode === 'address' && !filters.searchTerm.trim() && (
+        <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6 text-center">
+          <p className="text-sm font-medium text-gray-700">Search a building address to investigate a property first.</p>
+          <p className="text-xs text-gray-400 mt-1">Use `Leads` mode for outreach entities and `Address Lookup` for a building-first investigation.</p>
+        </div>
+      )}
 
       {/* Data Table — desktop table, mobile cards */}
+      {showLeadWorkspace && (
       <div className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
         {viewMode === 'kanban' ? (
           <LeadKanban leads={displayLeads} onSelectLead={onSelectLead} />
@@ -752,7 +808,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                   </td>
                   <td className="px-4 py-3">
                     <div className="font-medium text-gray-800 text-sm flex items-center gap-1.5">
-                      {lead.company_name || lead.agent_name || lead.owner_name}
+                      {getLeadDisplayName(lead)}
                       {lead.data_staleness === 'expired' && (
                         <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-red-50 text-red-500" title="Registration not confirmed in last refresh">EXPIRED</span>
                       )}
@@ -931,7 +987,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                     className="rounded bg-white border-gray-300 mt-0.5 flex-shrink-0"
                   />
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-gray-800 text-sm truncate">{lead.company_name || lead.agent_name || lead.owner_name}</div>
+                    <div className="font-medium text-gray-800 text-sm truncate">{getLeadDisplayName(lead)}</div>
                   <div className="flex items-center gap-1.5 mt-1">
                     <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
                       lead.entity_type === 'company' ? 'bg-blue-50 text-blue-700' :
@@ -1052,6 +1108,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
           </>
         )}
       </div>
+      )}
     </div>
   );
 };

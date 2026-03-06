@@ -143,6 +143,11 @@ const BuildingDetailPage: React.FC = () => {
   const boardLeaders = sortedContacts.filter((c: BuildingContactEntry) =>
     c.confidence_hint === 'Likely board member (resident)' || c.role === 'DOS Chairman (Biennial)')
     .slice(0, 3);
+  const showContactsCard =
+    dosStatus !== 'loaded' ||
+    Boolean(building.management_company) ||
+    Boolean(building.corporate_owner) ||
+    (building.all_contacts?.length || 0) > 0;
 
   return (
     <div className="space-y-6">
@@ -176,7 +181,7 @@ const BuildingDetailPage: React.FC = () => {
       </div>
 
       {/* People & Companies — contacts from all sources */}
-      {building.all_contacts && building.all_contacts.length > 0 && (
+      {showContactsCard && (
         <div className="bg-white rounded-lg border border-gray-200 p-5">
           {boardLeaders.length > 0 && (
             <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
@@ -320,6 +325,13 @@ const BuildingDetailPage: React.FC = () => {
                     </td>
                   </tr>
                 ))}
+                {sortedContacts.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-4 text-sm text-gray-400">
+                      No contact evidence is currently attached to this building.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

@@ -24,11 +24,14 @@ def test_leads_search_includes_primary_contact_and_normalized_name():
     source = _read("src/routers/leads.py")
     assert "OR primary_contact ILIKE :search" in source
     assert "OR normalized_name ILIKE :search" in source
+    assert "OR phone ILIKE :search" in source
+    assert "JOIN buildings b ON b.bbl = bm.bbl" in source
 
 
 def test_buildings_search_includes_pm_company_lookup():
-    source = _read("src/routers/buildings.py")
-    assert "bc_search.corporation_name ILIKE :search" in source
+    source = _read("src/routers/admin.py")
+    assert "lead_match.lead_name" in source
+    assert "bc_search.contact_type IN ('Agent', 'ManagementCompany', 'CorporateOwner')" in source
 
 
 def test_quality_data_health_exposes_entity_coverage_metrics():
@@ -36,3 +39,4 @@ def test_quality_data_health_exposes_entity_coverage_metrics():
     assert '"entity_coverage_ratio": entity_coverage_ratio' in source
     assert '"distinct_entities_in_contacts": distinct_entities_in_contacts' in source
     assert '"last_lead_generation": last_lead_generation' in source
+    assert '"integrity": {' in source

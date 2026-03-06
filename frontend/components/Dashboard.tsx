@@ -53,6 +53,14 @@ interface DashboardProps {
 
 // scoreColor imported from utils/format
 
+const getLeadDisplayName = (lead: ApiLead): string =>
+  lead.company_name ||
+  lead.agent_name ||
+  lead.owner_name ||
+  lead.primary_contact ||
+  lead.address ||
+  lead.lead_id;
+
 
 const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }) => {
   const [topLeads, setTopLeads] = useState<ApiLead[]>([]);
@@ -493,7 +501,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
                   className="flex items-center justify-between p-2.5 rounded-lg hover:bg-blue-50/60 cursor-pointer transition-colors group"
                 >
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate group-hover:text-blue-700 transition-colors">{lead.company_name || lead.agent_name || lead.owner_name}</p>
+                    <p className="text-sm font-medium text-gray-900 truncate group-hover:text-blue-700 transition-colors">{getLeadDisplayName(lead)}</p>
                     <p className="text-[10px] text-gray-400">{lead.portfolio_size} bldgs &middot; {(lead.total_units || 0).toLocaleString()} units &middot; Score {lead.score.toFixed(0)}</p>
                   </div>
                   <div className="flex items-center gap-1.5 ml-3 flex-shrink-0">
@@ -626,7 +634,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
                         className="hover:bg-blue-50/50 cursor-pointer transition-colors"
                       >
                         <td className="py-2.5 px-3">
-                          <p className="text-sm font-medium text-gray-900 truncate max-w-[200px]">{lead.company_name || lead.agent_name || lead.owner_name}</p>
+                          <p className="text-sm font-medium text-gray-900 truncate max-w-[200px]">{getLeadDisplayName(lead)}</p>
                           <p className="text-[10px] text-gray-400">{lead.portfolio_size} bldgs</p>
                         </td>
                         <td className="py-2.5 px-3 text-right font-mono text-sm text-gray-700">{(lead.total_units || 0).toLocaleString()}</td>

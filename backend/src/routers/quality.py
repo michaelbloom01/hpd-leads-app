@@ -140,6 +140,34 @@ async def data_health(session: AsyncSession = Depends(get_session)):
         )
     """))).scalar() or 0)
 
+    leads_with_zero_active_links = int((await session.execute(text("""
+        SELECT COUNT(*)
+        FROM leads l
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM building_management bm
+            WHERE bm.lead_id = l.lead_id
+              AND bm.is_current = true
+        )
+    """))).scalar() or 0)
+
+    buildings_with_multiple_current_pm_links = int((await session.execute(text("""
+        SELECT COUNT(*)
+        FROM (
+            SELECT bm.bbl
+            FROM building_management bm
+            WHERE bm.is_current = true
+            GROUP BY bm.bbl
+            HAVING COUNT(*) > 1
+        ) t
+    """))).scalar() or 0)
+
+    blank_display_name_leads = int((await session.execute(text("""
+        SELECT COUNT(*)
+        FROM leads l
+        WHERE COALESCE(NULLIF(TRIM(l.company_name), ''), NULLIF(TRIM(l.agent_name), ''), NULLIF(TRIM(l.owner_name), ''), NULLIF(TRIM(l.primary_contact), '')) IS NULL
+    """))).scalar() or 0)
+
     lead_generation_row = (await session.execute(text("""
         SELECT started_at, finished_at, status
         FROM ingestion_jobs
@@ -191,6 +219,10 @@ async def data_health(session: AsyncSession = Depends(get_session)):
         warnings.append(f"Low phone coverage: {enrichment_coverage['phone']}%")
     if entity_coverage_ratio is not None and entity_coverage_ratio < 95:
         warnings.append(f"Entity coverage gap: only {entity_coverage_ratio}% of source entities materialized into leads")
+    if leads_with_zero_active_links > 0:
+        warnings.append(f"{leads_with_zero_active_links:,} leads have no active building links")
+    if blank_display_name_leads > 0:
+        warnings.append(f"{blank_display_name_leads:,} leads are missing a display name")
 
     return {
         "total_leads": row["total_leads"],
@@ -208,6 +240,11 @@ async def data_health(session: AsyncSession = Depends(get_session)):
         "matched_entities": matched_entities,
         "entity_coverage_ratio": entity_coverage_ratio,
         "coverage_ratio": entity_coverage_ratio,
+        "integrity": {
+            "leads_with_zero_active_links": leads_with_zero_active_links,
+            "buildings_with_multiple_current_pm_links": buildings_with_multiple_current_pm_links,
+            "blank_display_name_leads": blank_display_name_leads,
+        },
         "last_lead_generation": last_lead_generation,
         "last_lead_generation_at": (
             last_lead_generation.get("finished_at")

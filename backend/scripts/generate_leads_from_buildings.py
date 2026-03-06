@@ -12,6 +12,7 @@ import sys
 import logging
 import argparse
 import hashlib
+import re
 from pathlib import Path
 from datetime import datetime
 
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 from src.db.session import get_sync_url
+from src.transform.normalize import normalize_name, normalize_name_for_grouping
 
 
 def make_lead_id(name: str) -> str:
@@ -37,10 +39,74 @@ def make_lead_id(name: str) -> str:
     return hashlib.md5(normalized.encode()).hexdigest()[:12]
 
 
-def normalize_name(name: str) -> str:
-    if not name:
-        return ""
-    return " ".join(name.strip().upper().split())
+SEED_CONTACT_TYPES = {
+    "Agent",
+    "ManagementCompany",
+    "Owner",
+    "CorporateOwner",
+    "IndividualOwner",
+}
+
+OWNER_CONTACT_TYPES = {"Owner", "CorporateOwner", "IndividualOwner"}
+
+PLACEHOLDER_NAMES = {
+    "",
+    "N A",
+    "N/A",
+    "NA",
+    "NONE",
+    "NULL",
+    "UNKNOWN",
+    "TBD",
+    "-",
+    "--",
+}
+
+JUNK_TOKENS = {
+    "BOARD",
+    "MEMBER",
+    "OFFICER",
+    "OWNER",
+    "TENANT",
+    "RESIDENT",
+    "UNKNOWN",
+    "NONE",
+    "TRUSTEE",
+}
+
+
+def _raw_name_from_contact(row) -> str:
+    corp = (row.corporation_name or "").strip()
+    if corp:
+        return corp
+    first = (row.first_name or "").strip()
+    last = (row.last_name or "").strip()
+    return " ".join(part for part in [first, last] if part).strip()
+
+
+def _is_seed_contact(row) -> bool:
+    return str(row.contact_type or "").strip() in SEED_CONTACT_TYPES
+
+
+def _is_probably_junk_name(raw_name: str) -> bool:
+    normalized = normalize_name(raw_name)
+    if normalized in PLACEHOLDER_NAMES:
+        return True
+    if len(normalized) < 3:
+        return True
+    if re.fullmatch(r"\d+", normalized):
+        return True
+
+    tokens = normalized.split()
+    if not tokens:
+        return True
+    if len(tokens) <= 2 and all(token in JUNK_TOKENS for token in tokens):
+        return True
+    return False
+
+
+def _display_name_for_group(raw_name: str) -> str:
+    return normalize_name(raw_name)
 
 
 def compute_score(portfolio_size: int, total_units: int, violation_count: int = 0) -> float:
@@ -104,6 +170,7 @@ def main(min_portfolio: int = 1):
             bc.business_city,
             bc.business_state,
             bc.business_zip,
+            b.address,
             b.borough,
             b.unit_count,
             b.building_class,
@@ -111,8 +178,7 @@ def main(min_portfolio: int = 1):
             b.assessed_value
         FROM building_contacts bc
         JOIN buildings b ON bc.bbl = b.bbl
-        WHERE bc.contact_type IN ('Agent', 'Owner', 'CorporateOwner', 'IndividualOwner',
-                                   'HeadOfficer', 'Officer', 'Shareholder')
+        WHERE bc.contact_type IN ('Agent', 'ManagementCompany', 'Owner', 'CorporateOwner', 'IndividualOwner')
         ORDER BY bc.corporation_name NULLS LAST
     """)).fetchall()
 
@@ -121,34 +187,30 @@ def main(min_portfolio: int = 1):
     # Aggregate by normalized name
     leads_map = {}  # normalized_name -> lead dict
     for row in rows:
-        corp = row.corporation_name
-        first = row.first_name or ""
-        last = row.last_name or ""
-
-        if corp and corp.strip():
-            raw_name = corp.strip()
-        elif first or last:
-            raw_name = f"{first} {last}".strip()
-        else:
+        if not _is_seed_contact(row):
             continue
 
-        norm_name = normalize_name(raw_name)
-        if not norm_name or norm_name in ("", "N/A", "NONE", "-", "--"):
+        raw_name = _raw_name_from_contact(row)
+        if _is_probably_junk_name(raw_name):
             continue
-        if len(norm_name) < 2:
+
+        norm_name = normalize_name_for_grouping(raw_name)
+        display_name = _display_name_for_group(raw_name)
+        if not norm_name:
             continue
 
         if norm_name not in leads_map:
             leads_map[norm_name] = {
                 "lead_id": make_lead_id(norm_name),
                 "normalized_name": norm_name,
-                "agent_name": raw_name if row.contact_type in ("Agent",) else None,
-                "owner_name": raw_name if row.contact_type in ("Owner", "IndividualOwner", "CorporateOwner") else None,
-                "company_name": corp.strip() if corp else None,
-                "entity_type": "corporation" if corp else "individual",
+                "agent_name": display_name if row.contact_type in {"Agent", "ManagementCompany"} else None,
+                "owner_name": display_name if row.contact_type in OWNER_CONTACT_TYPES else None,
+                "company_name": (row.corporation_name or "").strip() or None,
+                "entity_type": "company" if (row.corporation_name or "").strip() else "individual_agent",
                 "address": row.business_address,
                 "boroughs": {},
                 "bbl_set": set(),
+                "address_set": set(),
                 "unit_count_total": 0,
                 "building_classes": [],
             }
@@ -159,14 +221,20 @@ def main(min_portfolio: int = 1):
         if bbl not in lead["bbl_set"]:
             lead["bbl_set"].add(bbl)
             lead["unit_count_total"] += row.unit_count or 0
+            if row.address:
+                lead["address_set"].add(row.address)
             if row.borough:
                 lead["boroughs"][row.borough] = lead["boroughs"].get(row.borough, 0) + 1
             if row.building_class:
                 lead["building_classes"].append(row.building_class)
 
         # Prefer Agent name over other contact types
-        if row.contact_type == "Agent" and not lead.get("agent_name"):
-            lead["agent_name"] = raw_name
+        if row.contact_type in {"Agent", "ManagementCompany"} and not lead.get("agent_name"):
+            lead["agent_name"] = display_name
+        if row.contact_type in OWNER_CONTACT_TYPES and not lead.get("owner_name"):
+            lead["owner_name"] = display_name
+        if (row.corporation_name or "").strip() and not lead.get("company_name"):
+            lead["company_name"] = (row.corporation_name or "").strip()
 
     logger.info(f"Found {len(leads_map):,} unique PM companies before portfolio filter")
 
@@ -179,7 +247,7 @@ def main(min_portfolio: int = 1):
         return
 
     # Insert leads
-    inserted = updated = 0
+    inserted = 0
     now = datetime.utcnow()
     batch_size = 1000
 
@@ -207,10 +275,11 @@ def main(min_portfolio: int = 1):
             "total_units": total_units,
             "score": score,
             "score_breakdown": _json.dumps({"components": {}}),
-            "boros": _json.dumps([primary_borough] if primary_borough else []),
+            "buildings": _json.dumps(sorted(lead["address_set"])),
+            "boros": _json.dumps(sorted(lead["boroughs"].keys())),
             "enrichment_status": "none",
-            "pipeline_stage": "new",
-            "outreach_status": "none",
+            "pipeline_stage": "research",
+            "outreach_status": "new",
             "priority_rank": 0,
             "created_at": now,
             "updated_at": now,
@@ -220,14 +289,14 @@ def main(min_portfolio: int = 1):
         INSERT INTO leads (
             lead_id, normalized_name, agent_name, owner_name,
             company_name, entity_type, address, primary_borough,
-            portfolio_size, total_units, score, score_breakdown,
+            portfolio_size, total_units, score, score_breakdown, buildings,
             boros, enrichment_status, pipeline_stage,
             outreach_status, priority_rank,
             created_at, updated_at
         ) VALUES (
             :lead_id, :normalized_name, :agent_name, :owner_name,
             :company_name, :entity_type, :address, :primary_borough,
-            :portfolio_size, :total_units, :score, CAST(:score_breakdown AS JSONB),
+            :portfolio_size, :total_units, :score, CAST(:score_breakdown AS JSONB), CAST(:buildings AS JSONB),
             CAST(:boros AS JSONB), :enrichment_status, :pipeline_stage,
             :outreach_status, :priority_rank,
             :created_at, :updated_at
@@ -242,6 +311,7 @@ def main(min_portfolio: int = 1):
             total_units = EXCLUDED.total_units,
             score = EXCLUDED.score,
             primary_borough = EXCLUDED.primary_borough,
+            buildings = EXCLUDED.buildings,
             boros = EXCLUDED.boros,
             updated_at = EXCLUDED.updated_at
     """)
@@ -268,23 +338,33 @@ def main(min_portfolio: int = 1):
     logger.info(f"Done: {inserted:,} leads upserted into PostgreSQL")
 
     # Backfill building_management table
-    logger.info("Backfilling building_management from building_contacts + leads...")
+    logger.info("Backfilling building_management from generated lead links...")
     try:
+        session.execute(text("CREATE TEMP TABLE tmp_lead_links (bbl TEXT, lead_id TEXT, role TEXT) ON COMMIT DROP"))
+        link_rows = []
+        for lead in leads_list:
+            role = "agent" if lead.get("agent_name") else "owner"
+            for bbl in lead["bbl_set"]:
+                link_rows.append({"bbl": bbl, "lead_id": lead["lead_id"], "role": role})
+
+        if link_rows:
+            session.execute(
+                text("INSERT INTO tmp_lead_links (bbl, lead_id, role) VALUES (:bbl, :lead_id, :role)"),
+                link_rows,
+            )
+
         bm_result = session.execute(text("""
             INSERT INTO building_management (bbl, lead_id, role, is_current, created_at, updated_at)
-            SELECT DISTINCT ON (bc.bbl, l.lead_id)
-                bc.bbl, l.lead_id, 'agent', true, now(), now()
-            FROM building_contacts bc
-            JOIN leads l ON l.normalized_name = REGEXP_REPLACE(UPPER(TRIM(bc.corporation_name)), '\s+', ' ', 'g')
-            WHERE bc.contact_type IN ('Agent', 'CorporateOwner', 'Owner')
-              AND bc.corporation_name IS NOT NULL AND TRIM(bc.corporation_name) != ''
-              AND NOT EXISTS (
+            SELECT DISTINCT ON (t.bbl, t.lead_id)
+                t.bbl, t.lead_id, t.role, true, now(), now()
+            FROM tmp_lead_links t
+            WHERE NOT EXISTS (
                 SELECT 1
                 FROM building_management bm
-                WHERE bm.bbl = bc.bbl
-                  AND bm.lead_id = l.lead_id
+                WHERE bm.bbl = t.bbl
+                  AND bm.lead_id = t.lead_id
                   AND bm.is_current = true
-              )
+            )
         """))
         session.commit()
         bm_count = bm_result.rowcount
@@ -292,6 +372,30 @@ def main(min_portfolio: int = 1):
     except Exception as e:
         session.rollback()
         logger.error(f"building_management backfill failed: {e}")
+
+    logger.info("Refreshing lead portfolio snapshots from live building links...")
+    snapshot_result = session.execute(text("""
+        UPDATE leads l
+        SET portfolio_size = COALESCE(sub.bldg_count, 0),
+            total_units = COALESCE(sub.unit_sum, 0),
+            updated_at = NOW()
+        FROM (
+            SELECT bm.lead_id,
+                   COUNT(DISTINCT bm.bbl) AS bldg_count,
+                   COALESCE(SUM(b.unit_count), 0) AS unit_sum
+            FROM building_management bm
+            JOIN buildings b ON b.bbl = bm.bbl
+            WHERE bm.is_current = true
+            GROUP BY bm.lead_id
+        ) sub
+        WHERE l.lead_id = sub.lead_id
+          AND (
+                COALESCE(l.portfolio_size, 0) <> COALESCE(sub.bldg_count, 0)
+             OR COALESCE(l.total_units, 0) <> COALESCE(sub.unit_sum, 0)
+          )
+    """))
+    session.commit()
+    logger.info("  portfolio snapshots updated: %s", int(snapshot_result.rowcount or 0))
 
     # Final count
     final_count = session.execute(text("SELECT COUNT(*) FROM leads")).scalar()

@@ -1,6 +1,7 @@
 from src.transform.normalize import normalize_name, normalize_name_for_grouping
 from src.routers.leads import _row_to_response
 from pathlib import Path
+from scripts.generate_leads_from_buildings import _is_probably_junk_name
 
 
 def test_normalize_name_expands_common_abbreviations():
@@ -11,6 +12,12 @@ def test_grouping_normalization_collapses_legal_suffix_variants():
     a = normalize_name_for_grouping("Harlem Property Management LLC")
     b = normalize_name_for_grouping("HARLEM PROP MGMT INC")
     assert a == b == "HARLEM"
+
+
+def test_generate_leads_rejects_placeholder_seed_names():
+    assert _is_probably_junk_name("N/A") is True
+    assert _is_probably_junk_name("Board Member") is True
+    assert _is_probably_junk_name("Harlem Property Management LLC") is False
 
 
 def test_row_to_response_parses_json_like_fields():
