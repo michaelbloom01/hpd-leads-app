@@ -1,6 +1,7 @@
 import React from 'react';
 import type { ApiLead } from '../../services/api';
 import { formatCurrency, scoreColor } from '../../utils/format';
+import { getLeadDisplayName } from '../../utils/leads';
 
 const KANBAN_STAGES = [
   'research',
@@ -48,7 +49,7 @@ const LeadKanban: React.FC<LeadKanbanProps> = ({ leads, onSelectLead }) => {
                     className="w-full text-left bg-white border border-gray-200 rounded-lg p-2 hover:border-blue-300 hover:bg-blue-50/40 transition-colors"
                   >
                     <div className="text-xs font-semibold text-gray-800 truncate">
-                      {lead.company_name || lead.agent_name || lead.owner_name}
+                      {getLeadDisplayName(lead)}
                     </div>
                     <div className="mt-1 text-[10px] text-gray-500">
                       {lead.portfolio_size || 0} bldgs • {(lead.total_units || 0).toLocaleString()} units

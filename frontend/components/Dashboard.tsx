@@ -35,6 +35,7 @@ import {
   scoreColor,
 } from '../utils/format';
 import { fetchBuildingStats, fetchBuildings, type BuildingStats, type BuildingOutreachStats, type BuildingRow } from '../services/buildings-api';
+import { getLeadDisplayName } from '../utils/leads';
 
 interface LeadFilterPreset {
   outreachStatuses?: string[];
@@ -52,15 +53,6 @@ interface DashboardProps {
 }
 
 // scoreColor imported from utils/format
-
-const getLeadDisplayName = (lead: ApiLead): string =>
-  lead.company_name ||
-  lead.agent_name ||
-  lead.owner_name ||
-  lead.primary_contact ||
-  lead.address ||
-  lead.lead_id;
-
 
 const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }) => {
   const [topLeads, setTopLeads] = useState<ApiLead[]>([]);

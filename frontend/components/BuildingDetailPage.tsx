@@ -1,7 +1,7 @@
 /**
  * BuildingDetailPage — Deep dive into a single building's churn signals.
  */
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
@@ -11,6 +11,8 @@ import {
   type BuildingContactEntry, type BuildingDetail,
 } from '../services/buildings-api';
 import { toast } from 'react-hot-toast';
+
+const PortfolioMap = lazy(() => import('./PortfolioMap'));
 
 const formatRelativeDate = (value: string | null | undefined): string => {
   if (!value) return '--';
@@ -43,9 +45,23 @@ const signalLabels: Record<string, string> = {
   dob_permits: 'DOB Permits',
   hpd_litigation: 'Housing Litigation',
   emergency_repairs: 'Emergency Repairs',
-  building_size: 'Building Size',
+  building_size: 'Building Scale',
   eviction_activity: 'Eviction Activity',
   facade_status: 'Facade Status',
+};
+
+const getChurnTone = (score: number | null | undefined): string => {
+  if (score == null) return 'text-gray-400';
+  if (score >= 70) return 'text-red-600';
+  if (score >= 40) return 'text-amber-600';
+  return 'text-green-600';
+};
+
+const getChurnCategoryLabel = (category: string | null | undefined): string => {
+  if (category === 'hot') return 'Hot churn risk';
+  if (category === 'warm') return 'Watchlist';
+  if (category === 'stable') return 'More stable';
+  return 'Not scored yet';
 };
 
 const eventIcons: Record<string, string> = {
@@ -75,6 +91,11 @@ const BuildingDetailPage: React.FC = () => {
     queryFn: () => fetchBuildingDetail(decodedBbl!),
     enabled: !!decodedBbl,
     retry: 1,
+    refetchInterval: (query) => {
+      const status = (query.state.data as BuildingDetail | undefined)?.dos_contacts_status;
+      return status === 'refreshing' || status === 'stale' || status === 'not_loaded' ? 5000 : false;
+    },
+    refetchOnWindowFocus: true,
   });
 
   const activeBbl = building?.bbl || decodedBbl;
@@ -134,6 +155,7 @@ const BuildingDetailPage: React.FC = () => {
     building.all_contacts?.some((c: BuildingContactEntry) => c.source === 'NY DOS Filing' || c.source === 'NY DOS Snapshot')
   );
   const dosStatus = building.dos_contacts_status || (building.dos_contacts_is_stale ? 'stale' : 'loaded');
+  const contactCount = building.all_contacts?.length || 0;
   const sortedContacts = [...(building.all_contacts || [])].sort((a, b) => {
     if (a.is_decision_maker !== b.is_decision_maker) return a.is_decision_maker ? -1 : 1;
     const aTime = a.as_of_date ? Date.parse(a.as_of_date) : 0;
@@ -147,7 +169,41 @@ const BuildingDetailPage: React.FC = () => {
     dosStatus !== 'loaded' ||
     Boolean(building.management_company) ||
     Boolean(building.corporate_owner) ||
-    (building.all_contacts?.length || 0) > 0;
+    contactCount > 0;
+  const breakdownEntries = Object.entries(breakdown || {}).sort(([, a], [, b]) => b.contribution - a.contribution);
+  const dosBanner = (() => {
+    if (dosStatus === 'refreshing') {
+      return {
+        tone: 'border-blue-200 bg-blue-50 text-blue-700',
+        text: 'Refreshing DOS contact data now. This page updates automatically when the refresh finishes.',
+      };
+    }
+    if (dosStatus === 'stale') {
+      return {
+        tone: 'border-amber-200 bg-amber-50 text-amber-700',
+        text: 'DOS contact data is stale. A refresh has been queued and this page will poll for the latest result.',
+      };
+    }
+    if (dosStatus === 'not_loaded') {
+      return {
+        tone: 'border-gray-200 bg-gray-50 text-gray-600',
+        text: 'DOS corporate officer data is being loaded for this building.',
+      };
+    }
+    if (dosStatus === 'no_match') {
+      return {
+        tone: 'border-gray-200 bg-gray-50 text-gray-600',
+        text: 'No NY DOS filing match was found for the current corporate owner lookup.',
+      };
+    }
+    if (dosStatus === 'loaded' && !hasDosContacts) {
+      return {
+        tone: 'border-gray-200 bg-gray-50 text-gray-600',
+        text: 'NY DOS data loaded, but no officer or chairman contacts were found in the current filing snapshot.',
+      };
+    }
+    return null;
+  })();
 
   return (
     <div className="space-y-6">
@@ -166,9 +222,19 @@ const BuildingDetailPage: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {building.churn_score !== null && (
-            <div className={`text-3xl font-bold ${building.churn_score >= 35 ? 'text-red-600' : building.churn_score >= 15 ? 'text-amber-600' : 'text-green-600'}`}>
-              {building.churn_score.toFixed(1)}
+          {building.churn_score !== null ? (
+            <div className="text-right">
+              <div className={`text-3xl font-bold ${getChurnTone(building.churn_score)}`}>
+                {building.churn_score.toFixed(1)}
+              </div>
+              <div className="text-[11px] text-gray-500">
+                {getChurnCategoryLabel(building.churn_category)}
+              </div>
+            </div>
+          ) : (
+            <div className="text-right">
+              <div className="text-2xl font-semibold text-gray-400">--</div>
+              <div className="text-[11px] text-gray-500">Score pending</div>
             </div>
           )}
           <button
@@ -213,22 +279,12 @@ const BuildingDetailPage: React.FC = () => {
           )}
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-gray-900">People & Companies</h2>
-            <span className="text-xs text-gray-400">{building.all_contacts.length} contacts from {new Set(building.all_contacts.map((c: BuildingContactEntry) => c.source)).size} sources</span>
+            <span className="text-xs text-gray-400">{contactCount} contacts from {new Set((building.all_contacts || []).map((c: BuildingContactEntry) => c.source)).size} sources</span>
           </div>
-          {dosStatus === 'stale' || dosStatus === 'refreshing' ? (
-            <div className="mb-3 text-xs rounded border border-amber-200 bg-amber-50 text-amber-700 px-2 py-1">
-              Refreshing DOS contact data...
+          {dosBanner && (
+            <div className={`mb-3 text-xs rounded border px-2 py-1 ${dosBanner.tone}`}>
+              {dosBanner.text}
               {building.dos_contacts_last_refreshed_at ? ` Last refresh: ${formatRelativeDate(building.dos_contacts_last_refreshed_at)}.` : ''}
-            </div>
-          ) : null}
-          {dosStatus === 'not_loaded' && (
-            <div className="mb-3 text-xs rounded border border-gray-200 bg-gray-50 text-gray-500 px-2 py-1">
-              DOS corporate officer data is being loaded.
-            </div>
-          )}
-          {dosStatus === 'loaded' && !hasDosContacts && (
-            <div className="mb-3 text-xs rounded border border-gray-200 bg-gray-50 text-gray-600 px-2 py-1">
-              No NY DOS contacts found for this building.
             </div>
           )}
           {building.management_company && (
@@ -342,26 +398,39 @@ const BuildingDetailPage: React.FC = () => {
         {/* Score Breakdown */}
         <div className="lg:col-span-2 bg-white rounded-lg border border-gray-200 p-5">
           <h2 className="font-semibold text-gray-900 mb-4">Churn Score Breakdown</h2>
+          <p className="text-sm text-gray-500 mb-4">
+            `Signal score` shows how strong each underlying issue is on a 0-100 scale. `Weight share` is the configured importance of that signal, and `score impact` is how many final churn-score points it adds after weighting.
+          </p>
           {breakdown ? (
             <div className="space-y-3">
-              {Object.entries(breakdown).map(([key, val]) => {
+              {breakdownEntries.map(([key, val]) => {
                 const raw = val.raw;
                 const contribution = val.contribution;
+                const adjustedWeightLabel = val.effective_weight !== val.weight ? `${val.weight}% -> ${val.effective_weight}%` : `${val.weight}%`;
                 return (
-                  <div key={key} className="flex items-center gap-3">
-                    <span className="text-sm text-gray-600 w-40 flex-shrink-0">{signalLabels[key] || key}</span>
-                    <div className="flex-1 bg-gray-100 rounded-full h-2.5">
+                  <div key={key} className="rounded-lg border border-gray-200 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-medium text-gray-900">{signalLabels[key] || key}</div>
+                        <div className="text-[11px] text-gray-500 mt-1">
+                          {raw === null ? 'No source data available yet for this signal.' : `Signal score: ${raw.toFixed(1)} / 100`}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-sm font-semibold text-gray-900">+{contribution.toFixed(1)}</div>
+                        <div className="text-[11px] text-gray-500">score impact</div>
+                      </div>
+                    </div>
+                    <div className="mt-3 bg-gray-100 rounded-full h-2.5">
                       <div
                         className={`h-2.5 rounded-full ${contribution > 0 ? 'bg-red-400' : 'bg-gray-200'}`}
-                        style={{ width: `${Math.min(100, Math.abs(contribution))}%` }}
+                        style={{ width: `${Math.min(100, Math.max(contribution, raw || 0))}%` }}
                       />
                     </div>
-                    <span className="text-sm text-gray-500 w-16 text-right">
-                      {raw !== null ? `${raw}` : 'N/A'}
-                    </span>
-                    <span className="text-xs text-gray-400 w-20 text-right">
-                      w: {val.weight} → {val.effective_weight}
-                    </span>
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-gray-500">
+                      <span>Weight share: {adjustedWeightLabel}</span>
+                      <span>{raw === null ? 'Awaiting data' : `${Math.round((contribution / 100) * 1000) / 10}% of max score`}</span>
+                    </div>
                   </div>
                 );
               })}
@@ -385,8 +454,8 @@ const BuildingDetailPage: React.FC = () => {
               ['Community Board', building.community_board],
               ['Census Tract', building.census_tract],
               ['NTA', building.nta],
-              ['Key Signal', building.key_signal?.replace(/_/g, ' ')],
-              ['Signal Coverage', building.coverage_ratio ? `${(building.coverage_ratio * 100).toFixed(0)}%` : null],
+              ['Key Signal', building.key_signal ? (signalLabels[building.key_signal] || building.key_signal.replace(/_/g, ' ')) : null],
+              ['Signal Coverage', building.coverage_ratio !== null && building.coverage_ratio !== undefined ? `${(building.coverage_ratio * 100).toFixed(0)}%` : null],
               ['Outreach Status', building.outreach_status],
             ].filter(([, v]) => v).map(([label, value]) => (
               <div key={label as string} className="flex justify-between">
@@ -396,6 +465,22 @@ const BuildingDetailPage: React.FC = () => {
             ))}
           </dl>
         </div>
+      </div>
+
+      <div className="bg-white rounded-lg border border-gray-200 p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="font-semibold text-gray-900">Building Map</h2>
+            <p className="text-sm text-gray-500 mt-1">Map the current building record in the same shared map component used elsewhere in the app.</p>
+          </div>
+        </div>
+        <Suspense fallback={<div className="h-[280px] bg-gray-100 rounded-lg animate-pulse" />}>
+          <PortfolioMap
+            buildings={[{ address: building.address || building.bbl, borough: building.borough || undefined }]}
+            boro={building.borough || undefined}
+            height="280px"
+          />
+        </Suspense>
       </div>
 
       {/* Score History Chart */}

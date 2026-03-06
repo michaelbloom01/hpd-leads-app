@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { ApiLead, fetchLead, updateLead, addOutreachAttempt, enrichLeadAll, estimateLeadRevenue, OutreachAttempt, fetchLeadContacts } from '../services/api';
 import { addBuildingToPipeline, fetchBuildings, type BuildingRow, type BuildingContactEntry } from '../services/buildings-api';
 import { PIPELINE_STAGES, OUTREACH_STATUSES, OUTREACH_METHODS, OUTREACH_OUTCOMES, formatCurrency } from '../utils/format';
+import { getLeadDisplayName } from '../utils/leads';
 
 // Lazy-load map to avoid large initial bundle
 const PortfolioMap = lazy(() => import('./PortfolioMap'));
@@ -33,14 +34,6 @@ const formatAbsoluteDate = (value: string | null | undefined): string => {
   if (Number.isNaN(d.getTime())) return value;
   return d.toLocaleDateString();
 };
-
-const getLeadDisplayName = (lead: ApiLead): string =>
-  lead.company_name ||
-  lead.agent_name ||
-  lead.owner_name ||
-  lead.primary_contact ||
-  lead.address ||
-  lead.lead_id;
 
 interface Props {
   lead: ApiLead;
@@ -73,6 +66,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   const [pipelineAddBusy, setPipelineAddBusy] = useState<Record<string, boolean>>({});
   const [buildingContacts, setBuildingContacts] = useState<{ bbl: string; address: string; outreach_status?: string | null; contacts: BuildingContactEntry[] }[]>([]);
   const [loadingBuildingContacts, setLoadingBuildingContacts] = useState(false);
+  const [enrichmentElapsedSec, setEnrichmentElapsedSec] = useState(0);
 
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -193,6 +187,18 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     modalRef.current?.focus();
     return () => document.removeEventListener('keydown', handleFocusTrap);
   }, [handleFocusTrap]);
+
+  useEffect(() => {
+    if (!isEnriching) {
+      setEnrichmentElapsedSec(0);
+      return;
+    }
+    const started = Date.now();
+    const intervalId = window.setInterval(() => {
+      setEnrichmentElapsedSec(Math.floor((Date.now() - started) / 1000));
+    }, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [isEnriching]);
 
   // Auto-estimate revenue once when a lead has units but missing persisted values.
   useEffect(() => {
@@ -338,7 +344,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
       }
     } catch (err) {
       console.error('Enrichment failed:', err);
-      toast.error('Enrichment failed. Please try again.');
+      toast.error('Enrichment failed. Please try again. This action can take up to 1-2 minutes when web lookup is slow.');
     } finally {
       setIsEnriching(false);
     }
@@ -502,8 +508,13 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
               {enrichedLead.website ? 'Company Website' : 'Search'}
             </button>
             <button onClick={handleEnrichAll} disabled={isEnriching} className="px-3 py-2 sm:py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors" title="Find contacts, scrape website, and generate AI summary — all in one step">
-              {isEnriching ? 'Enriching...' : 'Enrich Lead'}
+              {isEnriching ? `Enriching... ${enrichmentElapsedSec}s` : 'Enrich Lead'}
             </button>
+            {isEnriching && (
+              <span className="text-[10px] text-gray-500">
+                Searching public sources and generating summary. This can take 30-120 seconds.
+              </span>
+            )}
             <div className="hidden sm:block flex-1" />
             {/* Pipeline selector - dropdown for readability */}
             <div className="flex items-center gap-2 w-full sm:w-auto mt-1 sm:mt-0">
@@ -658,9 +669,9 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
               <div className="bg-gray-50 rounded-xl p-4">
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Company Overview</h3>
-                  <button onClick={handleEnrichAll} disabled={isEnriching} className="text-[10px] text-blue-600 hover:text-blue-500 disabled:opacity-50">
-                    {isEnriching ? 'Enriching...' : aiDescription ? 'Refresh' : 'Enrich to Generate'}
-                  </button>
+                  <span className="text-[10px] text-gray-400">
+                    {isEnriching ? 'Updating from the single enrich action above' : aiDescription ? 'Generated from latest enrichment run' : 'Generated after enrichment'}
+                  </span>
                 </div>
                 {aiDescription ? (
                   <p className="text-sm text-gray-700 leading-relaxed">{
@@ -752,33 +763,33 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
             <>
               {/* Enrichment Status Banner */}
               <div className={`rounded-lg px-3 py-2 text-xs font-medium flex items-center gap-2 ${
+                isEnriching ? 'bg-blue-50 border border-blue-200 text-blue-700' :
                 enrichedLead.enrichment_status === 'complete' ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' :
                 enrichedLead.enrichment_status === 'partial' ? 'bg-amber-50 border border-amber-200 text-amber-700' :
                 enrichedLead.enrichment_status === 'failed' ? 'bg-rose-50 border border-rose-200 text-rose-700' :
                 'bg-gray-50 border border-gray-200 text-gray-500'
               }`}>
                 <span className="text-sm">
-                  {enrichedLead.enrichment_status === 'complete' ? '●' :
+                  {isEnriching ? '◌' :
+                   enrichedLead.enrichment_status === 'complete' ? '●' :
                    enrichedLead.enrichment_status === 'partial' ? '◐' :
                    enrichedLead.enrichment_status === 'failed' ? '●' : '○'}
                 </span>
-                {enrichedLead.enrichment_status === 'complete' ? 'Fully enriched — contacts, company website, and AI summary found' :
-                 enrichedLead.enrichment_status === 'partial' ? 'Partially enriched — some data found. Click "Re-enrich" to try again.' :
-                 enrichedLead.enrichment_status === 'failed' ? 'No contact matches found yet — try "Re-enrich" or search manually' :
-                 'Not yet enriched — click "Enrich Lead" to find contacts, company website, and generate a summary'}
+                {isEnriching ? `Enrichment in progress for ${enrichmentElapsedSec}s. Public web lookups and summary generation can take up to 1-2 minutes.` :
+                 enrichedLead.enrichment_status === 'complete' ? 'Enrichment returned strong coverage: direct contact info and a company profile are available.' :
+                 enrichedLead.enrichment_status === 'partial' ? 'Enrichment returned some useful data, but not every source produced a result.' :
+                 enrichedLead.enrichment_status === 'failed' ? 'Enrichment ran but did not find public contact matches yet.' :
+                 'Enrichment has not run yet. Use the single "Enrich Lead" action in the header to gather contacts and a profile.'}
               </div>
 
-              {/* Single Enrich Action */}
-              <div className={`${!enrichedLead.phone && !enrichedLead.email ? 'bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-center' : ''}`}>
-                {!enrichedLead.phone && !enrichedLead.email && (
-                  <p className="text-gray-500 text-sm mb-3">No contact info found yet</p>
-                )}
-                <button onClick={handleEnrichAll} disabled={isEnriching}
-                  className={`${!enrichedLead.phone && !enrichedLead.email ? 'px-6 py-2.5' : 'px-4 py-2'} bg-emerald-600 text-white text-sm font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors`}
-                  title="Finds contacts (phone, email, company website) via Google Places, NY DOS, web scraping, and Hunter.io — then generates an AI summary">
-                  {isEnriching ? 'Enriching...' : enrichedLead.enrichment_status === 'none' ? 'Enrich Lead' : 'Re-enrich Lead'}
-                </button>
-                <p className="text-[10px] text-gray-400 mt-1.5">Searches Google Places, NY DOS, web, and Hunter.io for contacts, then generates an AI summary.</p>
+              {/* Single Enrich Action Guidance */}
+              <div className={`${!enrichedLead.phone && !enrichedLead.email ? 'bg-emerald-50 border border-emerald-200 rounded-xl p-4' : 'bg-gray-50 rounded-xl p-4'}`}>
+                <p className="text-sm text-gray-600">
+                  Use the single `Enrich Lead` action in the header to search Google Places, NY DOS, the public web, and Hunter, then refresh the company overview from that same run.
+                </p>
+                <p className="text-[10px] text-gray-400 mt-1.5">
+                  The result may be `partial` when only some sources match. That is expected and safer than implying full coverage.
+                </p>
               </div>
 
               {/* All Contact Info */}

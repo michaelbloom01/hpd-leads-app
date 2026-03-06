@@ -350,9 +350,11 @@ async def get_building(
     )
     if dos_status in {"stale", "not_loaded"} and corporate_owner_name and not recently_requested:
         try:
-            await _mark_dos_refresh_requested(session, canonical_bbl)
             from src.tasks.enrich import refresh_dos_contacts
+
             refresh_dos_contacts.delay(canonical_bbl, corporate_owner_name)
+            await _mark_dos_refresh_requested(session, canonical_bbl)
+            dos_status = "refreshing"
         except Exception as exc:
             logger.warning("Failed to queue DOS refresh for %s: %s", canonical_bbl, exc)
 

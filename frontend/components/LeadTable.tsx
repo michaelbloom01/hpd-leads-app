@@ -2,12 +2,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { fetchLeads, ApiLead, enrichLeads, API_BASE_URL, checkHealth, searchBuildings, BuildingSearchResult, createSmartList } from '../services/api';
+import { fetchLeads, ApiLead, enrichLeads, API_BASE_URL, checkHealth, searchBuildings, BuildingSearchResult, createSmartList, fetchDataHealth, type DataHealthResponse } from '../services/api';
 import { getAuthHeaders } from '../services/auth';
 import { BOROUGHS, BOROUGH_SHORT, formatCurrency, scoreColor } from '../utils/format';
 import { useLeadFilters } from '../hooks/useLeadFilters';
 import { useFilterUrl } from '../hooks/useFilterUrl';
 import LeadKanban from './leads/LeadKanban';
+import { getLeadDisplayName, getLeadSecondaryName } from '../utils/leads';
 
 export interface LeadFilterPreset {
   outreachStatuses?: string[];
@@ -31,14 +32,6 @@ const HEALTH_POLL_INTERVAL = 5000;
 type SortField = 'agent_name' | 'portfolio_size' | 'total_units' | 'units_per_bldg' | 'score' | 'boro' | 'enrichment_status' | 'estimated_annual_revenue' | 'violations_per_unit';
 type SortDir = 'asc' | 'desc';
 
-const getLeadDisplayName = (lead: ApiLead): string =>
-  lead.company_name ||
-  lead.agent_name ||
-  lead.owner_name ||
-  lead.primary_contact ||
-  lead.address ||
-  lead.lead_id;
-
 const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPresetConsumed }) => {
   const navigate = useNavigate();
   const { filters, setField, toggle, clearAll: clearFilterState, applyPreset, activeFiltersCount, toApiParams } = useLeadFilters();
@@ -51,6 +44,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
   const [backendStarting, setBackendStarting] = useState(false);
   const [addressResults, setAddressResults] = useState<BuildingSearchResult[]>([]);
   const [addressSearching, setAddressSearching] = useState(false);
+  const [dataHealth, setDataHealth] = useState<DataHealthResponse | null>(null);
 
   // Sorting
   const [sortField, setSortField] = useState<SortField>('score');
@@ -125,6 +119,14 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     return () => { clearTimeout(timerId); };
     // Only run once on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    fetchDataHealth()
+      .then((result) => {
+        if (isMounted.current) setDataHealth(result);
+      })
+      .catch(() => undefined);
   }, []);
 
   // Auto-reload on sort change (clicking a column header is an explicit action)
@@ -668,6 +670,25 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
         </div>
       </div>
       {/* Address Search Results */}
+      {showLeadWorkspace && dataHealth?.integrity && (
+        <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-4">
+          <div className="flex flex-wrap gap-3 text-xs">
+            <span className="px-2 py-1 rounded bg-gray-100 text-gray-700">
+              Blank display names: {dataHealth.integrity.blank_display_name_leads.toLocaleString()}
+            </span>
+            <span className="px-2 py-1 rounded bg-gray-100 text-gray-700">
+              Leads with no active building links: {dataHealth.integrity.leads_with_zero_active_links.toLocaleString()}
+            </span>
+            <span className="px-2 py-1 rounded bg-gray-100 text-gray-700">
+              Buildings with multiple current PM links: {dataHealth.integrity.buildings_with_multiple_current_pm_links.toLocaleString()}
+            </span>
+          </div>
+          <p className="text-[11px] text-gray-500 mt-2">
+            These integrity counters help explain why a lead may look incomplete or duplicated while upstream cleanup runs.
+          </p>
+        </div>
+      )}
+
       {filters.searchMode === 'address' && addressResults.length > 0 && (
         <div className="bg-white shadow-sm border border-blue-200 rounded-xl p-4 mb-3">
           <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3">
@@ -827,9 +848,8 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                          lead.entity_type === 'individual_agent' ? 'Individual' : 
                          lead.entity_type === 'owner_operator' ? 'Owner-Op' : 'Unknown'}
                       </span>
-                      {lead.primary_contact && 
-                       lead.primary_contact.toLowerCase() !== (lead.company_name || lead.agent_name || lead.owner_name || '').toLowerCase() && (
-                        <span className="text-gray-400 truncate">{lead.primary_contact}</span>
+                      {getLeadSecondaryName(lead) && (
+                        <span className="text-gray-400 truncate">{getLeadSecondaryName(lead)}</span>
                       )}
                     </div>
                   </td>

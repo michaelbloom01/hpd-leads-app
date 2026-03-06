@@ -1,6 +1,9 @@
+from datetime import datetime, timezone
+
 from src.services.contact_roster import (
     _classify_officer_confidence,
     _dedupe_contacts,
+    _get_dos_cache_payload_from_row,
 )
 
 
@@ -52,3 +55,22 @@ def test_dedupe_contacts_keeps_latest_date():
     assert len(deduped) == 1
     assert deduped[0]["source_record_id"] == "new"
     assert deduped[0]["is_decision_maker"] is True
+
+
+def test_dos_cache_completed_empty_lookup_is_terminal_no_match():
+    payload, status, refreshed_at = _get_dos_cache_payload_from_row(
+        {
+            "result": {
+                "lookup_name": "PARK WEST TENANTS CORP",
+                "officers": [],
+                "ceo_name": None,
+                "ceo_address": None,
+                "snapshot_as_of": "2026-03-01",
+            },
+            "cached_at": datetime.now(timezone.utc),
+        }
+    )
+
+    assert payload is not None
+    assert status == "no_match"
+    assert refreshed_at is not None

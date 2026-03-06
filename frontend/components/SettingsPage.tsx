@@ -23,15 +23,15 @@ const SIGNAL_LABELS: Record<string, string> = {
   dob_permits: 'DOB Permits',
   hpd_litigation: 'Housing Litigation',
   emergency_repairs: 'Emergency Repairs',
-  building_size: 'Building Size',
+  building_size: 'Building Scale',
   eviction_activity: 'Eviction Activity',
   facade_status: 'Facade Status',
 };
 
 const DEFAULT_WEIGHTS: ScoringWeights = {
-  ownership_change: 15, complaint_spike: 12, violation_trend: 12,
+  ownership_change: 22, complaint_spike: 12, violation_trend: 12,
   energy_grade_drop: 8, dob_permits: 8, hpd_litigation: 12,
-  emergency_repairs: 10, building_size: 8, eviction_activity: 8, facade_status: 7,
+  emergency_repairs: 8, building_size: 5, eviction_activity: 7, facade_status: 6,
 };
 
 const ScoringSection: React.FC = () => {

@@ -129,6 +129,8 @@ LEFT JOIN signal_aep aep USING(bbl);
 def _compute_raw_signal(name: str, row: dict) -> float | None:
     """Compute a single raw signal score (0-100) from summary row data."""
     if name == "ownership_change":
+        if row.get("sale_12mo") is None and row.get("sale_24mo") is None and row.get("refi_12mo") is None:
+            return None
         if row.get("sale_12mo"):
             return 100.0
         if row.get("sale_24mo"):
@@ -138,6 +140,8 @@ def _compute_raw_signal(name: str, row: dict) -> float | None:
         return 0.0
 
     if name == "complaint_spike":
+        if row.get("complaints_6mo") is None and row.get("complaints_12mo") is None:
+            return None
         c6 = row.get("complaints_6mo") or 0
         c12 = row.get("complaints_12mo") or 0
         prior = c12 - c6
@@ -153,6 +157,8 @@ def _compute_raw_signal(name: str, row: dict) -> float | None:
         return 0.0
 
     if name == "violation_trend":
+        if row.get("violations_6mo") is None and row.get("violations_12mo") is None:
+            return None
         v6 = row.get("violations_6mo") or 0
         v12 = row.get("violations_12mo") or 0
         prior = v12 - v6
@@ -173,6 +179,8 @@ def _compute_raw_signal(name: str, row: dict) -> float | None:
         return 0.0
 
     if name == "dob_permits":
+        if row.get("permits_12mo") is None and row.get("permit_cost_12mo") is None:
+            return None
         permits = row.get("permits_12mo") or 0
         cost = row.get("permit_cost_12mo") or 0
         if permits == 0:
@@ -180,6 +188,13 @@ def _compute_raw_signal(name: str, row: dict) -> float | None:
         return min(100.0, (cost / 100000) * 30 + permits * 10)
 
     if name == "hpd_litigation":
+        if (
+            row.get("active_litigation") is None
+            and row.get("recent_closed") is None
+            and row.get("harassment_finding") is None
+            and row.get("is_aep") is None
+        ):
+            return None
         if row.get("active_litigation") or row.get("is_aep"):
             return 100.0
         if row.get("harassment_finding"):
@@ -191,6 +206,8 @@ def _compute_raw_signal(name: str, row: dict) -> float | None:
         return 0.0
 
     if name == "emergency_repairs":
+        if row.get("erp_12mo") is None and row.get("erp_amount_12mo") is None:
+            return None
         return 100.0 if (row.get("erp_12mo") or 0) > 0 else 0.0
 
     if name == "building_size":
@@ -202,6 +219,8 @@ def _compute_raw_signal(name: str, row: dict) -> float | None:
         return 20.0
 
     if name == "eviction_activity":
+        if row.get("eviction_filings_12mo") is None:
+            return None
         filings = row.get("eviction_filings_12mo") or 0
         units = row.get("unit_count") or 1
         per_unit = filings / max(units, 1)

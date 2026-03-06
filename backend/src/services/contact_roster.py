@@ -234,19 +234,30 @@ def _get_dos_cache_payload_from_row(
     except json.JSONDecodeError:
         payload = None
 
+    has_officers = bool((payload or {}).get("officers"))
+    has_ceo = bool(str((payload or {}).get("ceo_name") or "").strip())
+    has_dos_id = bool(str((payload or {}).get("dos_id") or "").strip())
+    has_lookup_attempt = payload is not None and any(
+        key in (payload or {})
+        for key in ("lookup_name", "snapshot_as_of", "entity_name", "entity_type", "officers")
+    )
+    parsed_cached = _coerce_datetime(cached_at)
+    is_fresh_cache = bool(parsed_cached and now - parsed_cached <= timedelta(days=DOS_CACHE_MAX_AGE_DAYS))
+
+    if payload is not None:
+        if has_officers or has_ceo or has_dos_id:
+            if is_fresh_cache:
+                return payload, "loaded", cached_at_iso
+            return payload, "stale", cached_at_iso
+        if has_lookup_attempt:
+            if is_fresh_cache:
+                return payload, "no_match", cached_at_iso
+            return payload, "stale", cached_at_iso
+
     refresh_requested_at = _coerce_datetime((payload or {}).get("refresh_requested_at"))
     if refresh_requested_at and now - refresh_requested_at <= timedelta(minutes=DOS_REFRESH_COOLDOWN_MINUTES):
         return payload, "refreshing", cached_at_iso
 
-    # If payload only contains refresh markers (no officers/chairman/entity), keep it stale
-    # so the router can re-queue refresh instead of incorrectly reporting "loaded".
-    has_officers = bool((payload or {}).get("officers"))
-    has_ceo = bool(str((payload or {}).get("ceo_name") or "").strip())
-    has_dos_id = bool(str((payload or {}).get("dos_id") or "").strip())
-    if payload is not None and not (has_officers or has_ceo or has_dos_id):
-        return payload, "stale", cached_at_iso
-
-    parsed_cached = _coerce_datetime(cached_at)
     if parsed_cached and now - parsed_cached <= timedelta(days=DOS_CACHE_MAX_AGE_DAYS):
         return payload, "loaded", cached_at_iso
     return payload, "stale", cached_at_iso
@@ -412,7 +423,7 @@ async def get_building_contacts(
     metadata = {
         "management_company": management_company,
         "corporate_owner": corporate_owner,
-        "dos_contacts_is_stale": dos_status != "loaded",
+        "dos_contacts_is_stale": dos_status in {"stale", "not_loaded", "refreshing"},
         "dos_contacts_status": dos_status,
         "dos_refresh_requested_at": _coerce_iso((payload or {}).get("refresh_requested_at")),
         "dos_contacts_last_refreshed_at": last_refreshed_at,
@@ -604,7 +615,7 @@ def get_building_contacts_sync(
     return _dedupe_contacts(contacts), {
         "management_company": management_company,
         "corporate_owner": corporate_owner,
-        "dos_contacts_is_stale": dos_status != "loaded",
+        "dos_contacts_is_stale": dos_status in {"stale", "not_loaded", "refreshing"},
         "dos_contacts_status": dos_status,
         "dos_refresh_requested_at": _coerce_iso((payload or {}).get("refresh_requested_at")),
         "dos_contacts_last_refreshed_at": last_refreshed_at,

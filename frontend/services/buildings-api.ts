@@ -84,7 +84,7 @@ export interface BuildingDetail {
   management_company?: string | null;
   corporate_owner?: string | null;
   dos_contacts_is_stale?: boolean;
-  dos_contacts_status?: 'loaded' | 'stale' | 'refreshing' | 'not_loaded';
+  dos_contacts_status?: 'loaded' | 'stale' | 'refreshing' | 'not_loaded' | 'no_match';
   dos_refresh_requested_at?: string | null;
   dos_contacts_last_refreshed_at?: string | null;
 }

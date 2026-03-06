@@ -1,7 +1,7 @@
 from src.transform.normalize import normalize_name, normalize_name_for_grouping
 from src.routers.leads import _row_to_response
 from pathlib import Path
-from scripts.generate_leads_from_buildings import _is_probably_junk_name
+from scripts.generate_leads_from_buildings import _collapse_duplicate_company_leads, _is_probably_junk_name
 
 
 def test_normalize_name_expands_common_abbreviations():
@@ -18,6 +18,48 @@ def test_generate_leads_rejects_placeholder_seed_names():
     assert _is_probably_junk_name("N/A") is True
     assert _is_probably_junk_name("Board Member") is True
     assert _is_probably_junk_name("Harlem Property Management LLC") is False
+
+
+def test_generate_leads_collapses_identical_company_names_conservatively():
+    leads = {
+        "HARLEM PROP MGMT": {
+            "lead_id": "lead1",
+            "normalized_name": "HARLEM PROP MGMT",
+            "company_name": "Harlem Property Management LLC",
+            "agent_name": "Harlem Property Management LLC",
+            "owner_name": None,
+            "entity_type": "company",
+            "address": "1 Main St",
+            "boroughs": {"MANHATTAN": 1},
+            "bbl_set": {"1000000001"},
+            "address_set": {"1 Main St"},
+            "unit_counts_by_bbl": {"1000000001": 10},
+            "unit_count_total": 10,
+            "building_classes": ["R1"],
+        },
+        "HARLEM PROPERTY MANAGEMENT": {
+            "lead_id": "lead2",
+            "normalized_name": "HARLEM PROPERTY MANAGEMENT",
+            "company_name": "HARLEM PROPERTY MANAGEMENT INC",
+            "agent_name": "HARLEM PROPERTY MANAGEMENT INC",
+            "owner_name": None,
+            "entity_type": "company",
+            "address": "2 Main St",
+            "boroughs": {"BROOKLYN": 1},
+            "bbl_set": {"2000000002"},
+            "address_set": {"2 Main St"},
+            "unit_counts_by_bbl": {"2000000002": 20},
+            "unit_count_total": 20,
+            "building_classes": ["R2"],
+        },
+    }
+
+    collapsed = _collapse_duplicate_company_leads(leads)
+
+    assert len(collapsed) == 1
+    only = next(iter(collapsed.values()))
+    assert only["bbl_set"] == {"1000000001", "2000000002"}
+    assert only["unit_count_total"] == 30
 
 
 def test_row_to_response_parses_json_like_fields():

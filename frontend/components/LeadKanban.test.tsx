@@ -26,4 +26,19 @@ describe('LeadKanban', () => {
     expect(screen.getByText('First Contact')).toBeInTheDocument();
     expect(screen.getByText('Test Company LLC')).toBeInTheDocument();
   });
+
+  it('falls back to lead id when display fields are blank', () => {
+    const blankLead = {
+      ...baseLead,
+      lead_id: 'lead-fallback-1',
+      company_name: '   ',
+      agent_name: ' ',
+      owner_name: '',
+      primary_contact: '   ',
+      address: null,
+    } as unknown as ApiLead;
+
+    render(<LeadKanban leads={[blankLead]} onSelectLead={vi.fn()} />);
+    expect(screen.getByText('lead-fallback-1')).toBeInTheDocument();
+  });
 });

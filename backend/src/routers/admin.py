@@ -72,7 +72,7 @@ async def recalculate_categories(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
-    """Recalculate churn_category in batches (35/15 thresholds). Returns immediately."""
+    """Recalculate churn_category in batches (70/40 thresholds). Returns immediately."""
     import threading
     from src.db.session import get_sync_url
 
@@ -86,8 +86,8 @@ async def recalculate_categories(
             for i in range(0, 200000, batch):
                 s.execute(sa_text(f"""
                     UPDATE buildings SET churn_category = CASE
-                        WHEN churn_score >= 35 THEN 'hot'
-                        WHEN churn_score >= 15 THEN 'warm'
+                        WHEN churn_score >= 70 THEN 'hot'
+                        WHEN churn_score >= 40 THEN 'warm'
                         ELSE 'stable' END
                     WHERE bbl IN (
                         SELECT bbl FROM buildings WHERE churn_score IS NOT NULL

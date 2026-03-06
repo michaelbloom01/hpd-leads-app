@@ -109,6 +109,43 @@ def _display_name_for_group(raw_name: str) -> str:
     return normalize_name(raw_name)
 
 
+def _merge_lead_records(target: dict, incoming: dict) -> None:
+    target["bbl_set"].update(incoming.get("bbl_set", set()))
+    target["address_set"].update(incoming.get("address_set", set()))
+    target["unit_counts_by_bbl"].update(incoming.get("unit_counts_by_bbl", {}))
+    target["unit_count_total"] = sum(target["unit_counts_by_bbl"].values())
+    target["building_classes"].extend(incoming.get("building_classes", []))
+
+    for borough, count in (incoming.get("boroughs") or {}).items():
+        target["boroughs"][borough] = target["boroughs"].get(borough, 0) + count
+
+    for field in ("agent_name", "owner_name", "company_name", "address"):
+        if not target.get(field) and incoming.get(field):
+            target[field] = incoming[field]
+
+    if target.get("entity_type") != "company" and incoming.get("entity_type") == "company":
+        target["entity_type"] = "company"
+
+
+def _collapse_duplicate_company_leads(leads_map: dict[str, dict]) -> dict[str, dict]:
+    collapsed: dict[str, dict] = {}
+    company_aliases: dict[str, str] = {}
+
+    for key, lead in leads_map.items():
+        company_name = normalize_name_for_grouping(lead.get("company_name") or "")
+        if company_name:
+            canonical_key = company_aliases.get(company_name)
+            if canonical_key is None:
+                company_aliases[company_name] = key
+                collapsed[key] = lead
+                continue
+            _merge_lead_records(collapsed[canonical_key], lead)
+            continue
+        collapsed[key] = lead
+
+    return collapsed
+
+
 def compute_score(portfolio_size: int, total_units: int, violation_count: int = 0) -> float:
     """Simple heuristic score — will be replaced by full scoring run."""
     score = 0.0
@@ -211,6 +248,7 @@ def main(min_portfolio: int = 1):
                 "boroughs": {},
                 "bbl_set": set(),
                 "address_set": set(),
+                "unit_counts_by_bbl": {},
                 "unit_count_total": 0,
                 "building_classes": [],
             }
@@ -220,7 +258,8 @@ def main(min_portfolio: int = 1):
 
         if bbl not in lead["bbl_set"]:
             lead["bbl_set"].add(bbl)
-            lead["unit_count_total"] += row.unit_count or 0
+            lead["unit_counts_by_bbl"][bbl] = row.unit_count or 0
+            lead["unit_count_total"] = sum(lead["unit_counts_by_bbl"].values())
             if row.address:
                 lead["address_set"].add(row.address)
             if row.borough:
@@ -241,8 +280,10 @@ def main(min_portfolio: int = 1):
     # Filter by minimum portfolio size
     filtered = {k: v for k, v in leads_map.items() if len(v["bbl_set"]) >= min_portfolio}
     logger.info(f"After min_portfolio={min_portfolio} filter: {len(filtered):,} leads")
+    collapsed = _collapse_duplicate_company_leads(filtered)
+    logger.info(f"After conservative company dedupe: {len(collapsed):,} leads")
 
-    if not filtered:
+    if not collapsed:
         logger.warning("No leads generated. Check building_contacts data.")
         return
 
@@ -253,7 +294,7 @@ def main(min_portfolio: int = 1):
 
     import json as _json
 
-    leads_list = list(filtered.values())
+    leads_list = list(collapsed.values())
     db_batch = []
 
     for lead in leads_list:
