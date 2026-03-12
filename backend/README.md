@@ -2,7 +2,7 @@
 
 Python FastAPI backend for the Double Edge NYC housing intelligence platform.
 
-> Context refresh (Feb 24, 2026): Backend is in a transition state. PostgreSQL-backed routers are primary, while some legacy SQLite-based paths still exist and are being converged.
+> Context refresh (Mar 6, 2026): PostgreSQL-backed API + worker runtime are the production path. Some legacy SQLite compatibility code still exists, but lead generation, reconciliation, and quality checks now run through PostgreSQL + Celery on Railway.
 
 ## Quick Start
 
@@ -97,13 +97,13 @@ Notes:
 
 ## Execution Readiness Focus
 
-Implementation is organized around three tracks:
+The production-critical convergence slice is now live:
 
-1. Runtime convergence (single canonical PostgreSQL runtime path)
-2. Durable async jobs (queue + worker lifecycle)
-3. Delivery confidence (migration safety + critical path tests + CI gates)
+1. Canonical PostgreSQL runtime path for lead generation and read models
+2. Durable async jobs through Railway worker + Redis
+3. Delivery confidence via regression tests, job observability, and production verification runs
 
-See root architecture plan and session notes for current gate status.
+See root session notes and changelog for the latest post-deploy cleanup status.
 
 ## Operations Runbooks
 

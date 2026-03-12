@@ -59,6 +59,23 @@
 - [x] Rebrand HPD Leads -> Double Edge
 - [x] Remove remaining HPD branding (Connected -> API connected, HPD Violations -> Housing Violations, etc.)
 
+### Phase 7: Production Job Hardening
+- [x] Move lead-generation runtime logic out of `backend/scripts/` into `backend/src/services/`
+- [x] Restore normal Railway worker execution for `lead_generation`
+- [x] Add conservative orphan cleanup preview/execute tooling
+- [x] Split integrity metrics so same-entity duplicate links are separated from valid multi-role linkages
+- [x] Harden `data_quality_log` sequence handling for production job writes
+- [x] Fix `quality_checks` production failures (timezone math + `change_alerts.dismissed`)
+
+### Phase 8: Stabilization And Geospatial Closure
+- [x] Re-audit the Mar 12 mixed worktree into validation-first workstreams
+- [x] Validate backend lead runtime/data-contract changes with focused regression coverage
+- [x] Validate Leads UX selection/route behavior and keep frontend build green
+- [x] Add Smart Lists regression coverage for authored filters and open-in-leads handoff
+- [x] Add persisted building coordinate fields, backfill job wiring, and map provenance surfaces
+- [x] Harden `building_coordinates` retries/throttling and jobs fallback coverage
+- [x] Switch normal portfolio/building map display to prefer persisted coordinates over browser-primary geocoding
+
 ## Backlog (Future Sessions)
 
 - [ ] Frontend components for revenue display, violations, pipeline stage selector
@@ -71,6 +88,9 @@
 - [ ] Export due diligence to Google Doc
 - [ ] Email digest for weekly changes
 - [ ] Historical violation trending (improving/worsening)
+- [ ] Run a full hardening sweep across jobs chain behavior, source completeness, external-service error handling, and slow-query hotspots
+- [ ] Design a higher-confidence classifier for the remaining ambiguous zero-link / blank-display lead tail
+- [ ] Decide whether the 314k-lead surface should be reduced via stronger canonical grouping or exposed with clearer integrity/audit controls
 
 ## Architecture Notes
 

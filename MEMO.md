@@ -3,7 +3,7 @@
 **Author:** Michael Bloom
 **Date:** February 2026
 
-> Context refresh (Feb 24, 2026): The product scope and JTBD remain the same. Current initiative is architecture simplification for reliability and execution speed (not feature reduction).
+> Context refresh (Mar 6, 2026): The product scope and JTBD remain the same. Current initiative is production runtime hardening plus conservative data-integrity cleanup, not feature reduction.
 
 ---
 
@@ -11,7 +11,7 @@
 
 Double Edge (formerly HPD Leads) is a dual-purpose NYC housing intelligence platform. It serves as both a **PE acquisition sourcing tool** (finding PM companies to acquire) and a **lead generation tool for operators** (finding buildings ripe for outreach). It scans public city records, identifies who manages large numbers of apartment buildings, figures out their contact information, and ranks them so the most promising targets float to the top.
 
-The end result is a searchable list of roughly **102,000 management companies and operators**, scored and sorted so you can focus outreach on the ones that matter most.
+The end result is a searchable live surface of roughly **315,000 lead rows** and **180,000 buildings**, scored and sorted so you can focus outreach on the ones that matter most. That surface is still being cleaned conservatively so ambiguous rows are not deleted without evidence.
 
 ---
 
@@ -31,7 +31,7 @@ The system follows a five-step process, all running automatically:
 The system pulls the full list of registered buildings from HPD — over **200,000 buildings** — along with who manages each one. It also pulls building classification data (is it a condo, co-op, rental walk-up, etc.) from a separate city dataset called PLUTO.
 
 ### Step 2: Group by Management Company
-Many buildings share the same manager. The system groups all buildings under each management company to create a single "lead" per company. This is how 200k+ building records become ~102k leads. A company managing 50 buildings is far more interesting than one managing 2.
+Many buildings share the same manager. The system groups and materializes building-contact entities into lead rows. The current live production surface is larger than the earlier ~102k-lead era because the modern runtime preserves more contact/entity variants while integrity cleanup remains conservative.
 
 ### Step 3: Score and Rank
 Each lead gets a score from 0-100 based on eight factors:
@@ -130,12 +130,12 @@ For enrichment (finding contact info), it also uses:
 
 | Metric | Value |
 |--------|-------|
-| Total leads in the system | 102,505 |
-| Total buildings tracked | 189,737 |
-| Leads with phone numbers | 293 |
-| Leads with email addresses | 93 |
-| Leads with websites | 674 |
-| High-value leads (10+ buildings) | ~1,300 |
+| Total leads in the system | 314,723 |
+| Total buildings tracked | 179,985 |
+| Zero-link leads | 55,804 |
+| Blank display-name leads | 54,507 |
+| Same-entity duplicate current links | 0 |
+| Latest lead_generation job | Succeeded through normal worker path |
 
 ---
 

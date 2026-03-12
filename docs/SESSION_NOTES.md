@@ -4,6 +4,116 @@ Session notes and decisions from development work on Double Edge.
 
 ---
 
+## 2026-03-12 — Worktree Stabilization, Smart Lists Coverage, And Geospatial Closure
+
+### Objective
+Stabilize the mixed Mar 12 worktree into validated workstreams, finish the geospatial/map-provenance tranche properly, and leave canonical entity work explicitly deferred until the tree is reviewable.
+
+### What Changed
+1. **Worktree stabilization pass**
+   - Re-audited the active diff into separate workstreams: backend lead contracts, Leads UX, Smart Lists, geospatial/map provenance, and docs/meta.
+   - Kept canonical entity work out of this tranche on purpose.
+2. **Backend/runtime validation**
+   - Re-ran focused contract/runtime coverage for lead generation, batch endpoints, and lead contact/detail behavior.
+   - Confirmed the current lead runtime/data-contract changes are green before doing more frontend/docs work.
+3. **Smart Lists validation**
+   - Added focused component regression coverage for Smart List authoring and the open-in-leads handoff:
+     - `frontend/components/SmartListsPage.test.tsx`
+   - Locked in filter payload construction and query-param translation from saved list filters.
+4. **Geospatial closure**
+   - Hardened `backend/src/services/building_geocode.py` with bounded retries/backoff and stricter lat/lon validation.
+   - Hardened `backend/src/tasks/ingest.py` `building_coordinates` backfill with explicit throttle pacing and tighter progress cadence.
+   - Updated `frontend/components/PortfolioMap.tsx` so normal display now defaults to persisted coordinates and omits unmapped buildings instead of browser-primary geocoding.
+   - Added backend regression coverage for the coordinate job + jobs API fallback:
+     - `backend/tests/test_building_coordinate_job.py`
+     - expanded `backend/tests/test_building_geocode_service.py`
+
+### Validation
+- Backend focused runtime suite:
+  - `backend/tests/test_normalization_contract.py`
+  - `backend/tests/test_lead_batch_endpoints.py`
+  - `backend/tests/test_lead_generation_runtime.py`
+  - `backend/tests/test_lead_contacts_endpoint.py`
+- Backend geospatial suite:
+  - `backend/tests/test_building_geocode_service.py`
+  - `backend/tests/test_building_coordinate_job.py`
+  - `backend/tests/test_quality_source_audit_contract.py`
+  - `backend/tests/test_jobs_contract.py`
+- Frontend:
+  - `npm run test:run -- components/LeadKanban.test.tsx`
+  - `npm run test:run -- components/SmartListsPage.test.tsx`
+  - `npm run build`
+
+### Decisions Locked In
+- **Normal map UX should prefer persisted coordinates** — stored coordinates are now the default path for portfolio/building maps.
+- **Missing coordinates should be operationally fixed, not silently approximated** — operators are pointed to the coordinate sync job instead of relying on browser geocoding during normal display.
+- **Canonical merge/dedupe work remains deferred** until the stabilized slices are independently reviewable and the next tranche is narrowed to canonical-prep only.
+
+### Next Recommended Tranche
+- Full hardening sweep across:
+  - jobs chain behavior
+  - source completeness gaps
+  - slow query/performance checks
+  - external-service error handling
+- Then start a **canonical-prep** tranche:
+  - ambiguous-tail classifier
+  - merge safety metrics
+  - audit/rollback surfaces
+
+---
+
+## 2026-03-06 — Production Lead Jobs & Conservative Cleanup
+
+### Objective
+Fix the broken production `lead_generation` path, run the attached conservative cleanup plan end-to-end, and verify live jobs/data-quality behavior before pushing.
+
+### What Changed
+1. **Runtime-safe lead generation**
+   - Moved shared lead-generation logic into `backend/src/services/lead_generation.py`.
+   - Left `backend/scripts/generate_leads_from_buildings.py` as a thin wrapper.
+   - Updated `backend/src/tasks/generate_leads.py` and tests to stop depending on `scripts...` imports in worker runtime.
+2. **Conservative orphan cleanup tooling**
+   - Added `backend/src/services/lead_cleanup.py`.
+   - Added CLI/admin entrypoints for preview + execution.
+   - Added a phase-two retire-only classifier for zero-link leads, but kept thresholds strict enough to preserve ambiguous rows.
+3. **Integrity metrics split**
+   - `backend/src/routers/quality.py` now distinguishes:
+     - multiple current links, any role
+     - multiple current links in the same role
+     - multiple current links to the same normalized entity
+4. **Production-only hardening discovered during rollout**
+   - Fixed `data_quality_log` sequence drift in `backend/src/tasks/ingest.py`.
+   - Fixed `quality_checks` timezone math and `change_alerts.dismissed` insert behavior in `backend/src/tasks/quality_checks.py`.
+
+### Production Operations Executed
+- Deployed backend API service to Railway.
+- Deployed dedicated Railway worker service with backend-root Docker build (`railway up . --path-as-root --service hpd-leads-worker`).
+- Triggered and verified:
+  - `lead_generation` job `44` -> `succeeded`
+  - `lead_reconciliation` job `45` -> `succeeded`
+  - `quality_checks` job `48` -> `succeeded`
+- Ran conservative orphan cleanup preview + execute in production.
+
+### Outcome
+- Production job path now works through the normal worker/runtime flow.
+- The conservative cleanup correctly made **no deletions**:
+  - `safe_orphan_with_clear_keeper = 0`
+  - `safe_orphan_retire_only = 0`
+- This means the remaining orphan/blank tail is still ambiguous under a high-confidence rule set and should not be bulk-retired yet.
+
+### Current Live Snapshot
+- `179,985` buildings
+- `314,723` leads
+- `55,804` leads with zero active building links
+- `54,507` blank display-name leads
+- `106,721` buildings with multiple current links
+- `0` buildings with multiple current links to the same normalized entity
+
+### Key Spot Check
+- `9 PROSPECT PARK WEST` still shows expected sourced contacts in production, including `SAMUEL WASSEMAN` and `LOUISE HAINLINE`, with `dos_contacts_status = loaded`.
+
+---
+
 ## 2026-02-25 — Production Go-Live Completion (End-to-End)
 
 ### Objective

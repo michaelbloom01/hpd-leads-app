@@ -15,7 +15,7 @@ Two distinct use cases / personas:
 | Frontend | https://frontend-nine-psi-58.vercel.app | Vercel (auto-deploy from GitHub) |
 | Backend API | https://hpd-leads-app-production.up.railway.app | Railway (auto-deploy from GitHub) |
 | Database | Railway managed PostgreSQL 16 | Railway |
-| Branch | `feature/enterprise-rearchitecture` | GitHub |
+| Branch | `master` | GitHub |
 
 ## Architecture
 
@@ -54,7 +54,7 @@ engine = create_engine(get_sync_url(), ...)
 
 | Table | Rows | Purpose |
 |-------|------|---------|
-| `leads` | 38,494 | PM company leads (aggregated from buildings) |
+| `leads` | 314,723 | Lead rows materialized from building contacts |
 | `buildings` | 179,985 | Individual buildings with PLUTO data + churn scores |
 | `hpd_complaints` | ~200K | Raw HPD complaint signals |
 | `hpd_violations` | ~150K | Raw HPD violation signals |
@@ -148,13 +148,16 @@ Score categories: `hot` (≥70), `warm` (≥40), `stable` (<40).
 
 SQL implementation: `backend/scripts/score_buildings.sql`
 
-## Data in Production (Feb 2026)
+## Data In Production (Mar 2026)
 
-- 38,494 leads, all at `pipeline_stage=new`, `outreach_status=new`
+- 314,723 lead rows currently materialized in PostgreSQL
 - 179,985 buildings with PLUTO unit counts and churn scores
-- 61,095 buildings with complaint data; 45,586 with violation data
-- Enrichment (phone/email/website) at 0% — not yet run against PostgreSQL dataset
-- No deal pipeline data (building_management, outreach_events tables are empty)
+- Lead generation now succeeds through the normal Railway worker path
+- Lead reconciliation and quality checks also succeed through the worker path
+- Multi-link integrity split shows `0` buildings with multiple current links to the same normalized entity
+- The remaining zero-link/blank-tail cleanup is still conservative and unresolved:
+  - `55,804` leads with zero active building links
+  - `54,507` blank display-name leads
 
 ## Local Development
 
@@ -194,9 +197,11 @@ SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, EMAIL_TO_DEFAULT  # Email briefi
 ## Deployment
 
 ### Backend (Railway)
-- Auto-deploys from `feature/enterprise-rearchitecture` branch push
+- Auto-deploys from `master` branch push
 - Uses `Dockerfile` in `backend/`
 - `railway up` for manual force-deploy
+- Worker service: `hpd-leads-worker`
+- Important worker deploy note: use `railway up . --path-as-root --service hpd-leads-worker` so Railway builds from `backend/` with the correct Dockerfile
 
 ### Frontend (Vercel)
 - Auto-deploys from branch push
@@ -205,12 +210,13 @@ SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, EMAIL_TO_DEFAULT  # Email briefi
 
 ## Known Issues / Pending Work
 
-- Enrichment (phone/email/website) hasn't been run against PostgreSQL dataset — 38K leads at 0%
-- `feature/enterprise-rearchitecture` branch not yet merged to main
-- ACRIS ownership change data not loaded → ownership_change signal always 0
-- DOB permits, eviction, energy grade, facade signals not yet loaded
-- `building_management` and `outreach_events` tables empty (no pipeline data entered yet)
-- `src/storage/database.py` (SQLite) still exists but should be treated as dead code
+- Enrichment (phone/email/website) remains effectively unrun on the current 314k-lead surface
+- The remaining zero-link + blank-name lead tail is ambiguous under a high-confidence cleanup policy and still needs a better classifier
+- ACRIS ownership change data not loaded -> `ownership_change` signal remains `0`
+- DOB permits, eviction, energy grade, facade signals are still incomplete / partially loaded
+- Portfolio/building maps now default to persisted coordinates; after fresh building ingest or migration rollout, run the `building_coordinates` job to materialize stored markers for unmapped portfolios
+- `src/storage/database.py` (SQLite) still exists but should be treated as dead code for new runtime paths
+- Some legacy documentation and historical notes still refer to the older ~38k / ~102k lead eras and need to be read as historical context only
 
 ## Status — Feb 23, 2026
 

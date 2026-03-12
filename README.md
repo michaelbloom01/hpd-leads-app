@@ -10,7 +10,7 @@ NYC property management intelligence platform with dual purpose: **PE acquisitio
 
 1. **Fetches ALL buildings** from NYC HPD database (200k+ buildings)
 2. **Joins with PLUTO data** for building classification (condo, coop, rental, etc.)
-3. **Groups by management company** to create ~100k leads
+3. **Materializes lead entities from building contacts** to create the current live lead surface
 4. **Classifies entities** as Company, Individual Agent, or Owner-Operator
 5. **Estimates revenue** per lead based on units, borough, and building type
 6. **Integrates HPD violations** as distress/opportunity signals
@@ -20,12 +20,15 @@ NYC property management intelligence platform with dual purpose: **PE acquisitio
 10. **Building Lists** — saved collections of buildings for outreach workflows
 11. **Full sourcing UI** with server-side filtering, pipeline tracking, follow-ups, and bookmarkable filter URLs
 
-## Current Status (Feb 2026)
+## Current Status (Mar 2026)
 
 | Metric | Value |
 |--------|-------|
-| Total Leads | 102,505 |
-| High-Value Leads (10+ buildings) | ~1,300 |
+| Total Leads | 314,723 |
+| Total Buildings | 179,985 |
+| Entity Coverage Ratio | 98.3% |
+| Zero-Link Leads | 55,804 |
+| Blank Display-Name Leads | 54,507 |
 | Entity Classification | Company / Individual Agent / Owner-Operator |
 | Building Type Coverage | 100% (PLUTO data) |
 | Scoring | V2: 8-dimension |
@@ -34,6 +37,8 @@ NYC property management intelligence platform with dual purpose: **PE acquisitio
 | Violations Data | HPD Violations (Class A/B/C, per-unit normalized) |
 | Pipeline Stages | Research -> First Contact -> Follow-Up -> Meeting -> LOI -> DD -> Closed |
 | Smart Lists | Saved filter segments with change detection |
+
+Production note: the normal Railway worker path for `lead_generation`, `lead_reconciliation`, and `quality_checks` is now working again. The remaining orphan/blank lead tail is still under conservative cleanup review and has not been bulk-deleted.
 
 ## Architecture Execution Readiness (Feb 24, 2026)
 

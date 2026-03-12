@@ -34,6 +34,16 @@
 
 13. **Thread safety matters even with GIL** - FastAPI with background threads for enrichment creates race conditions on shared `_leads_cache`. All reads need locks or should go through DB queries.
 
+14. **Railway worker deploys can use the wrong root silently** - The dedicated worker service can drift away from the backend service's root/build settings. For `hpd-leads-worker`, `railway up . --path-as-root --service hpd-leads-worker` was required to force the backend Dockerfile instead of a failing repo-root Railpack build.
+
+15. **Production-only table drift shows up in background jobs first** - The fixed lead-generation job surfaced a `data_quality_log` primary-key sequence mismatch only after the worker actually reached the quality-log write. Background job recovery code should self-heal common sequence drift instead of assuming perfect DB metadata.
+
+16. **Legacy task paths often hide multiple runtime mismatches** - Fixing the `scripts...` import path was necessary but not sufficient. Once the worker could execute `lead_generation`, `quality_checks` then exposed timezone-awareness bugs and `change_alerts.dismissed` insert assumptions. End-to-end live verification matters more than a single green local test.
+
+17. **Persisted map coordinates are safer than browser geocoding for normal UX** - Portfolio and building maps should default to stored coordinates with provenance. If coordinates are missing, operators should run a coordinate sync job rather than silently relying on approximate client-side geocoding.
+
+18. **Background job hardening needs both task tests and router-dispatch tests** - It is not enough to test the low-level helper. For `building_coordinates`, regressions were only meaningfully covered after testing both the task lifecycle and the `/api/v1/jobs/{job_type}/start` fallback path.
+
 ## Patterns to Follow
 
 - Read docs before coding
@@ -43,3 +53,4 @@
 - Preserve user-entered data (notes, outreach status) across refreshes
 - Use SQL for filtering/aggregation, not Python
 - Always provide DB-backed fallback for cache reads
+- Verify API and worker services separately on Railway when jobs fail in production

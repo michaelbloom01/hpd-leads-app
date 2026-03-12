@@ -13,6 +13,13 @@ All notable changes to Double Edge (formerly HPD Leads) are documented here.
 - Dedicated Building Lists UI page (`/building-lists`) with list CRUD and member management.
 - Dedicated Railway worker service (`hpd-leads-worker`) with Redis-backed Celery runtime.
 - Worker-mode runtime support in `backend/start.py` and worker-safe healthcheck behavior in `backend/Dockerfile`.
+- Runtime-safe lead generation service at `backend/src/services/lead_generation.py` plus production-safe orphan cleanup tooling at `backend/src/services/lead_cleanup.py`.
+- Regression coverage for worker-safe lead generation imports and orphan cleanup classification rules.
+- Persisted building coordinate migration/job stack:
+  - `backend/alembic/versions/006_building_coordinates.py`
+  - `backend/src/services/building_geocode.py`
+  - `building_coordinates` jobs API + Settings trigger
+- Regression coverage for Smart Lists authoring/open flows and building coordinate job fallback behavior.
 
 ### Changed
 - Updated active markdown documentation to reflect execution baseline (runtime convergence, durable async jobs, confidence gates).
@@ -24,6 +31,11 @@ All notable changes to Double Edge (formerly HPD Leads) are documented here.
 - Buildings table UX labels clarified: `Status` -> `Outreach`; `BBL` expanded to `BBL (Borough-Block-Lot)`.
 - Buildings table now includes per-building estimated annual revenue.
 - Production operations baseline now includes one-time snapshot recompute endpoints and stale-job reconciliation during go-live.
+- Lead-generation business logic now lives under `src/` so Railway/Celery runtime no longer depends on `backend/scripts/`.
+- Data-health integrity metrics now distinguish any-role multi-links, same-role multi-links, and same-entity duplicate links.
+- Smart Lists creation now supports direct authored filters with visible summaries before save.
+- Lead and building maps now prefer persisted coordinates/provenance for normal display instead of browser-primary geocoding.
+- Coordinate backfill now uses bounded retries/backoff plus deliberate throttling during batch materialization.
 
 ### Fixed
 - Documentation drift reduction across key architecture docs.
@@ -34,6 +46,10 @@ All notable changes to Double Edge (formerly HPD Leads) are documented here.
 - Fixed `has_phone` / `has_email` / `has_website` false filtering semantics.
 - Fixed stale `total_units` / `portfolio_size` snapshot drift impact by adding periodic on-demand snapshot sync for unit/portfolio filter paths.
 - Fixed production worker health from degraded (`broker_configured=false` / no worker) to healthy (`broker_configured=true`, `celery_ping_ok=true`, `stale_running_jobs=0`).
+- Fixed production `lead_generation` jobs failing with `ModuleNotFoundError: No module named 'scripts'`.
+- Fixed production `data_quality_log` writes failing on sequence drift by healing the sequence when duplicate PK collisions are detected.
+- Fixed production `quality_checks` failures caused by timezone-aware freshness math and `change_alerts.dismissed` insert mismatches.
+- Fixed missing test coverage around Smart Lists authoring handoff and `building_coordinates` job fallback execution.
 
 ---
 

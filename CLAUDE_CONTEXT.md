@@ -1,6 +1,6 @@
 # Double Edge — Full Project Context
 
-> Paste this entire document into Claude to give it full context about the project. Last updated: Feb 24, 2026.
+> Paste this entire document into Claude to give it full context about the project. Last updated: Mar 6, 2026.
 
 ## Context Refresh (Execution Baseline)
 
@@ -67,20 +67,20 @@ hpd-leads-app/
 │   └── package.json
 ```
 
-## Current Data (Feb 2026)
+## Current Data (Mar 2026)
 
 | Metric | Value |
 |--------|-------|
-| Total Leads | 102,505 |
-| Total Buildings | 189,737 |
-| Total Units | 7,835,246 |
-| With Phone | 293 |
-| With Email | 93 |
-| With Website | 674 |
-| Enriched (complete) | 301 |
-| Enriched (partial) | 419 |
-| Unenriched | 101,785 |
-| Batch enrichment running | Yes — 500 leads with 40+ units being enriched |
+| Total Leads | 314,723 |
+| Total Buildings | 179,985 |
+| With Phone | 0% coverage on current live lead surface |
+| With Email | 0% coverage on current live lead surface |
+| With Website | 0% coverage on current live lead surface |
+| Entity Coverage Ratio | 98.3% |
+| Zero-Link Leads | 55,804 |
+| Blank Display-Name Leads | 54,507 |
+| Same-Entity Duplicate Current Links | 0 |
+| Latest lead_generation job | Succeeded through normal worker path |
 
 ## Data Pipeline
 
@@ -216,7 +216,7 @@ VITE_GOOGLE_MAPS_KEY=AIza...
 
 ## Deployment
 
-- **Backend:** Railway auto-deploys from `master` branch. Dockerfile build. Persistent volume at `/app`. SQLite DB survives redeploys.
+- **Backend:** Railway auto-deploys from `master` branch. API and worker run as separate Railway services (`hpd-leads-app`, `hpd-leads-worker`) against PostgreSQL + Redis.
 - **Frontend:** Manual deploy via `cd frontend && npx vercel --prod --yes`. Production URL: https://frontend-nine-psi-58.vercel.app
 - **Important:** Pushing to git triggers Railway redeploy which kills background enrichment. Push code first, then start enrichment.
 
