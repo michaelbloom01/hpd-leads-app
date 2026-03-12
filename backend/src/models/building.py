@@ -18,6 +18,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -111,4 +112,19 @@ class BuildingManagement(TimestampMixin, Base):
         Index("idx_bm_bbl", "bbl"),
         Index("idx_bm_lead_id", "lead_id"),
         Index("idx_bm_is_current", "is_current"),
+        Index(
+            "uq_bm_current_bbl_role",
+            "bbl",
+            "role",
+            unique=True,
+            postgresql_where=text("is_current = true"),
+        ),
+        Index(
+            "uq_bm_current_bbl_lead_role",
+            "bbl",
+            "lead_id",
+            "role",
+            unique=True,
+            postgresql_where=text("is_current = true"),
+        ),
     )

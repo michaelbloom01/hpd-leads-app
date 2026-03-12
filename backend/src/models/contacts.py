@@ -36,6 +36,14 @@ class BuildingContact(TimestampMixin, Base):
     __table_args__ = (
         Index("idx_building_contacts_bbl", "bbl"),
         Index("idx_building_contacts_type", "contact_type"),
+        Index(
+            "uq_building_contacts_natural_key",
+            "bbl",
+            "registration_id",
+            "registration_contact_id",
+            "contact_type",
+            unique=True,
+        ),
     )
 
 

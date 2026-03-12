@@ -20,6 +20,9 @@ const BuildingListsPage = lazy(() => import('./components/BuildingListsPage'));
 const BuildingDetailPage = lazy(() => import('./components/BuildingDetailPage'));
 const SettingsPage = lazy(() => import('./components/SettingsPage'));
 const SmartListsPage = lazy(() => import('./components/SmartListsPage'));
+const TargetsPage = lazy(() => import('./components/TargetsPage'));
+const TargetDetailPage = lazy(() => import('./components/TargetDetailPage'));
+const AlertsPage = lazy(() => import('./components/AlertsPage'));
 
 class RouteErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean }> {
   state = { hasError: false };
@@ -62,6 +65,8 @@ const PAGE_TITLES: Record<string, string> = {
   '/leads': 'All Leads',
   '/buildings': 'Buildings',
   '/building-lists': 'Building Lists',
+  '/targets': 'Targets',
+  '/alerts': 'Alerts And Follow-Ups',
   '/settings': 'Settings',
   '/smart-lists': 'Smart Lists',
 };
@@ -233,6 +238,10 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     ? 'Find buildings with high churn probability for PM operator outreach.'
     : basePath === '/smart-lists'
     ? 'Saved filter segments that track lead changes over time.'
+    : basePath === '/targets'
+    ? 'Import and work curated PM acquisition targets.'
+    : basePath === '/alerts'
+    ? 'Review follow-ups and workflow alerts across the platform.'
     : basePath === '/settings'
     ? 'Configure scoring weights and monitor data health.'
     : '';
@@ -357,6 +366,21 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                   <Route path="/smart-lists" element={
                     <RouteErrorBoundary>
                       <SmartListsPage />
+                    </RouteErrorBoundary>
+                  } />
+                  <Route path="/targets" element={
+                    <RouteErrorBoundary>
+                      <TargetsPage />
+                    </RouteErrorBoundary>
+                  } />
+                  <Route path="/targets/:targetItemId" element={
+                    <RouteErrorBoundary>
+                      <TargetDetailPage />
+                    </RouteErrorBoundary>
+                  } />
+                  <Route path="/alerts" element={
+                    <RouteErrorBoundary>
+                      <AlertsPage />
                     </RouteErrorBoundary>
                   } />
                   <Route path="/settings" element={

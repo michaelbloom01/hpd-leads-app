@@ -10,6 +10,7 @@ from typing import Any, Optional
 from sqlalchemy import bindparam, create_engine, text
 from sqlalchemy.orm import Session
 
+from src.services.canonical_entities import sync_canonical_proposals
 from src.services.building_links import detect_current_link_conflicts, guarded_insert_current_links
 
 try:
@@ -485,6 +486,30 @@ def preview_entity_resolution(sample_limit: int = DEFAULT_SAMPLE_LIMIT) -> dict[
             engine.dispose()
 
 
+def materialize_canonical_proposals(sample_limit: int = DEFAULT_SAMPLE_LIMIT) -> dict[str, Any]:
+    """Persist canonical entity proposals without mutating live lead/building links."""
+    session = _get_pg_session()
+    engine = session.get_bind()
+    try:
+        clusters = _resolve_clusters(_build_entity_graph(session))
+        preview = _preview_from_clusters(clusters, session, sample_limit=sample_limit)
+        proposal_sync = sync_canonical_proposals(
+            session,
+            prep_rows=preview["clusters"],
+            clusters=clusters,
+        )
+        session.commit()
+        return {
+            "counts": preview["counts"],
+            "guardrails": preview["guardrails"],
+            "proposal_sync": proposal_sync,
+        }
+    finally:
+        session.close()
+        if engine is not None:
+            engine.dispose()
+
+
 def _store_job_config(session: Session, job_id: int, config: dict[str, Any]) -> None:
     session.execute(
         text("""
@@ -548,6 +573,8 @@ def resolve_entities(
             },
         }
 
+        base_config["proposal_sync"] = None
+
         if dry_run or not confirm_execute:
             _store_job_config(session, job_id, base_config)
             session.commit()
@@ -595,6 +622,13 @@ def resolve_entities(
                 "entity_resolution execution blocked by current building-management conflicts: "
                 + json.dumps(execution_conflicts[:sample_limit])
             )
+
+        proposal_sync_summary = sync_canonical_proposals(
+            session,
+            prep_rows=prep_rows,
+            clusters=clusters,
+        )
+        base_config["proposal_sync"] = proposal_sync_summary
 
         updated = 0
         rollback_samples: list[dict[str, Any]] = []

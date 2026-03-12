@@ -8,6 +8,13 @@ from .base import Base, TimestampMixin
 from .auth import User
 from .building import Building, BuildingManagement
 from .contacts import BuildingContact, EnrichmentResult
+from .entity import (
+    CanonicalEntity,
+    CanonicalEntityAlias,
+    CanonicalEntityBuilding,
+    CanonicalEntityLead,
+    CanonicalEntityMatchProposal,
+)
 from .jobs import IngestionJob
 from .lead import Lead
 from .legacy import (
@@ -39,6 +46,7 @@ from .signals import (
     HPDLitigation,
     HPDViolation,
 )
+from .targets import AcquisitionThesis, TargetList, TargetListItem, TargetMatch
 
 __all__ = [
     "Base",
@@ -47,6 +55,15 @@ __all__ = [
     "Building",
     "BuildingManagement",
     "Lead",
+    "CanonicalEntity",
+    "CanonicalEntityAlias",
+    "CanonicalEntityLead",
+    "CanonicalEntityBuilding",
+    "CanonicalEntityMatchProposal",
+    "AcquisitionThesis",
+    "TargetList",
+    "TargetListItem",
+    "TargetMatch",
     # Signals
     "HPDComplaint",
     "ACRISTransaction",

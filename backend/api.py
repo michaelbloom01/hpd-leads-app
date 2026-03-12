@@ -44,6 +44,8 @@ from src.routers.buildings import router as buildings_router
 from src.routers.jobs import router as jobs_router
 from src.routers.quality import router as quality_router
 from src.routers.alerts import router as alerts_router
+from src.routers.outreach import router as outreach_router
+from src.routers.targets import router as targets_router
 from src.routers.export_v1 import router as export_v1_router
 from src.routers.smart_lists import router as smart_lists_router
 from src.routers.building_lists import router as building_lists_router
@@ -200,6 +202,8 @@ app.include_router(buildings_router)
 app.include_router(jobs_router)
 app.include_router(quality_router)
 app.include_router(alerts_router)
+app.include_router(outreach_router)
+app.include_router(targets_router)
 app.include_router(export_v1_router)
 app.include_router(smart_lists_router)
 app.include_router(building_lists_router)

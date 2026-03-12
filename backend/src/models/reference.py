@@ -25,4 +25,5 @@ class PADAddress(TimestampMixin, Base):
     __table_args__ = (
         Index("idx_pad_bin", "bin"),
         Index("idx_pad_bbl", "bbl"),
+        Index("uq_pad_addresses_bin_bbl_address", "bin", "bbl", "address", unique=True),
     )

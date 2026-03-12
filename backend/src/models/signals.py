@@ -140,6 +140,7 @@ class EnergyGrade(TimestampMixin, Base):
     __table_args__ = (
         Index("idx_energy_grades_bbl", "bbl"),
         Index("idx_energy_grades_year", "year"),
+        Index("uq_energy_grades_bbl_year_grade", "bbl", "year", "grade", unique=True),
     )
 
 
@@ -210,6 +211,13 @@ class AEPDesignation(TimestampMixin, Base):
     __table_args__ = (
         Index("idx_aep_bbl", "bbl"),
         Index("idx_aep_active", "is_active"),
+        Index(
+            "uq_aep_designations_bbl_designation_removal",
+            "bbl",
+            "designation_date",
+            "removal_date",
+            unique=True,
+        ),
     )
 
 
@@ -256,4 +264,11 @@ class FacadeInspection(TimestampMixin, Base):
     __table_args__ = (
         Index("idx_facade_inspections_bbl", "bbl"),
         Index("idx_facade_inspections_status", "filing_status"),
+        Index(
+            "uq_facade_inspections_bbl_cycle_filing",
+            "bbl",
+            "cycle",
+            "filing_date",
+            unique=True,
+        ),
     )

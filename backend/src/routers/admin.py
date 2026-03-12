@@ -174,6 +174,24 @@ async def preview_canonical_prep(
     }
 
 
+@router.post("/admin/canonical-prep/materialize")
+@limiter.limit("10/minute")
+async def materialize_canonical_prep(
+    request: Request,
+    sample_limit: int = Query(default=10, ge=1, le=50),
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Persist canonical entity proposal rows without mutating live lead/building links."""
+    del session, user
+    from src.tasks.entity_resolution import materialize_canonical_proposals
+
+    return {
+        "status": "ok",
+        **await asyncio.to_thread(materialize_canonical_proposals, sample_limit),
+    }
+
+
 @router.post("/admin/recompute-lead-units")
 @limiter.limit("20/minute")
 async def recompute_lead_units(

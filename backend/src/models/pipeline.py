@@ -21,6 +21,8 @@ class OutreachEvent(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     lead_id: Mapped[Optional[str]] = mapped_column(String(12))
     bbl: Mapped[Optional[str]] = mapped_column(String(10))
+    canonical_entity_id: Mapped[Optional[str]] = mapped_column(String(36))
+    target_item_id: Mapped[Optional[str]] = mapped_column(String(36))
     stage: Mapped[str] = mapped_column(String(30), nullable=False)
     method: Mapped[Optional[str]] = mapped_column(String(20))
     outcome: Mapped[Optional[str]] = mapped_column(String(30))
@@ -40,6 +42,7 @@ class OutreachEvent(TimestampMixin, Base):
     __table_args__ = (
         Index("idx_outreach_events_lead", "lead_id"),
         Index("idx_outreach_events_bbl", "bbl"),
+        Index("idx_outreach_events_target_item", "target_item_id"),
         Index("idx_outreach_events_stage", "stage"),
     )
 
@@ -53,6 +56,8 @@ class ChangeAlert(TimestampMixin, Base):
     alert_type: Mapped[str] = mapped_column(String(30), nullable=False)
     lead_id: Mapped[Optional[str]] = mapped_column(String(12))
     bbl: Mapped[Optional[str]] = mapped_column(String(10))
+    canonical_entity_id: Mapped[Optional[str]] = mapped_column(String(36))
+    target_item_id: Mapped[Optional[str]] = mapped_column(String(36))
     description: Mapped[str] = mapped_column(Text, nullable=False)
     details: Mapped[Optional[dict]] = mapped_column(JSONB)
     dismissed: Mapped[bool] = mapped_column(default=False)

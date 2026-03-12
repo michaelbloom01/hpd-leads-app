@@ -774,16 +774,17 @@ export async function getFollowUpsDue(before?: string): Promise<{ count: number;
  * Get change alerts (Phase 5.4)
  */
 export async function getAlerts(limit: number = 50): Promise<{ count: number; alerts: ChangeAlert[] }> {
-  const response = await fetchWithRetry(`${API_BASE_URL}/api/alerts?limit=${limit}`);
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/v1/alerts?limit=${limit}`);
   if (!response.ok) throw new Error(`Failed to get alerts: ${response.statusText}`);
-  return response.json();
+  const alerts = await response.json();
+  return { count: Array.isArray(alerts) ? alerts.length : 0, alerts: Array.isArray(alerts) ? alerts : [] };
 }
 
 /**
  * Dismiss a change alert (Phase 5.4)
  */
 export async function dismissAlert(alertId: number): Promise<{ status: string }> {
-  const response = await fetchWithRetry(`${API_BASE_URL}/api/alerts/${alertId}/dismiss`, { method: 'POST' });
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/v1/alerts/${alertId}/dismiss`, { method: 'POST' });
   if (!response.ok) throw new Error(`Failed to dismiss alert: ${response.statusText}`);
   return response.json();
 }
