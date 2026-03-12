@@ -108,3 +108,14 @@ def get_sync_url() -> str:
         url = url.replace("postgresql://", "postgresql+psycopg://", 1)
     url = url.replace("+asyncpg", "+psycopg")
     return url
+
+
+def get_compatible_sync_url() -> str:
+    """Return a sync URL with a best-effort driver for the current runtime."""
+    url = get_sync_url()
+    try:
+        import psycopg  # noqa: F401
+
+        return url
+    except Exception:
+        return url.replace("+psycopg", "+pg8000")

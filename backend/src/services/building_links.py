@@ -144,3 +144,155 @@ def guarded_insert_current_links(
         "skipped_existing": skipped_existing,
         "conflicts": list(deduped_conflicts.values()),
     }
+
+
+def preview_current_link_conflicts(
+    session: Session,
+    *,
+    sample_limit: int = 10,
+) -> dict[str, Any]:
+    duplicate_rows = session.execute(
+        text(
+            """
+            SELECT COALESCE(SUM(duplicate_count - 1), 0)::int AS rows_to_delete
+            FROM (
+                SELECT COUNT(*) AS duplicate_count
+                FROM building_management
+                WHERE is_current = true
+                GROUP BY bbl, lead_id, role
+                HAVING COUNT(*) > 1
+            ) duplicate_groups
+            """
+        )
+    ).scalar() or 0
+
+    duplicate_groups = session.execute(
+        text(
+            """
+            SELECT COUNT(*)::int
+            FROM (
+                SELECT 1
+                FROM building_management
+                WHERE is_current = true
+                GROUP BY bbl, lead_id, role
+                HAVING COUNT(*) > 1
+            ) duplicate_groups
+            """
+        )
+    ).scalar() or 0
+
+    conflict_rows = session.execute(
+        text(
+            """
+            SELECT
+                bbl,
+                role,
+                COUNT(*)::int AS active_row_count,
+                COUNT(DISTINCT lead_id)::int AS distinct_lead_count,
+                ARRAY_AGG(DISTINCT lead_id ORDER BY lead_id) AS current_lead_ids
+            FROM building_management
+            WHERE is_current = true
+            GROUP BY bbl, role
+            HAVING COUNT(DISTINCT lead_id) > 1
+            ORDER BY active_row_count DESC, bbl ASC, role ASC
+            LIMIT :sample_limit
+            """
+        ),
+        {"sample_limit": sample_limit},
+    ).mappings().all()
+
+    conflict_count = session.execute(
+        text(
+            """
+            SELECT COUNT(*)::int
+            FROM (
+                SELECT 1
+                FROM building_management
+                WHERE is_current = true
+                GROUP BY bbl, role
+                HAVING COUNT(DISTINCT lead_id) > 1
+            ) conflict_groups
+            """
+        )
+    ).scalar() or 0
+
+    conflict_building_count = session.execute(
+        text(
+            """
+            SELECT COUNT(DISTINCT bbl)::int
+            FROM (
+                SELECT bbl, role
+                FROM building_management
+                WHERE is_current = true
+                GROUP BY bbl, role
+                HAVING COUNT(DISTINCT lead_id) > 1
+            ) conflict_groups
+            """
+        )
+    ).scalar() or 0
+
+    return {
+        "duplicate_groups": int(duplicate_groups),
+        "duplicate_rows_to_delete": int(duplicate_rows),
+        "multi_lead_conflict_groups": int(conflict_count),
+        "multi_lead_conflict_buildings": int(conflict_building_count),
+        "samples": [
+            {
+                "bbl": str(row["bbl"]),
+                "role": str(row.get("role") or ""),
+                "active_row_count": int(row.get("active_row_count") or 0),
+                "distinct_lead_count": int(row.get("distinct_lead_count") or 0),
+                "current_lead_ids": [str(value) for value in (row.get("current_lead_ids") or []) if str(value).strip()],
+            }
+            for row in conflict_rows
+        ],
+    }
+
+
+def cleanup_current_link_duplicates(session: Session) -> dict[str, Any]:
+    deleted = session.execute(
+        text(
+            """
+            WITH ranked AS (
+                SELECT
+                    id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY bbl, lead_id, role
+                        ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+                    ) AS rn
+                FROM building_management
+                WHERE is_current = true
+            )
+            DELETE FROM building_management bm
+            USING ranked
+            WHERE bm.id = ranked.id
+              AND ranked.rn > 1
+            """
+        )
+    )
+
+    session.execute(
+        text(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_bm_current_bbl_lead_role
+            ON building_management (bbl, lead_id, role)
+            WHERE is_current = true
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS idx_bm_current_bbl_role
+            ON building_management (bbl, role)
+            WHERE is_current = true
+            """
+        )
+    )
+
+    remaining = preview_current_link_conflicts(session)
+    return {
+        "deleted_duplicate_rows": int(deleted.rowcount or 0),
+        "exact_link_unique_index": "uq_bm_current_bbl_lead_role",
+        "remaining_conflicts": remaining,
+    }

@@ -37,9 +37,9 @@ EXPANDING_NAMES = bindparam("names", expanding=True)
 
 
 def _get_pg_session() -> Session:
-    from src.db.session import get_sync_url
+    from src.db.session import get_compatible_sync_url
 
-    engine = create_engine(get_sync_url())
+    engine = create_engine(get_compatible_sync_url())
     return Session(engine)
 
 
@@ -428,6 +428,63 @@ def _classify_cluster_for_prep(session: Session, cluster: dict[str, Any]) -> dic
     return _classify_cluster_candidates(cluster, _load_cluster_candidate_rows(session, cluster))
 
 
+def _cluster_signal_summary(cluster: dict[str, Any]) -> dict[str, Any]:
+    graph_nodes = (cluster.get("graph_json") or {}).get("nodes", [])
+    return {
+        "cluster_names": _cluster_names(cluster),
+        "has_corporation_evidence": any(str(node.get("type") or "") == "corporation" for node in graph_nodes),
+        "has_person_evidence": any(str(node.get("type") or "") == "person" for node in graph_nodes),
+        "safe_to_execute": False,
+    }
+
+
+def _conservative_prep_row(
+    cluster: dict[str, Any],
+    *,
+    blocked_reason: str = "candidate_scan_skipped_for_materialization",
+) -> dict[str, Any]:
+    return {
+        "canonical_name": cluster.get("canonical_name"),
+        "bucket": "review_required",
+        "keeper_lead_id": None,
+        "portfolio_size": int(cluster.get("portfolio_size") or 0),
+        "node_count": int(cluster.get("node_count") or 0),
+        "candidate_lead_count": 0,
+        "active_overlap_count": 0,
+        "active_candidate_count": 0,
+        "zero_link_sibling_count": 0,
+        "blank_display_name_sibling_count": 0,
+        "user_state_sibling_count": 0,
+        "blocked_reasons": [blocked_reason],
+        "review_reasons": [blocked_reason],
+        "canonical_reasons": [blocked_reason],
+        "signals": {
+            **_cluster_signal_summary(cluster),
+            "conservative_mode": True,
+        },
+        "candidate_leads": [],
+    }
+
+
+def _empty_counts() -> dict[str, int]:
+    return {
+        "total_clusters": 0,
+        "safe_keep": 0,
+        "safe_retire": 0,
+        "review_required": 0,
+        "unresolved": 0,
+        "safe_execution_candidates": 0,
+    }
+
+
+def _accumulate_counts(counts: dict[str, int], row: dict[str, Any]) -> None:
+    bucket = str(row.get("bucket") or "unresolved")
+    counts["total_clusters"] += 1
+    counts[bucket] = int(counts.get(bucket) or 0) + 1
+    if bucket == "safe_keep":
+        counts["safe_execution_candidates"] += 1
+
+
 def _preview_from_clusters(clusters: list[dict[str, Any]], session: Session, sample_limit: int) -> dict[str, Any]:
     prep_rows = [_classify_cluster_for_prep(session, cluster) for cluster in clusters]
     counts = defaultdict(int)
@@ -486,22 +543,77 @@ def preview_entity_resolution(sample_limit: int = DEFAULT_SAMPLE_LIMIT) -> dict[
             engine.dispose()
 
 
-def materialize_canonical_proposals(sample_limit: int = DEFAULT_SAMPLE_LIMIT) -> dict[str, Any]:
+def materialize_canonical_proposals(
+    sample_limit: int = DEFAULT_SAMPLE_LIMIT,
+    conservative_mode: bool = False,
+    commit_batch_size: int = 500,
+) -> dict[str, Any]:
     """Persist canonical entity proposals without mutating live lead/building links."""
     session = _get_pg_session()
     engine = session.get_bind()
     try:
         clusters = _resolve_clusters(_build_entity_graph(session))
-        preview = _preview_from_clusters(clusters, session, sample_limit=sample_limit)
-        proposal_sync = sync_canonical_proposals(
-            session,
-            prep_rows=preview["clusters"],
-            clusters=clusters,
-        )
-        session.commit()
+        counts = _empty_counts()
+        proposal_sync = {
+            "entities_synced": 0,
+            "aliases_synced": 0,
+            "lead_links_synced": 0,
+            "building_links_synced": 0,
+            "proposals_synced": 0,
+        }
+
+        batch_rows: list[dict[str, Any]] = []
+        batch_clusters: list[dict[str, Any]] = []
+
+        for index, cluster in enumerate(clusters, start=1):
+            if conservative_mode:
+                row = _conservative_prep_row(cluster)
+            else:
+                try:
+                    row = _classify_cluster_for_prep(session, cluster)
+                except Exception as exc:
+                    logger.warning(
+                        "Canonical materialization fell back to conservative mode for cluster=%s error=%s",
+                        cluster.get("canonical_name"),
+                        exc,
+                    )
+                    row = _conservative_prep_row(cluster, blocked_reason="candidate_scan_failed_during_materialization")
+
+            _accumulate_counts(counts, row)
+            batch_rows.append(row)
+            batch_clusters.append(cluster)
+
+            if len(batch_rows) >= max(1, commit_batch_size):
+                batch_sync = sync_canonical_proposals(session, prep_rows=batch_rows, clusters=batch_clusters)
+                for key, value in batch_sync.items():
+                    proposal_sync[key] += int(value or 0)
+                session.commit()
+                if index % 1000 == 0 or index == len(clusters):
+                    logger.info(
+                        "Canonical materialization progress: %s/%s clusters persisted (conservative=%s)",
+                        index,
+                        len(clusters),
+                        conservative_mode,
+                    )
+                batch_rows = []
+                batch_clusters = []
+
+        if batch_rows:
+            batch_sync = sync_canonical_proposals(session, prep_rows=batch_rows, clusters=batch_clusters)
+            for key, value in batch_sync.items():
+                proposal_sync[key] += int(value or 0)
+            session.commit()
+
         return {
-            "counts": preview["counts"],
-            "guardrails": preview["guardrails"],
+            "counts": counts,
+            "guardrails": {
+                "default_mode": "dry_run",
+                "requires_confirm_execute": True,
+                "allowed_execution_cohorts": sorted(EXECUTABLE_COHORTS),
+                "blocked_buckets": ["review_required", "unresolved", "safe_retire"],
+                "materialization_mode": "conservative" if conservative_mode else "full",
+                "sample_limit_used_for_preview_only": sample_limit,
+            },
             "proposal_sync": proposal_sync,
         }
     finally:

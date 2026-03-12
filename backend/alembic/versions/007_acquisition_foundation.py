@@ -21,9 +21,20 @@ def upgrade() -> None:
     op.execute(
         sa.text(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS uq_bm_current_bbl_role
-            ON building_management (bbl, role)
-            WHERE is_current = true;
+            WITH ranked AS (
+                SELECT
+                    id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY bbl, lead_id, role
+                        ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+                    ) AS rn
+                FROM building_management
+                WHERE is_current = true
+            )
+            DELETE FROM building_management bm
+            USING ranked
+            WHERE bm.id = ranked.id
+              AND ranked.rn > 1;
             """
         )
     )
@@ -32,6 +43,15 @@ def upgrade() -> None:
             """
             CREATE UNIQUE INDEX IF NOT EXISTS uq_bm_current_bbl_lead_role
             ON building_management (bbl, lead_id, role)
+            WHERE is_current = true;
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            """
+            CREATE INDEX IF NOT EXISTS idx_bm_current_bbl_role
+            ON building_management (bbl, role)
             WHERE is_current = true;
             """
         )

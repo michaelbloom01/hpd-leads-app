@@ -113,13 +113,6 @@ class BuildingManagement(TimestampMixin, Base):
         Index("idx_bm_lead_id", "lead_id"),
         Index("idx_bm_is_current", "is_current"),
         Index(
-            "uq_bm_current_bbl_role",
-            "bbl",
-            "role",
-            unique=True,
-            postgresql_where=text("is_current = true"),
-        ),
-        Index(
             "uq_bm_current_bbl_lead_role",
             "bbl",
             "lead_id",

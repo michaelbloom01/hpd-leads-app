@@ -22,6 +22,22 @@ router = APIRouter(prefix="/api", tags=["admin"])
 limiter = Limiter(key_func=get_remote_address)
 
 
+def _run_sync_admin_job(fn, *args, **kwargs):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session as SyncSession
+    from src.db.session import get_compatible_sync_url
+
+    engine = create_engine(get_compatible_sync_url())
+    session = SyncSession(engine)
+    try:
+        result = fn(session, *args, **kwargs)
+        session.commit()
+        return result
+    finally:
+        session.close()
+        engine.dispose()
+
+
 async def sync_lead_portfolio_snapshot(session: AsyncSession) -> dict:
     """
     Sync lead portfolio_size and total_units from live building_management links.
@@ -179,6 +195,7 @@ async def preview_canonical_prep(
 async def materialize_canonical_prep(
     request: Request,
     sample_limit: int = Query(default=10, ge=1, le=50),
+    conservative_mode: bool = Query(default=True),
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
@@ -188,7 +205,42 @@ async def materialize_canonical_prep(
 
     return {
         "status": "ok",
-        **await asyncio.to_thread(materialize_canonical_proposals, sample_limit),
+        **await asyncio.to_thread(materialize_canonical_proposals, sample_limit, conservative_mode),
+    }
+
+
+@router.post("/admin/current-link-conflicts/preview")
+@limiter.limit("20/minute")
+async def preview_current_link_conflict_cleanup(
+    request: Request,
+    sample_limit: int = Query(default=10, ge=1, le=50),
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Preview duplicate current-link cleanup and remaining multi-lead conflicts."""
+    del session, user
+    from src.services.building_links import preview_current_link_conflicts
+
+    return {
+        "status": "ok",
+        **await asyncio.to_thread(_run_sync_admin_job, preview_current_link_conflicts, sample_limit=sample_limit),
+    }
+
+
+@router.post("/admin/current-link-conflicts/cleanup")
+@limiter.limit("10/minute")
+async def cleanup_current_link_conflicts(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Delete exact duplicate active link rows and enforce exact-link uniqueness."""
+    del session, user
+    from src.services.building_links import cleanup_current_link_duplicates
+
+    return {
+        "status": "ok",
+        **await asyncio.to_thread(_run_sync_admin_job, cleanup_current_link_duplicates),
     }
 
 
