@@ -1264,6 +1264,7 @@ export async function runDueAutoEvaluations(limit: number = 50): Promise<{
 
 export interface BuildingSearchResult {
   building_id: string;
+  bbl?: string | null;
   address: string;
   house_number: string;
   street_name: string;
@@ -1316,6 +1317,19 @@ export interface DataHealthResponse {
     status: string;
   } | null;
   last_lead_generation_at?: string | null;
+  canonical_prep?: {
+    job_id: number;
+    status: string;
+    started_at: string | null;
+    finished_at: string | null;
+    mode: string | null;
+    dry_run: boolean;
+    confirm_execute: boolean;
+    cohort_filter: string | null;
+    write_permitted: boolean;
+    preview_counts?: Record<string, number> | null;
+    guardrails?: Record<string, unknown> | null;
+  } | null;
   warnings: string[];
 }
 

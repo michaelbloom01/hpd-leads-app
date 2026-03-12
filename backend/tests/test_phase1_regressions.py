@@ -8,7 +8,7 @@ def _read(path: str) -> str:
 def test_entity_resolution_no_removed_building_management_columns():
     source = _read("src/tasks/entity_resolution.py")
     assert "source, effective_date" not in source
-    assert "INSERT INTO building_management (bbl, lead_id, role, is_current" in source
+    assert "guarded_insert_current_links" in source
 
 
 def test_quality_checks_no_invalid_update_order_by_limit():

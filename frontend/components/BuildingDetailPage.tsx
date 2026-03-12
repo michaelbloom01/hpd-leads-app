@@ -7,7 +7,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import {
   fetchBuildingDetail, fetchBuildingTimeline, fetchBuildingScoreHistory,
-  addBuildingToPipeline, fetchBuildingOutreachEvents, logBuildingOutreachEvent,
+  addBuildingToPipeline, fetchBuildingOutreachEvents, logBuildingOutreachEvent, requestBuildingDosContactsRefresh,
   type BuildingContactEntry, type BuildingDetail,
 } from '../services/buildings-api';
 import { toast } from 'react-hot-toast';
@@ -86,14 +86,16 @@ const BuildingDetailPage: React.FC = () => {
     return decodeURIComponent(rawBbl).trim() || null;
   }, [rawBbl]);
 
-  const { data: building, isLoading, error } = useQuery({
+  const [isRefreshingDos, setIsRefreshingDos] = React.useState(false);
+
+  const { data: building, isLoading, error, refetch: refetchBuilding } = useQuery({
     queryKey: ['building', decodedBbl],
     queryFn: () => fetchBuildingDetail(decodedBbl!),
     enabled: !!decodedBbl,
     retry: 1,
     refetchInterval: (query) => {
       const status = (query.state.data as BuildingDetail | undefined)?.dos_contacts_status;
-      return status === 'refreshing' || status === 'stale' || status === 'not_loaded' ? 5000 : false;
+      return status === 'refreshing' ? 5000 : false;
     },
     refetchOnWindowFocus: true,
   });
@@ -139,6 +141,24 @@ const BuildingDetailPage: React.FC = () => {
     }
   };
 
+  const handleRefreshDosContacts = async () => {
+    if (!activeBbl || isRefreshingDos) return;
+    setIsRefreshingDos(true);
+    try {
+      const response = await requestBuildingDosContactsRefresh(activeBbl);
+      if (response.status === 'skipped') {
+        toast.error('No corporate owner found for DOS lookup');
+      } else {
+        toast.success(response.status === 'refreshing' ? 'DOS refresh requested' : 'DOS contacts updated');
+      }
+      await refetchBuilding();
+    } catch {
+      toast.error('Failed to request DOS refresh');
+    } finally {
+      setIsRefreshingDos(false);
+    }
+  };
+
   if (isLoading) return <div className="p-8 text-center text-gray-400">Loading...</div>;
   if (!decodedBbl || !building) return <div className="p-8 text-center text-red-500">Building not found{error ? ` — ${(error as Error).message}` : ''}</div>;
 
@@ -181,13 +201,13 @@ const BuildingDetailPage: React.FC = () => {
     if (dosStatus === 'stale') {
       return {
         tone: 'border-amber-200 bg-amber-50 text-amber-700',
-        text: 'DOS contact data is stale. A refresh has been queued and this page will poll for the latest result.',
+        text: 'DOS contact data is stale. Request a refresh to pull the latest filing snapshot.',
       };
     }
     if (dosStatus === 'not_loaded') {
       return {
         tone: 'border-gray-200 bg-gray-50 text-gray-600',
-        text: 'DOS corporate officer data is being loaded for this building.',
+        text: 'DOS corporate officer data has not been loaded for this building yet.',
       };
     }
     if (dosStatus === 'no_match') {
@@ -282,9 +302,23 @@ const BuildingDetailPage: React.FC = () => {
             <span className="text-xs text-gray-400">{contactCount} contacts from {new Set((building.all_contacts || []).map((c: BuildingContactEntry) => c.source)).size} sources</span>
           </div>
           {dosBanner && (
-            <div className={`mb-3 text-xs rounded border px-2 py-1 ${dosBanner.tone}`}>
-              {dosBanner.text}
-              {building.dos_contacts_last_refreshed_at ? ` Last refresh: ${formatRelativeDate(building.dos_contacts_last_refreshed_at)}.` : ''}
+            <div className={`mb-3 rounded border px-2 py-2 ${dosBanner.tone}`}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs">
+                  {dosBanner.text}
+                  {building.dos_contacts_last_refreshed_at ? ` Last refresh: ${formatRelativeDate(building.dos_contacts_last_refreshed_at)}.` : ''}
+                </div>
+                {(dosStatus === 'stale' || dosStatus === 'not_loaded') && building.corporate_owner && (
+                  <button
+                    type="button"
+                    onClick={handleRefreshDosContacts}
+                    disabled={isRefreshingDos}
+                    className="shrink-0 rounded border border-current px-2 py-1 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isRefreshingDos ? 'Requesting...' : dosStatus === 'not_loaded' ? 'Load DOS contacts' : 'Refresh DOS contacts'}
+                  </button>
+                )}
+              </div>
             </div>
           )}
           {building.management_company && (

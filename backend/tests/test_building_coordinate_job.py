@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from src.auth.auth import AuthUser
 from src.routers import jobs as jobs_router
@@ -45,8 +47,12 @@ class FakeSyncSession:
 
 
 class FakeExecuteResult:
-    def __init__(self, *, scalar=None):
+    def __init__(self, *, rows=None, scalar=None):
+        self._rows = rows or []
         self._scalar = scalar
+
+    def fetchall(self):
+        return self._rows
 
     def scalar_one(self):
         return self._scalar
@@ -121,7 +127,13 @@ def test_backfill_building_coordinates_updates_buildings_and_job_progress(monkey
 
 @pytest.mark.anyio
 async def test_start_building_coordinates_job_falls_back_to_in_process(monkeypatch):
-    session = FakeAsyncSession([FakeExecuteResult(scalar=456)])
+    session = FakeAsyncSession(
+        [
+            FakeExecuteResult(rows=[]),
+            FakeExecuteResult(scalar=456),
+            FakeExecuteResult(),
+        ]
+    )
     captured: dict[str, object] = {}
 
     class FailingTask:
@@ -157,9 +169,73 @@ async def test_start_building_coordinates_job_falls_back_to_in_process(monkeypat
         "limit": 250,
         "dispatch_mode": "in_process",
     }
-    assert session.commit_count == 1
+    assert session.commit_count == 2
     assert captured["delay_kwargs"] == {"job_id": 456, "limit": 250}
+    assert any("UPDATE ingestion_jobs SET config" in sql for sql, _params in session.calls)
 
     task = captured["task"]
     await task
     assert captured["run_kwargs"] == {"job_id": 456, "limit": 250}
+
+
+@pytest.mark.anyio
+async def test_reconcile_stale_queued_marks_undispatched_rows_failed():
+    session = FakeAsyncSession(
+        [
+            FakeExecuteResult(rows=[(91,), (92,)]),
+            FakeExecuteResult(),
+        ]
+    )
+
+    response = await jobs_router.reconcile_stale_queued(
+        dry_run=False,
+        session=session,
+        user=AuthUser(user_id="u1", email="test@example.com"),
+    )
+
+    assert response == {
+        "status": "updated",
+        "stale_job_ids": [91, 92],
+        "updated": 2,
+    }
+    assert session.commit_count == 1
+    assert any("UPDATE ingestion_jobs" in sql for sql, _params in session.calls)
+
+
+@pytest.mark.anyio
+async def test_start_building_coordinates_job_rejects_duplicate_inflight_job():
+    session = FakeAsyncSession(
+        [
+            FakeExecuteResult(
+                rows=[
+                    (
+                        555,
+                        "running",
+                        json.dumps(
+                            {
+                                "request": {
+                                    "job_type": "building_coordinates",
+                                    "requested_job_type": "building_coordinates",
+                                    "limit": 250,
+                                    "dry_run": True,
+                                    "confirm_execute": False,
+                                    "cohort_filter": None,
+                                }
+                            }
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await jobs_router.start_job(
+            job_type="building_coordinates",
+            limit=250,
+            session=session,
+            user=AuthUser(user_id="u1", email="test@example.com"),
+        )
+
+    assert exc.value.detail["job_id"] == 555
+    assert session.commit_count == 0

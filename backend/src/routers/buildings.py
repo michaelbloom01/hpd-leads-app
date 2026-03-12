@@ -121,6 +121,51 @@ async def _mark_dos_refresh_requested(session: AsyncSession, bbl: str) -> None:
     await session.commit()
 
 
+async def _request_dos_refresh(
+    session: AsyncSession,
+    bbl: str,
+    corporate_owner_name: Optional[str],
+) -> dict[str, object]:
+    owner_name = (corporate_owner_name or "").strip()
+    if not owner_name:
+        return {"status": "skipped", "reason": "missing_corporate_owner"}
+
+    cache_key = f"officers:{bbl}"
+    row = (
+        await session.execute(
+            text("SELECT result FROM dos_cache WHERE cache_key = :cache_key"),
+            {"cache_key": cache_key},
+        )
+    ).first()
+    payload: dict = {}
+    if row and row[0]:
+        try:
+            parsed = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+            if isinstance(parsed, dict):
+                payload = parsed
+        except Exception:
+            payload = {}
+
+    refresh_requested_at = _coerce_iso_datetime(payload.get("refresh_requested_at"))
+    if refresh_requested_at and (datetime.now(timezone.utc) - refresh_requested_at) < DOS_REFRESH_COOLDOWN:
+        return {
+            "status": "refreshing",
+            "bbl": bbl,
+            "corporate_owner": owner_name,
+            "refresh_requested_at": refresh_requested_at.isoformat(),
+        }
+
+    from src.tasks.enrich import refresh_dos_contacts
+
+    refresh_dos_contacts.delay(bbl, owner_name)
+    await _mark_dos_refresh_requested(session, bbl)
+    return {
+        "status": "refreshing",
+        "bbl": bbl,
+        "corporate_owner": owner_name,
+    }
+
+
 @router.get("")
 @limiter.limit("60/minute")
 async def list_buildings(
@@ -208,15 +253,21 @@ async def list_buildings(
                    b.churn_score, b.churn_category, b.key_signal,
                    b.coverage_ratio, b.outreach_status, b.last_scored_at,
                    b.latitude, b.longitude, b.coordinate_source, b.coordinate_precision,
-                   m.lead_id AS current_lead_id, pm.pm_company
+                   m.current_lead_id, m.current_link_count, m.current_link_lead_ids,
+                   m.current_link_conflict, pm.pm_company
             FROM buildings b
             LEFT JOIN LATERAL (
-                SELECT bm.lead_id
+                SELECT
+                    CASE
+                        WHEN COUNT(*) = 1 AND COUNT(DISTINCT bm.lead_id) = 1 THEN MAX(bm.lead_id)
+                        ELSE NULL
+                    END AS current_lead_id,
+                    COUNT(*)::int AS current_link_count,
+                    ARRAY_AGG(DISTINCT bm.lead_id ORDER BY bm.lead_id) AS current_link_lead_ids,
+                    (COUNT(*) > 1 OR COUNT(DISTINCT bm.lead_id) > 1) AS current_link_conflict
                 FROM building_management bm
                 WHERE bm.bbl = b.bbl
                   AND bm.is_current = true
-                ORDER BY bm.updated_at DESC NULLS LAST, bm.id DESC
-                LIMIT 1
             ) m ON TRUE
             LEFT JOIN LATERAL (
                 SELECT bc.corporation_name AS pm_company
@@ -317,15 +368,25 @@ async def get_building(
 
     result = await session.execute(
         text("""
-            SELECT b.*, m.lead_id AS current_lead_id
+            SELECT
+                b.*,
+                m.current_lead_id,
+                m.current_link_count,
+                m.current_link_lead_ids,
+                m.current_link_conflict
             FROM buildings b
             LEFT JOIN LATERAL (
-                SELECT bm.lead_id
+                SELECT
+                    CASE
+                        WHEN COUNT(*) = 1 AND COUNT(DISTINCT bm.lead_id) = 1 THEN MAX(bm.lead_id)
+                        ELSE NULL
+                    END AS current_lead_id,
+                    COUNT(*)::int AS current_link_count,
+                    ARRAY_AGG(DISTINCT bm.lead_id ORDER BY bm.lead_id) AS current_link_lead_ids,
+                    (COUNT(*) > 1 OR COUNT(DISTINCT bm.lead_id) > 1) AS current_link_conflict
                 FROM building_management bm
                 WHERE bm.bbl = b.bbl
                   AND bm.is_current = true
-                ORDER BY bm.updated_at DESC NULLS LAST, bm.id DESC
-                LIMIT 1
             ) m ON TRUE
             WHERE b.bbl = :bbl
         """),
@@ -342,22 +403,8 @@ async def get_building(
         building_address=building.get("address"),
     )
 
-    # Queue async DOS refresh when cache is stale/missing.
     corporate_owner_name = contact_meta.get("corporate_owner")
     dos_status = str(contact_meta.get("dos_contacts_status") or "not_loaded")
-    refresh_requested_at = _coerce_iso_datetime(contact_meta.get("dos_refresh_requested_at"))
-    recently_requested = bool(
-        refresh_requested_at and (datetime.now(timezone.utc) - refresh_requested_at) < DOS_REFRESH_COOLDOWN
-    )
-    if dos_status in {"stale", "not_loaded"} and corporate_owner_name and not recently_requested:
-        try:
-            from src.tasks.enrich import refresh_dos_contacts
-
-            refresh_dos_contacts.delay(canonical_bbl, corporate_owner_name)
-            await _mark_dos_refresh_requested(session, canonical_bbl)
-            dos_status = "refreshing"
-        except Exception as exc:
-            logger.warning("Failed to queue DOS refresh for %s: %s", canonical_bbl, exc)
 
     building["all_contacts"] = contacts
     building["management_company"] = contact_meta.get("management_company")
@@ -368,6 +415,43 @@ async def get_building(
     building["dos_contacts_last_refreshed_at"] = contact_meta.get("dos_contacts_last_refreshed_at")
 
     return building
+
+
+@router.post("/{bbl}/dos-contacts/refresh")
+@limiter.limit("20/minute")
+async def refresh_building_dos_contacts(
+    request: Request,
+    bbl: str,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    canonical_bbl = await _resolve_canonical_bbl(session, bbl)
+    if not canonical_bbl:
+        raise HTTPException(404, "Building not found")
+
+    result = await session.execute(
+        text("SELECT address FROM buildings WHERE bbl = :bbl"),
+        {"bbl": canonical_bbl},
+    )
+    row = result.first()
+    if not row:
+        raise HTTPException(404, "Building not found")
+
+    _, contact_meta = await get_building_contacts(
+        session=session,
+        bbl=canonical_bbl,
+        building_address=row[0],
+    )
+
+    try:
+        return await _request_dos_refresh(
+            session=session,
+            bbl=canonical_bbl,
+            corporate_owner_name=contact_meta.get("corporate_owner"),
+        )
+    except Exception as exc:
+        logger.warning("Failed to queue DOS refresh for %s: %s", canonical_bbl, exc)
+        raise HTTPException(503, "Failed to queue DOS refresh") from exc
 
 
 @router.get("/{bbl}/timeline")

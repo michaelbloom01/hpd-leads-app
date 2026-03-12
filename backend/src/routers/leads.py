@@ -44,6 +44,13 @@ SORT_COL_EXPRESSIONS = {
     "boro": "primary_borough",
 }
 
+LIVE_PORTFOLIO_COUNT_SQL = "COALESCE(live_link_stats.bldg_count, leads.portfolio_size, 0)"
+LIVE_TOTAL_UNITS_SQL = "COALESCE(live_link_stats.unit_sum, leads.total_units, 0)"
+LIVE_UNITS_PER_BUILDING_SQL = (
+    f"CASE WHEN {LIVE_PORTFOLIO_COUNT_SQL} > 0 "
+    f"THEN {LIVE_TOTAL_UNITS_SQL}::float / {LIVE_PORTFOLIO_COUNT_SQL} ELSE 0 END"
+)
+
 DISPLAY_NAME_KEY_SQL = """
 UPPER(TRIM(COALESCE(
     NULLIF(company_name, ''),
@@ -67,10 +74,6 @@ CASE
 END
 """.strip()
 
-SNAPSHOT_SYNC_MIN_INTERVAL_SECONDS = 15 * 60
-_last_snapshot_sync_ts = 0.0
-
-
 def _parse_json_list(value) -> list:
     if value is None:
         return []
@@ -91,44 +94,33 @@ def _lineage_status(record_count: int, missing_reason: Optional[str]) -> str:
     return "missing"
 
 
+def _classify_lineage_for_canonical_prep(
+    *,
+    linked_buildings: int,
+    blank_display_name: bool,
+    sibling_rows: list[dict[str, object]],
+) -> tuple[str, list[str]]:
+    reasons: list[str] = []
+    if linked_buildings <= 0:
+        reasons.append("no_active_building_links")
+    if blank_display_name:
+        reasons.append("blank_display_name")
+    if sibling_rows:
+        reasons.append("duplicate_sibling_candidates")
+
+    if linked_buildings > 0 and not blank_display_name and not sibling_rows:
+        return "safe_keep", reasons
+    if linked_buildings <= 0 and blank_display_name and not sibling_rows:
+        return "safe_retire", reasons
+    if sibling_rows:
+        return "review_required", reasons
+    return "unresolved", reasons
+
+
 def _split_csv_values(value: Optional[str]) -> list[str]:
     if not value:
         return []
     return [v.strip() for v in value.split(",") if v.strip()]
-
-
-async def _sync_lead_portfolio_snapshot_if_due(session: AsyncSession) -> None:
-    """
-    Keep lead-level portfolio/unit snapshots fresh enough for filter accuracy.
-    """
-    global _last_snapshot_sync_ts
-    now = time.time()
-    if now - _last_snapshot_sync_ts < SNAPSHOT_SYNC_MIN_INTERVAL_SECONDS:
-        return
-
-    update_result = await session.execute(text("""
-        UPDATE leads l
-        SET portfolio_size = sub.bldg_count,
-            total_units = sub.unit_sum,
-            updated_at = NOW()
-        FROM (
-            SELECT bm.lead_id,
-                   COUNT(DISTINCT bm.bbl) AS bldg_count,
-                   COALESCE(SUM(b.unit_count), 0) AS unit_sum
-            FROM building_management bm
-            JOIN buildings b ON b.bbl = bm.bbl
-            WHERE bm.is_current = true
-            GROUP BY bm.lead_id
-        ) sub
-        WHERE l.lead_id = sub.lead_id
-          AND (
-                COALESCE(l.portfolio_size, 0) <> sub.bldg_count
-             OR COALESCE(l.total_units, 0) <> sub.unit_sum
-          )
-    """))
-    await session.commit()
-    _last_snapshot_sync_ts = now
-    logger.info("Lead portfolio snapshot sync complete; rows_updated=%s", int(update_result.rowcount or 0))
 
 
 def _row_to_response(r: dict) -> dict:
@@ -172,8 +164,8 @@ def _row_to_response(r: dict) -> dict:
         "agent_name": r.get("agent_name") or "",
         "owner_name": r.get("owner_name") or "",
         "owner_type": r.get("owner_type") or "unknown",
-        "portfolio_size": r.get("portfolio_size") or 0,
-        "total_units": r.get("total_units") or 0,
+        "portfolio_size": r.get("live_portfolio_size") or r.get("portfolio_size") or 0,
+        "total_units": r.get("live_total_units") or r.get("total_units") or 0,
         "buildings": buildings if isinstance(buildings, list) else [],
         "phone": r.get("phone"),
         "email": r.get("email"),
@@ -257,8 +249,6 @@ async def get_leads(
 ):
     wheres: list[str] = []
     params: dict = {"limit": limit, "offset": offset}
-    if any(v is not None for v in [min_portfolio, max_portfolio, min_units, max_units, min_units_per_bldg, max_units_per_bldg]):
-        await _sync_lead_portfolio_snapshot_if_due(session)
 
     if min_score is not None:
         wheres.append("score >= :min_score")
@@ -267,10 +257,10 @@ async def get_leads(
         wheres.append("score <= :max_score")
         params["max_score"] = max_score
     if min_portfolio is not None:
-        wheres.append("portfolio_size >= :min_portfolio")
+        wheres.append(f"{LIVE_PORTFOLIO_COUNT_SQL} >= :min_portfolio")
         params["min_portfolio"] = min_portfolio
     if max_portfolio is not None:
-        wheres.append("portfolio_size <= :max_portfolio")
+        wheres.append(f"{LIVE_PORTFOLIO_COUNT_SQL} <= :max_portfolio")
         params["max_portfolio"] = max_portfolio
     if boro:
         boro_list = [b.strip().upper() for b in boro.split(",") if b.strip()]
@@ -338,16 +328,16 @@ async def get_leads(
         for i, value in enumerate(pipeline_stages):
             params[f"pipeline_stage_{i}"] = value
     if min_units is not None:
-        wheres.append("total_units >= :min_units")
+        wheres.append(f"{LIVE_TOTAL_UNITS_SQL} >= :min_units")
         params["min_units"] = min_units
     if max_units is not None:
-        wheres.append("total_units <= :max_units")
+        wheres.append(f"{LIVE_TOTAL_UNITS_SQL} <= :max_units")
         params["max_units"] = max_units
     if min_units_per_bldg is not None:
-        wheres.append("portfolio_size > 0 AND (total_units::float / portfolio_size) >= :min_upb")
+        wheres.append(f"{LIVE_PORTFOLIO_COUNT_SQL} > 0 AND ({LIVE_UNITS_PER_BUILDING_SQL}) >= :min_upb")
         params["min_upb"] = min_units_per_bldg
     if max_units_per_bldg is not None:
-        wheres.append("portfolio_size > 0 AND (total_units::float / portfolio_size) <= :max_upb")
+        wheres.append(f"{LIVE_PORTFOLIO_COUNT_SQL} > 0 AND ({LIVE_UNITS_PER_BUILDING_SQL}) <= :max_upb")
         params["max_upb"] = max_units_per_bldg
     if building_type_has:
         for i, btype in enumerate(building_type_has.split(",")):
@@ -396,7 +386,13 @@ async def get_leads(
 
     where_sql = " AND ".join(wheres) if wheres else "1=1"
 
-    if sort_by in SORT_COL_EXPRESSIONS:
+    if sort_by == "portfolio_size":
+        sort_col = "live_portfolio_size"
+    elif sort_by == "total_units":
+        sort_col = "live_total_units"
+    elif sort_by == "units_per_bldg":
+        sort_col = "live_units_per_bldg"
+    elif sort_by in SORT_COL_EXPRESSIONS:
         sort_col = SORT_COL_EXPRESSIONS[sort_by]
     elif sort_by in ALLOWED_SORT_COLS:
         sort_col = sort_by
@@ -405,11 +401,24 @@ async def get_leads(
     sort_direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
 
     dedupe_cte_sql = f"""
-        WITH filtered_leads AS (
+        WITH live_link_stats AS (
+            SELECT bm.lead_id,
+                   COUNT(DISTINCT bm.bbl) AS bldg_count,
+                   COALESCE(SUM(b.unit_count), 0) AS unit_sum
+            FROM building_management bm
+            JOIN buildings b ON b.bbl = bm.bbl
+            WHERE bm.is_current = true
+            GROUP BY bm.lead_id
+        ),
+        filtered_leads AS (
             SELECT
                 leads.*,
+                {LIVE_PORTFOLIO_COUNT_SQL} AS live_portfolio_size,
+                {LIVE_TOTAL_UNITS_SQL} AS live_total_units,
+                {LIVE_UNITS_PER_BUILDING_SQL} AS live_units_per_bldg,
                 {DISPLAY_NAME_KEY_SQL} AS display_name_key
             FROM leads
+            LEFT JOIN live_link_stats ON live_link_stats.lead_id = leads.lead_id
             WHERE {where_sql}
         ),
         ranked_leads AS (
@@ -433,7 +442,7 @@ async def get_leads(
                         COALESCE(priority_rank, 0) DESC,
                         CASE WHEN COALESCE(NULLIF(TRIM(notes), ''), '') <> '' THEN 1 ELSE 0 END DESC,
                         COALESCE(score, 0) DESC,
-                        COALESCE(portfolio_size, 0) DESC,
+                        COALESCE(live_portfolio_size, 0) DESC,
                         updated_at DESC NULLS LAST,
                         lead_id ASC
                 ) AS dedupe_rank
@@ -590,41 +599,7 @@ async def get_lead(request: Request, lead_id: str, session: AsyncSession = Depen
         if not isinstance(existing_buildings, list):
             existing_buildings = []
 
-        # Keep list and detail views consistent by persisting newly derived portfolio values.
-        needs_persist = hydrated_from_fallback or (
-            len(addresses) > 0 and (
-                len(existing_buildings) == 0
-                or int(lead_data.get("total_units") or 0) != int(linked_units)
-                or int(lead_data.get("portfolio_size") or 0) != int(len(addresses))
-                or int(lead_data.get("total_units") or 0) <= 0 < linked_units
-                or existing_building_types != building_types
-            )
-        )
-
-        if needs_persist:
-            await session.execute(
-                text("""
-                    UPDATE leads
-                    SET buildings = CAST(:buildings AS JSONB),
-                        portfolio_size = :portfolio_size,
-                        total_units = :total_units,
-                        boros = CAST(:boros AS JSONB),
-                        building_types = CAST(:building_types AS JSONB),
-                        primary_borough = :primary_borough,
-                        updated_at = NOW()
-                    WHERE lead_id = :lid
-                """),
-                {
-                    "lid": lead_id,
-                    "buildings": json.dumps(addresses),
-                    "portfolio_size": int(lead_data.get("portfolio_size") or 0),
-                    "total_units": int(lead_data.get("total_units") or 0),
-                    "boros": json.dumps(lead_data.get("boros") or []),
-                    "building_types": json.dumps(building_types),
-                    "primary_borough": lead_data.get("primary_borough"),
-                },
-            )
-            await session.commit()
+        # Keep detail reads side-effect free; do not persist fallback-derived values here.
 
     annual_revenue = float(lead_data.get("estimated_annual_revenue") or 0.0)
     if annual_revenue <= 0 and int(lead_data.get("total_units") or 0) > 0:
@@ -705,21 +680,6 @@ async def get_lead(request: Request, lead_id: str, session: AsyncSession = Depen
         lead_data["estimated_monthly_revenue"] = monthly_revenue
         lead_data["estimated_annual_revenue"] = annual_revenue
         lead_data["revenue_breakdown"] = revenue_breakdown
-        await session.execute(
-            text("""
-                UPDATE leads
-                SET estimated_monthly_revenue = :monthly,
-                    estimated_annual_revenue = :annual,
-                    updated_at = NOW()
-                WHERE lead_id = :lid
-            """),
-            {
-                "lid": lead_id,
-                "monthly": monthly_revenue,
-                "annual": annual_revenue,
-            },
-        )
-        await session.commit()
 
     # Recompute violations from current linked buildings for detail accuracy.
     violations_row = (await session.execute(
@@ -747,20 +707,6 @@ async def get_lead(request: Request, lead_id: str, session: AsyncSession = Depen
         lead_data["violation_class_b"] = v_b
         lead_data["violation_class_c"] = v_c
         lead_data["violations_per_unit"] = vpu
-        await session.execute(
-            text("""
-                UPDATE leads
-                SET violation_count = :vc,
-                    violation_class_a = :va,
-                    violation_class_b = :vb,
-                    violation_class_c = :vc_c,
-                    violations_per_unit = :vpu,
-                    updated_at = NOW()
-                WHERE lead_id = :lid
-            """),
-            {"lid": lead_id, "vc": v_total, "va": v_a, "vb": v_b, "vc_c": v_c, "vpu": vpu},
-        )
-        await session.commit()
 
     return _row_to_response(lead_data)
 
@@ -940,6 +886,16 @@ async def get_lead_lineage(
             for row in sibling_result
         ]
 
+    blank_display_name = not any(
+        str(lead_data.get(field) or "").strip()
+        for field in ("company_name", "agent_name", "owner_name", "primary_contact")
+    )
+    canonical_bucket, canonical_reasons = _classify_lineage_for_canonical_prep(
+        linked_buildings=linked_buildings,
+        blank_display_name=blank_display_name,
+        sibling_rows=sibling_rows,
+    )
+
     return {
         "lead_id": lead_id,
         "entity_name": lead_data.get("company_name") or lead_data.get("agent_name") or lead_data.get("owner_name") or "",
@@ -948,6 +904,14 @@ async def get_lead_lineage(
         "sources": source_rows,
         "sibling_count": len(sibling_rows),
         "sibling_leads": sibling_rows,
+        "canonical_prep": {
+            "candidate_bucket": canonical_bucket,
+            "reasons": canonical_reasons,
+            "blank_display_name": blank_display_name,
+            "has_active_links": linked_buildings > 0,
+            "display_name_key": display_name_key,
+            "safe_to_execute": canonical_bucket == "safe_keep",
+        },
     }
 
 

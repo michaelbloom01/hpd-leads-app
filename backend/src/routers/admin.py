@@ -156,6 +156,24 @@ async def cleanup_orphan_leads(
     }
 
 
+@router.post("/admin/canonical-prep/preview")
+@limiter.limit("20/minute")
+async def preview_canonical_prep(
+    request: Request,
+    sample_limit: int = Query(default=10, ge=1, le=50),
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Preview canonical-prep confidence buckets without mutating lead/building links."""
+    del session, user
+    from src.tasks.entity_resolution import preview_entity_resolution
+
+    return {
+        "status": "ok",
+        **await asyncio.to_thread(preview_entity_resolution, sample_limit),
+    }
+
+
 @router.post("/admin/recompute-lead-units")
 @limiter.limit("20/minute")
 async def recompute_lead_units(

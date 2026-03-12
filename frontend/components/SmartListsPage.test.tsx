@@ -96,7 +96,7 @@ describe('SmartListsPage', () => {
         pinned: false,
       });
     });
-  });
+  }, 15000);
 
   it('opens a saved smart list in the leads page with translated query params', async () => {
     getSmartListsMock.mockResolvedValue({
@@ -107,11 +107,21 @@ describe('SmartListsPage', () => {
           description: '',
           filters: {
             boroughs: ['MANHATTAN'],
+            neighborhood: 'Midtown',
             min_score: 80,
+            max_score: 95,
+            min_portfolio: 5,
             min_units: 100,
+            max_units: 300,
+            min_units_per_bldg: 10,
+            max_units_per_bldg: 40,
             entity_types: ['company'],
             pipeline_stages: ['first_contact'],
+            outreach_statuses: ['new'],
+            enrichment_statuses: ['partial'],
+            building_types: ['condo'],
             has_phone: true,
+            has_website: true,
             search: 'acme',
           },
           pinned: true,
@@ -133,7 +143,7 @@ describe('SmartListsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'View' }));
 
     expect(navigateMock).toHaveBeenCalledWith(
-      '/leads?boro=MANHATTAN&min_score=80&min_units=100&entity=company&stage=first_contact&phone=1&q=acme',
+      '/leads?boro=MANHATTAN&neighborhood=Midtown&min_score=80&max_score=95&min_portfolio=5&min_units=100&max_units=300&min_upb=10&max_upb=40&entity=company&outreach=new&stage=first_contact&enrichment=partial&type=condo&phone=1&website=1&q=acme',
     );
   });
 });

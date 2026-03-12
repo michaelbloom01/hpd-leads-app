@@ -11,13 +11,26 @@ import LeadKanban from './leads/LeadKanban';
 import { getLeadDisplayName, getLeadSecondaryName } from '../utils/leads';
 
 export interface LeadFilterPreset {
+  searchTerm?: string;
+  boroughs?: string[];
+  neighborhood?: string;
+  minScore?: string;
+  maxScore?: string;
   outreachStatuses?: string[];
   pipelineStages?: string[];
   enrichmentStatuses?: string[];
   entityTypes?: string[];
   minPortfolio?: string;
+  maxPortfolio?: string;
+  minUnits?: string;
+  maxUnits?: string;
+  minUnitsPerBldg?: string;
+  maxUnitsPerBldg?: string;
+  buildingTypes?: string[];
   hasPhone?: boolean;
   hasEmail?: boolean;
+  hasWebsite?: boolean;
+  searchMode?: 'leads' | 'address';
 }
 
 interface Props {
@@ -299,13 +312,26 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
   useEffect(() => {
     if (!filterPreset) return;
     applyPreset({
+      searchTerm: filterPreset.searchTerm || '',
+      boroughs: filterPreset.boroughs || [],
+      neighborhood: filterPreset.neighborhood || '',
+      minScore: filterPreset.minScore || '',
+      maxScore: filterPreset.maxScore || '',
       outreachStatuses: filterPreset.outreachStatuses || [],
       pipelineStages: filterPreset.pipelineStages || [],
       enrichmentStatuses: filterPreset.enrichmentStatuses || [],
       entityTypes: filterPreset.entityTypes || [],
       minPortfolio: filterPreset.minPortfolio || '',
+      maxPortfolio: filterPreset.maxPortfolio || '',
+      minUnits: filterPreset.minUnits || '',
+      maxUnits: filterPreset.maxUnits || '',
+      minUnitsPerBldg: filterPreset.minUnitsPerBldg || '',
+      maxUnitsPerBldg: filterPreset.maxUnitsPerBldg || '',
+      buildingTypes: filterPreset.buildingTypes || [],
       hasPhone: filterPreset.hasPhone ? true : null,
       hasEmail: filterPreset.hasEmail ? true : null,
+      hasWebsite: filterPreset.hasWebsite ? true : null,
+      searchMode: filterPreset.searchMode || 'leads',
     });
     onFilterPresetConsumed?.();
     if (page === 0) {
@@ -504,6 +530,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     if (filters.enrichmentStatuses.length > 0) smartFilters.enrichment_statuses = filters.enrichmentStatuses;
     if (filters.hasPhone) smartFilters.has_phone = true;
     if (filters.hasEmail) smartFilters.has_email = true;
+      if (filters.hasWebsite) smartFilters.has_website = true;
+      if (filters.minUnitsPerBldg) smartFilters.min_units_per_bldg = filters.minUnitsPerBldg;
+      if (filters.maxUnitsPerBldg) smartFilters.max_units_per_bldg = filters.maxUnitsPerBldg;
+      if (filters.buildingTypes.length > 0) smartFilters.building_types = filters.buildingTypes;
     if (filters.searchTerm.trim()) smartFilters.search = filters.searchTerm.trim();
     return smartFilters;
   }, [filters]);
@@ -515,9 +545,11 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     filters.buildingTypes.length > 0 ? `Types: ${filters.buildingTypes.join(', ')}` : null,
     filters.pipelineStages.length > 0 ? `Stages: ${filters.pipelineStages.join(', ')}` : null,
     filters.outreachStatuses.length > 0 ? `Outreach: ${filters.outreachStatuses.join(', ')}` : null,
+    filters.enrichmentStatuses.length > 0 ? `Enrichment: ${filters.enrichmentStatuses.join(', ')}` : null,
     filters.entityTypes.length > 0 ? `Entities: ${filters.entityTypes.join(', ')}` : null,
     filters.hasPhone ? 'Has phone' : null,
     filters.hasEmail ? 'Has email' : null,
+    filters.hasWebsite ? 'Has website' : null,
   ].filter(Boolean) as string[];
 
   const saveAsSmartList = async () => {
@@ -953,7 +985,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                 </div>
                 <div className="text-right">
                   <button
-                    onClick={() => navigate(`/buildings/${encodeURIComponent(String(b.building_id))}`)}
+                    onClick={() => navigate(`/buildings/${encodeURIComponent(String(b.bbl || b.building_id))}`)}
                     className="block text-xs text-gray-500 hover:text-gray-700 hover:underline mb-1"
                   >
                     Open building

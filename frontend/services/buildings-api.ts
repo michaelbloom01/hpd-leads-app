@@ -46,6 +46,9 @@ export interface BuildingRow {
   coordinate_source?: string | null;
   coordinate_precision?: string | null;
   current_lead_id: string | null;
+  current_link_count?: number | null;
+  current_link_lead_ids?: string[] | null;
+  current_link_conflict?: boolean;
   estimated_annual_revenue?: number | null;
   pm_company?: string | null;
 }
@@ -89,6 +92,9 @@ export interface BuildingDetail {
   coordinate_precision?: string | null;
   coordinates_updated_at?: string | null;
   current_lead_id: string | null;
+  current_link_count?: number | null;
+  current_link_lead_ids?: string[] | null;
+  current_link_conflict?: boolean;
   all_contacts?: BuildingContactEntry[];
   management_company?: string | null;
   corporate_owner?: string | null;
@@ -208,6 +214,12 @@ export function fetchHotBuildings(limit = 20): Promise<BuildingRow[]> {
 
 export function fetchBuildingDetail(bbl: string): Promise<BuildingDetail> {
   return apiGet(`/api/v1/buildings/${encodeURIComponent(String(bbl))}`);
+}
+
+export function requestBuildingDosContactsRefresh(
+  bbl: string,
+): Promise<{ status: string; bbl?: string; corporate_owner?: string | null; reason?: string | null; refresh_requested_at?: string | null }> {
+  return apiPost(`/api/v1/buildings/${encodeURIComponent(String(bbl))}/dos-contacts/refresh`);
 }
 
 export function fetchBuildingTimeline(bbl: string): Promise<TimelineEvent[]> {

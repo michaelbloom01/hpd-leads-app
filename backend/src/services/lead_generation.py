@@ -16,6 +16,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from src.db.session import get_sync_url
+from src.services.building_links import guarded_insert_current_links
 from src.transform.normalize import normalize_name, normalize_name_for_grouping
 
 logger = logging.getLogger(__name__)
@@ -239,7 +240,12 @@ def generate_leads(min_portfolio: int = 1) -> dict[str, int]:
 
         if building_count == 0:
             logger.error("No buildings found. Run ingestion first.")
-            return {"upserted": 0, "building_management_backfilled": 0, "total_leads": 0}
+            return {
+                "upserted": 0,
+                "building_management_backfilled": 0,
+                "building_management_conflicts": 0,
+                "total_leads": 0,
+            }
 
         logger.info("Aggregating buildings by agent/owner...")
         rows = session.execute(text("""
@@ -331,7 +337,12 @@ def generate_leads(min_portfolio: int = 1) -> dict[str, int]:
 
         if not collapsed:
             logger.warning("No leads generated. Check building_contacts data.")
-            return {"upserted": 0, "building_management_backfilled": 0, "total_leads": 0}
+            return {
+                "upserted": 0,
+                "building_management_backfilled": 0,
+                "building_management_conflicts": 0,
+                "total_leads": 0,
+            }
 
         inserted = 0
         now = datetime.now(timezone.utc)
@@ -436,36 +447,25 @@ def generate_leads(min_portfolio: int = 1) -> dict[str, int]:
 
         logger.info("Backfilling building_management from generated lead links...")
         bm_count = 0
+        bm_conflicts = 0
         try:
-            session.execute(text("CREATE TEMP TABLE tmp_lead_links (bbl TEXT, lead_id TEXT, role TEXT) ON COMMIT DROP"))
             link_rows: list[dict[str, str]] = []
             for lead in leads_list:
                 role = "agent" if lead.get("agent_name") else "owner"
                 for bbl in lead["bbl_set"]:
                     link_rows.append({"bbl": bbl, "lead_id": lead["lead_id"], "role": role})
 
-            if link_rows:
-                session.execute(
-                    text("INSERT INTO tmp_lead_links (bbl, lead_id, role) VALUES (:bbl, :lead_id, :role)"),
-                    link_rows,
-                )
-
-            bm_result = session.execute(text("""
-                INSERT INTO building_management (bbl, lead_id, role, is_current, created_at, updated_at)
-                SELECT DISTINCT ON (t.bbl, t.lead_id)
-                    t.bbl, t.lead_id, t.role, true, now(), now()
-                FROM tmp_lead_links t
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM building_management bm
-                    WHERE bm.bbl = t.bbl
-                      AND bm.lead_id = t.lead_id
-                      AND bm.is_current = true
-                )
-            """))
+            insert_result = guarded_insert_current_links(session, link_rows)
             session.commit()
-            bm_count = int(bm_result.rowcount or 0)
+            bm_count = int(insert_result["inserted"])
+            bm_conflicts = len(insert_result["conflicts"])
             logger.info("  building_management: %s rows backfilled", f"{bm_count:,}")
+            if bm_conflicts:
+                logger.warning(
+                    "  building_management conflicts skipped: %s sample=%s",
+                    bm_conflicts,
+                    insert_result["conflicts"][:10],
+                )
         except Exception as exc:
             session.rollback()
             logger.error("building_management backfill failed: %s", exc)
@@ -499,6 +499,7 @@ def generate_leads(min_portfolio: int = 1) -> dict[str, int]:
         return {
             "upserted": inserted,
             "building_management_backfilled": bm_count,
+            "building_management_conflicts": bm_conflicts,
             "total_leads": int(final_count or 0),
         }
     finally:

@@ -66,14 +66,28 @@ const summarizeFilters = (filters: Record<string, unknown> | null | undefined): 
   if (search) summary.push(`Search: ${search}`);
   const boroughs = Array.isArray(filters.boroughs) ? filters.boroughs : [];
   if (boroughs.length > 0) summary.push(`Boroughs: ${boroughs.join(', ')}`);
+  if (filters.neighborhood) summary.push(`Neighborhood: ${filters.neighborhood}`);
   if (filters.min_score) summary.push(`Min score: ${filters.min_score}`);
+  if (filters.max_score) summary.push(`Max score: ${filters.max_score}`);
+  if (filters.min_portfolio) summary.push(`Min buildings: ${filters.min_portfolio}`);
+  if (filters.max_portfolio) summary.push(`Max buildings: ${filters.max_portfolio}`);
   if (filters.min_units) summary.push(`Min units: ${filters.min_units}`);
+  if (filters.max_units) summary.push(`Max units: ${filters.max_units}`);
+  if (filters.min_units_per_bldg) summary.push(`Min units/bldg: ${filters.min_units_per_bldg}`);
+  if (filters.max_units_per_bldg) summary.push(`Max units/bldg: ${filters.max_units_per_bldg}`);
   const pipelineStages = Array.isArray(filters.pipeline_stages) ? filters.pipeline_stages : [];
   if (pipelineStages.length > 0) summary.push(`Stages: ${pipelineStages.join(', ')}`);
+  const outreachStatuses = Array.isArray(filters.outreach_statuses) ? filters.outreach_statuses : [];
+  if (outreachStatuses.length > 0) summary.push(`Outreach: ${outreachStatuses.join(', ')}`);
+  const enrichmentStatuses = Array.isArray(filters.enrichment_statuses) ? filters.enrichment_statuses : [];
+  if (enrichmentStatuses.length > 0) summary.push(`Enrichment: ${enrichmentStatuses.join(', ')}`);
   const entityTypes = Array.isArray(filters.entity_types) ? filters.entity_types : [];
   if (entityTypes.length > 0) summary.push(`Entities: ${entityTypes.join(', ')}`);
+  const buildingTypes = Array.isArray(filters.building_types) ? filters.building_types : [];
+  if (buildingTypes.length > 0) summary.push(`Types: ${buildingTypes.join(', ')}`);
   if (filters.has_phone) summary.push('Has phone');
   if (filters.has_email) summary.push('Has email');
+  if (filters.has_website) summary.push('Has website');
   return summary;
 };
 
@@ -225,16 +239,31 @@ const SmartListsPage: React.FC = () => {
     if (filters.max_portfolio) params.set('max_portfolio', String(filters.max_portfolio));
     if (filters.min_units) params.set('min_units', String(filters.min_units));
     if (filters.max_units) params.set('max_units', String(filters.max_units));
+    if (filters.min_units_per_bldg) params.set('min_upb', String(filters.min_units_per_bldg));
+    if (filters.max_units_per_bldg) params.set('max_upb', String(filters.max_units_per_bldg));
     if (filters.entity_types) {
       const ets = Array.isArray(filters.entity_types) ? filters.entity_types : String(filters.entity_types).split(',');
       if (ets.length > 0) params.set('entity', ets.join(','));
+    }
+    if (filters.outreach_statuses) {
+      const outreach = Array.isArray(filters.outreach_statuses) ? filters.outreach_statuses : String(filters.outreach_statuses).split(',');
+      if (outreach.length > 0) params.set('outreach', outreach.join(','));
     }
     if (filters.pipeline_stages) {
       const ps = Array.isArray(filters.pipeline_stages) ? filters.pipeline_stages : String(filters.pipeline_stages).split(',');
       if (ps.length > 0) params.set('stage', ps.join(','));
     }
+    if (filters.enrichment_statuses) {
+      const enrichment = Array.isArray(filters.enrichment_statuses) ? filters.enrichment_statuses : String(filters.enrichment_statuses).split(',');
+      if (enrichment.length > 0) params.set('enrichment', enrichment.join(','));
+    }
+    if (filters.building_types) {
+      const buildingTypes = Array.isArray(filters.building_types) ? filters.building_types : String(filters.building_types).split(',');
+      if (buildingTypes.length > 0) params.set('type', buildingTypes.join(','));
+    }
     if (filters.has_phone) params.set('phone', '1');
     if (filters.has_email) params.set('email', '1');
+    if (filters.has_website) params.set('website', '1');
     if (filters.search) params.set('q', String(filters.search));
     navigate(`/leads?${params.toString()}`);
   };

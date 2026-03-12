@@ -2,9 +2,10 @@
 
 Surfaces ingestion health for the Data Health Dashboard on the Settings page.
 """
+import json
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import text
@@ -57,6 +58,18 @@ def _pick_latest_quality_row(source: dict, latest_quality: dict[str, dict]) -> O
     if not matches:
         return None
     return max(matches, key=lambda row: row.get("run_timestamp") or datetime.min.replace(tzinfo=timezone.utc))
+
+
+def _parse_json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
 
 
 @router.get("/data-health")
@@ -224,6 +237,32 @@ async def data_health(session: AsyncSession = Depends(get_session)):
             "status": lg.get("status"),
         }
 
+    canonical_prep_row = (await session.execute(text("""
+        SELECT id, status, started_at, finished_at, config
+        FROM ingestion_jobs
+        WHERE job_type = 'entity_resolution'
+        ORDER BY started_at DESC NULLS LAST, id DESC
+        LIMIT 1
+    """))).first()
+    canonical_prep = None
+    if canonical_prep_row:
+        cp = dict(canonical_prep_row._mapping)
+        config = _parse_json_object(cp.get("config"))
+        preview = _parse_json_object(config.get("preview"))
+        canonical_prep = {
+            "job_id": int(cp.get("id")),
+            "status": cp.get("status"),
+            "started_at": cp.get("started_at").isoformat() if cp.get("started_at") else None,
+            "finished_at": cp.get("finished_at").isoformat() if cp.get("finished_at") else None,
+            "mode": config.get("mode"),
+            "dry_run": bool(config.get("dry_run", False)),
+            "confirm_execute": bool(config.get("confirm_execute", False)),
+            "cohort_filter": config.get("cohort_filter"),
+            "write_permitted": bool(config.get("write_permitted", False)),
+            "preview_counts": preview.get("counts"),
+            "guardrails": preview.get("guardrails"),
+        }
+
     staleness_result = await session.execute(text("""
         SELECT
             COALESCE(SUM(CASE WHEN l.updated_at >= NOW() - INTERVAL '7 days'  THEN 1 ELSE 0 END), 0) AS fresh,
@@ -267,6 +306,16 @@ async def data_health(session: AsyncSession = Depends(get_session)):
         warnings.append(
             f"{buildings_with_multiple_current_same_entity_links:,} buildings have duplicate current links to the same entity"
         )
+    if canonical_prep and canonical_prep.get("preview_counts"):
+        preview_counts = canonical_prep["preview_counts"] or {}
+        if int(preview_counts.get("review_required") or 0) > 0:
+            warnings.append(
+                f"{int(preview_counts.get('review_required') or 0):,} canonical clusters still require review"
+            )
+        if int(preview_counts.get("unresolved") or 0) > 0:
+            warnings.append(
+                f"{int(preview_counts.get('unresolved') or 0):,} canonical clusters remain unresolved"
+            )
 
     return {
         "total_leads": row["total_leads"],
@@ -297,6 +346,7 @@ async def data_health(session: AsyncSession = Depends(get_session)):
             if isinstance(last_lead_generation, dict)
             else None
         ),
+        "canonical_prep": canonical_prep,
         "warnings": warnings,
     }
 

@@ -5,6 +5,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
   PieChart, Pie,
 } from 'recharts';
+import type { LeadFilterPreset } from './LeadTable';
 import { 
   fetchLeads, 
   fetchStats,
@@ -36,16 +37,6 @@ import {
 } from '../utils/format';
 import { fetchBuildingStats, fetchBuildings, type BuildingStats, type BuildingOutreachStats, type BuildingRow } from '../services/buildings-api';
 import { getLeadDisplayName } from '../utils/leads';
-
-interface LeadFilterPreset {
-  outreachStatuses?: string[];
-  pipelineStages?: string[];
-  enrichmentStatuses?: string[];
-  entityTypes?: string[];
-  minPortfolio?: string;
-  hasPhone?: boolean;
-  hasEmail?: boolean;
-}
 
 interface DashboardProps {
   onSelectLead?: (lead: ApiLead) => void;
@@ -262,21 +253,37 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
   const handleOpenSmartListInLeads = (list: SmartList) => {
     const filters = list.filters as Record<string, unknown>;
     const preset: LeadFilterPreset = {};
+    const toStringArray = (value: unknown): string[] =>
+      Array.isArray(value)
+        ? value.map((item) => String(item).trim()).filter(Boolean)
+        : String(value || '')
+            .split(',')
+            .map((item) => item.trim())
+            .filter(Boolean);
+
+    if (filters.search) preset.searchTerm = String(filters.search).trim();
+    if (filters.boroughs) preset.boroughs = toStringArray(filters.boroughs);
+    if (filters.neighborhood) preset.neighborhood = String(filters.neighborhood);
+    if (filters.min_score) preset.minScore = String(filters.min_score);
+    if (filters.max_score) preset.maxScore = String(filters.max_score);
+    if (filters.min_portfolio) preset.minPortfolio = String(filters.min_portfolio);
+    if (filters.max_portfolio) preset.maxPortfolio = String(filters.max_portfolio);
+    if (filters.min_units) preset.minUnits = String(filters.min_units);
+    if (filters.max_units) preset.maxUnits = String(filters.max_units);
+    if (filters.min_units_per_bldg) preset.minUnitsPerBldg = String(filters.min_units_per_bldg);
+    if (filters.max_units_per_bldg) preset.maxUnitsPerBldg = String(filters.max_units_per_bldg);
     if (filters.pipeline_stages) {
-      const stages = Array.isArray(filters.pipeline_stages)
-        ? filters.pipeline_stages
-        : String(filters.pipeline_stages).split(",");
-      preset.pipelineStages = stages.map((s) => String(s).trim()).filter(Boolean);
+      preset.pipelineStages = toStringArray(filters.pipeline_stages);
     }
     if (filters.entity_types) {
-      const types = Array.isArray(filters.entity_types)
-        ? filters.entity_types
-        : String(filters.entity_types).split(",");
-      preset.entityTypes = types.map((t) => String(t).trim()).filter(Boolean);
+      preset.entityTypes = toStringArray(filters.entity_types);
     }
+    if (filters.outreach_statuses) preset.outreachStatuses = toStringArray(filters.outreach_statuses);
+    if (filters.enrichment_statuses) preset.enrichmentStatuses = toStringArray(filters.enrichment_statuses);
+    if (filters.building_types) preset.buildingTypes = toStringArray(filters.building_types);
     if (filters.has_phone) preset.hasPhone = true;
     if (filters.has_email) preset.hasEmail = true;
-    if (filters.min_portfolio) preset.minPortfolio = String(filters.min_portfolio);
+    if (filters.has_website) preset.hasWebsite = true;
     onNavigateToLeads?.(preset);
   };
 

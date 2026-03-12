@@ -244,18 +244,26 @@ def _get_dos_cache_payload_from_row(
     parsed_cached = _coerce_datetime(cached_at)
     is_fresh_cache = bool(parsed_cached and now - parsed_cached <= timedelta(days=DOS_CACHE_MAX_AGE_DAYS))
 
+    refresh_requested_at = _coerce_datetime((payload or {}).get("refresh_requested_at"))
+    refresh_in_cooldown = bool(
+        refresh_requested_at and now - refresh_requested_at <= timedelta(minutes=DOS_REFRESH_COOLDOWN_MINUTES)
+    )
+
     if payload is not None:
         if has_officers or has_ceo or has_dos_id:
             if is_fresh_cache:
                 return payload, "loaded", cached_at_iso
+            if refresh_in_cooldown:
+                return payload, "refreshing", cached_at_iso
             return payload, "stale", cached_at_iso
         if has_lookup_attempt:
             if is_fresh_cache:
                 return payload, "no_match", cached_at_iso
+            if refresh_in_cooldown:
+                return payload, "refreshing", cached_at_iso
             return payload, "stale", cached_at_iso
 
-    refresh_requested_at = _coerce_datetime((payload or {}).get("refresh_requested_at"))
-    if refresh_requested_at and now - refresh_requested_at <= timedelta(minutes=DOS_REFRESH_COOLDOWN_MINUTES):
+    if refresh_in_cooldown:
         return payload, "refreshing", cached_at_iso
 
     if parsed_cached and now - parsed_cached <= timedelta(days=DOS_CACHE_MAX_AGE_DAYS):
