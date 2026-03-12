@@ -55,6 +55,15 @@ JUNK_TOKENS = {
     "TRUSTEE",
 }
 
+BUILDING_TYPE_KEYS = (
+    "condo",
+    "coop",
+    "rental_elevator",
+    "rental_walkup",
+    "small_residential",
+    "other",
+)
+
 
 def make_lead_id(name: str) -> str:
     """Stable lead ID from normalized name. Max 12 chars to match DB schema."""
@@ -96,10 +105,63 @@ def _display_name_for_group(raw_name: str) -> str:
     return normalize_name(raw_name)
 
 
+def _coerce_portfolio_value(item: Any, key: str) -> Any:
+    if isinstance(item, dict):
+        return item.get(key)
+    return getattr(item, key, None)
+
+
+def classify_building_type(raw_type: Any) -> str:
+    value = str(raw_type or "").lower()
+    if "condo" in value:
+        return "condo"
+    if "coop" in value or "co-op" in value:
+        return "coop"
+    if "elevator" in value:
+        return "rental_elevator"
+    if "walkup" in value or "walk-up" in value:
+        return "rental_walkup"
+    if "small" in value:
+        return "small_residential"
+    return "other"
+
+
+def summarize_portfolio_building_types(
+    portfolio: list[Any],
+    *,
+    total_buildings: int | None = None,
+) -> tuple[dict[str, int], dict[str, int]]:
+    type_counts = {key: 0 for key in BUILDING_TYPE_KEYS}
+    type_units = {key: 0 for key in BUILDING_TYPE_KEYS}
+
+    for item in portfolio:
+        category = classify_building_type(_coerce_portfolio_value(item, "building_type"))
+        type_counts[category] += 1
+        type_units[category] += int(_coerce_portfolio_value(item, "unit_count") or 0)
+
+    total = len(portfolio) if total_buildings is None else int(total_buildings or 0)
+    return (
+        {
+            **type_counts,
+            "unknown": 0,
+            "total": total,
+            "total_rental": (
+                type_counts["rental_elevator"]
+                + type_counts["rental_walkup"]
+                + type_counts["small_residential"]
+            ),
+        },
+        type_units,
+    )
+
+
 def _merge_lead_records(target: dict[str, Any], incoming: dict[str, Any]) -> None:
     target["bbl_set"].update(incoming.get("bbl_set", set()))
     target["address_set"].update(incoming.get("address_set", set()))
     target["unit_counts_by_bbl"].update(incoming.get("unit_counts_by_bbl", {}))
+    target.setdefault("building_type_by_bbl", {}).update(
+        incoming.get("building_type_by_bbl", {})
+    )
     target["unit_count_total"] = sum(target["unit_counts_by_bbl"].values())
     target["building_classes"].extend(incoming.get("building_classes", []))
 
@@ -195,6 +257,7 @@ def generate_leads(min_portfolio: int = 1) -> dict[str, int]:
                 b.borough,
                 b.unit_count,
                 b.building_class,
+                b.building_type,
                 b.year_built,
                 b.assessed_value
             FROM building_contacts bc
@@ -233,6 +296,7 @@ def generate_leads(min_portfolio: int = 1) -> dict[str, int]:
                     "address_set": set(),
                     "unit_counts_by_bbl": {},
                     "unit_count_total": 0,
+                    "building_type_by_bbl": {},
                     "building_classes": [],
                 }
 
@@ -242,6 +306,7 @@ def generate_leads(min_portfolio: int = 1) -> dict[str, int]:
             if bbl not in lead["bbl_set"]:
                 lead["bbl_set"].add(bbl)
                 lead["unit_counts_by_bbl"][bbl] = row.unit_count or 0
+                lead["building_type_by_bbl"][bbl] = row.building_type or ""
                 lead["unit_count_total"] = sum(lead["unit_counts_by_bbl"].values())
                 if row.address:
                     lead["address_set"].add(row.address)
@@ -282,6 +347,16 @@ def generate_leads(min_portfolio: int = 1) -> dict[str, int]:
             total_units = lead["unit_count_total"]
             primary_borough = max(lead["boroughs"], key=lead["boroughs"].get) if lead["boroughs"] else None
             score = compute_score(portfolio_size, total_units)
+            building_types, _ = summarize_portfolio_building_types(
+                [
+                    {
+                        "building_type": raw_type,
+                        "unit_count": lead["unit_counts_by_bbl"].get(bbl, 0),
+                    }
+                    for bbl, raw_type in lead.get("building_type_by_bbl", {}).items()
+                ],
+                total_buildings=portfolio_size,
+            )
 
             db_batch.append({
                 "lead_id": lead["lead_id"],
@@ -298,6 +373,7 @@ def generate_leads(min_portfolio: int = 1) -> dict[str, int]:
                 "score_breakdown": _json.dumps({"components": {}}),
                 "buildings": _json.dumps(sorted(lead["address_set"])),
                 "boros": _json.dumps(sorted(lead["boroughs"].keys())),
+                "building_types": _json.dumps(building_types),
                 "enrichment_status": "none",
                 "pipeline_stage": "research",
                 "outreach_status": "new",
@@ -311,14 +387,14 @@ def generate_leads(min_portfolio: int = 1) -> dict[str, int]:
                 lead_id, normalized_name, agent_name, owner_name,
                 company_name, entity_type, address, primary_borough,
                 portfolio_size, total_units, score, score_breakdown, buildings,
-                boros, enrichment_status, pipeline_stage,
+                boros, building_types, enrichment_status, pipeline_stage,
                 outreach_status, priority_rank,
                 created_at, updated_at
             ) VALUES (
                 :lead_id, :normalized_name, :agent_name, :owner_name,
                 :company_name, :entity_type, :address, :primary_borough,
                 :portfolio_size, :total_units, :score, CAST(:score_breakdown AS JSONB), CAST(:buildings AS JSONB),
-                CAST(:boros AS JSONB), :enrichment_status, :pipeline_stage,
+                CAST(:boros AS JSONB), CAST(:building_types AS JSONB), :enrichment_status, :pipeline_stage,
                 :outreach_status, :priority_rank,
                 :created_at, :updated_at
             ) ON CONFLICT (lead_id) DO UPDATE SET
@@ -334,6 +410,7 @@ def generate_leads(min_portfolio: int = 1) -> dict[str, int]:
                 primary_borough = EXCLUDED.primary_borough,
                 buildings = EXCLUDED.buildings,
                 boros = EXCLUDED.boros,
+                building_types = EXCLUDED.building_types,
                 updated_at = EXCLUDED.updated_at
         """)
 

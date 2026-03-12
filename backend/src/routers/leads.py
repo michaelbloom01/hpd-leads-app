@@ -3,6 +3,7 @@
 Migrated to PostgreSQL (AsyncSession). The PE Searcher persona uses these
 endpoints to evaluate PM companies as acquisition targets.
 """
+import asyncio
 import json
 import logging
 import time
@@ -17,8 +18,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.session import get_session
 from src.auth.auth import AuthUser, get_current_user
-from src.schemas.requests import UpdateLeadRequest, OutreachEventRequest, OutreachAttemptRequest
+from src.schemas.requests import (
+    BatchPipelineStageUpdateRequest,
+    EnrichmentRequest,
+    UpdateLeadRequest,
+    OutreachEventRequest,
+    OutreachAttemptRequest,
+)
 from src.services.contact_roster import get_lead_contacts
+from src.services.lead_generation import summarize_portfolio_building_types
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["leads"])
@@ -33,7 +41,31 @@ ALLOWED_SORT_COLS = {
 
 SORT_COL_EXPRESSIONS = {
     "units_per_bldg": "CASE WHEN portfolio_size > 0 THEN total_units::float / portfolio_size ELSE 0 END",
+    "boro": "primary_borough",
 }
+
+DISPLAY_NAME_KEY_SQL = """
+UPPER(TRIM(COALESCE(
+    NULLIF(company_name, ''),
+    NULLIF(agent_name, ''),
+    NULLIF(owner_name, ''),
+    NULLIF(primary_contact, ''),
+    lead_id
+)))
+""".strip()
+
+PIPELINE_STAGE_PRIORITY_SQL = """
+CASE
+    WHEN pipeline_stage = 'due_diligence' THEN 70
+    WHEN pipeline_stage = 'loi' THEN 60
+    WHEN pipeline_stage = 'meeting_done' THEN 50
+    WHEN pipeline_stage = 'meeting_scheduled' THEN 40
+    WHEN pipeline_stage = 'follow_up' THEN 30
+    WHEN pipeline_stage = 'first_contact' THEN 20
+    WHEN pipeline_stage = 'closed' THEN 15
+    ELSE 10
+END
+""".strip()
 
 SNAPSHOT_SYNC_MIN_INTERVAL_SECONDS = 15 * 60
 _last_snapshot_sync_ts = 0.0
@@ -202,6 +234,7 @@ async def get_leads(
     min_portfolio: Optional[int] = Query(None, le=10000),
     max_portfolio: Optional[int] = Query(None, le=10000),
     boro: Optional[str] = Query(None, max_length=100),
+    neighborhood: Optional[str] = Query(None, max_length=120),
     has_phone: Optional[bool] = Query(None),
     has_email: Optional[bool] = Query(None),
     has_website: Optional[bool] = Query(None),
@@ -240,15 +273,40 @@ async def get_leads(
         wheres.append("portfolio_size <= :max_portfolio")
         params["max_portfolio"] = max_portfolio
     if boro:
-        boro_list = [b.strip() for b in boro.split(",") if b.strip()]
-        if len(boro_list) == 1:
-            wheres.append("primary_borough = :boro_0")
-            params["boro_0"] = boro_list[0]
-        elif boro_list:
-            placeholders = ", ".join(f":boro_{i}" for i in range(len(boro_list)))
-            wheres.append(f"primary_borough IN ({placeholders})")
-            for i, b in enumerate(boro_list):
-                params[f"boro_{i}"] = b
+        boro_list = [b.strip().upper() for b in boro.split(",") if b.strip()]
+        if boro_list:
+            boro_clauses: list[str] = []
+            for i, value in enumerate(boro_list):
+                key = f"boro_{i}"
+                params[key] = value
+                boro_clauses.append(f"""
+                    primary_borough = :{key}
+                    OR COALESCE(boros, '[]'::jsonb) ? :{key}
+                    OR EXISTS (
+                        SELECT 1
+                        FROM building_management bm
+                        JOIN buildings b ON b.bbl = bm.bbl
+                        WHERE bm.lead_id = leads.lead_id
+                          AND bm.is_current = true
+                          AND UPPER(COALESCE(b.borough, '')) = :{key}
+                    )
+                """)
+            wheres.append(f"({' OR '.join(f'({clause.strip()})' for clause in boro_clauses)})")
+    if neighborhood:
+        wheres.append("""
+            EXISTS (
+                SELECT 1
+                FROM building_management bm
+                JOIN buildings b ON b.bbl = bm.bbl
+                WHERE bm.lead_id = leads.lead_id
+                  AND bm.is_current = true
+                  AND (
+                      COALESCE(b.nta, '') ILIKE :neighborhood
+                      OR COALESCE(b.community_board, '') ILIKE :neighborhood
+                  )
+            )
+        """)
+        params["neighborhood"] = f"%{neighborhood.strip()}%"
     if has_phone is not None:
         wheres.append("phone IS NOT NULL AND phone != ''" if has_phone else "(phone IS NULL OR phone = '')")
     if has_email is not None:
@@ -293,10 +351,22 @@ async def get_leads(
         params["max_upb"] = max_units_per_bldg
     if building_type_has:
         for i, btype in enumerate(building_type_has.split(",")):
-            btype = btype.strip()
+            btype = btype.strip().lower()
             if btype:
                 key = f"btype_{i}"
-                wheres.append(f"COALESCE((building_types->>:{key})::int, 0) > 0")
+                wheres.append(f"""
+                    (
+                        COALESCE((building_types->>:{key})::int, 0) > 0
+                        OR EXISTS (
+                            SELECT 1
+                            FROM building_management bm
+                            JOIN buildings b ON b.bbl = bm.bbl
+                            WHERE bm.lead_id = leads.lead_id
+                              AND bm.is_current = true
+                              AND LOWER(COALESCE(b.building_type, '')) = :{key}
+                        )
+                    )
+                """)
                 params[key] = btype
     if search:
         wheres.append("""
@@ -334,17 +404,55 @@ async def get_leads(
         sort_col = "score"
     sort_direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
 
+    dedupe_cte_sql = f"""
+        WITH filtered_leads AS (
+            SELECT
+                leads.*,
+                {DISPLAY_NAME_KEY_SQL} AS display_name_key
+            FROM leads
+            WHERE {where_sql}
+        ),
+        ranked_leads AS (
+            SELECT
+                filtered_leads.*,
+                ROW_NUMBER() OVER (
+                    PARTITION BY CASE
+                        WHEN display_name_key <> UPPER(TRIM(lead_id))
+                         AND EXISTS (
+                            SELECT 1
+                            FROM filtered_leads dup
+                            WHERE dup.lead_id <> filtered_leads.lead_id
+                              AND dup.display_name_key = filtered_leads.display_name_key
+                         )
+                        THEN display_name_key
+                        ELSE lead_id
+                    END
+                    ORDER BY
+                        {PIPELINE_STAGE_PRIORITY_SQL} DESC,
+                        CASE WHEN next_follow_up IS NOT NULL THEN 1 ELSE 0 END DESC,
+                        COALESCE(priority_rank, 0) DESC,
+                        CASE WHEN COALESCE(NULLIF(TRIM(notes), ''), '') <> '' THEN 1 ELSE 0 END DESC,
+                        COALESCE(score, 0) DESC,
+                        COALESCE(portfolio_size, 0) DESC,
+                        updated_at DESC NULLS LAST,
+                        lead_id ASC
+                ) AS dedupe_rank
+            FROM filtered_leads
+        )
+    """
+
     count_result = await session.execute(
-        text(f"SELECT COUNT(*) FROM leads WHERE {where_sql}"),
+        text(f"{dedupe_cte_sql} SELECT COUNT(*) FROM ranked_leads WHERE dedupe_rank = 1"),
         params,
     )
     total = count_result.scalar() or 0
 
     result = await session.execute(
         text(f"""
+            {dedupe_cte_sql}
             SELECT *
-            FROM leads
-            WHERE {where_sql}
+            FROM ranked_leads
+            WHERE dedupe_rank = 1
             ORDER BY {sort_col} {sort_direction} NULLS LAST
             LIMIT :limit OFFSET :offset
         """),
@@ -446,30 +554,19 @@ async def get_lead(request: Request, lead_id: str, session: AsyncSession = Depen
         addresses = [p["address"] for p in portfolio if p.get("address")]
         linked_units = sum(int(p.get("unit_count") or 0) for p in portfolio)
         linked_boros = sorted({str(p.get("borough")).upper() for p in portfolio if p.get("borough")})
-        type_counts = {
-            "condo": 0, "coop": 0, "rental_elevator": 0, "rental_walkup": 0,
-            "small_residential": 0, "other": 0,
-        }
-        type_units = {
-            "condo": 0, "coop": 0, "rental_elevator": 0, "rental_walkup": 0,
-            "small_residential": 0, "other": 0,
-        }
-        for p in portfolio:
-            raw_type = str(p.get("building_type") or "").lower()
-            if "condo" in raw_type:
-                t = "condo"
-            elif "coop" in raw_type or "co-op" in raw_type:
-                t = "coop"
-            elif "elevator" in raw_type:
-                t = "rental_elevator"
-            elif "walkup" in raw_type or "walk-up" in raw_type:
-                t = "rental_walkup"
-            elif "small" in raw_type:
-                t = "small_residential"
-            else:
-                t = "other"
-            type_counts[t] += 1
-            type_units[t] += int(p.get("unit_count") or 0)
+        existing_building_types = lead_data.get("building_types") or {}
+        if isinstance(existing_building_types, str):
+            try:
+                parsed = json.loads(existing_building_types)
+                existing_building_types = parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                existing_building_types = {}
+        if not isinstance(existing_building_types, dict):
+            existing_building_types = {}
+        building_types, type_units = summarize_portfolio_building_types(
+            portfolio,
+            total_buildings=len(addresses) or int(lead_data.get("portfolio_size") or 0),
+        )
 
         if not lead_data.get("buildings"):
             lead_data["buildings"] = addresses
@@ -480,12 +577,7 @@ async def get_lead(request: Request, lead_id: str, session: AsyncSession = Depen
             lead_data["boros"] = linked_boros
         if linked_boros and not lead_data.get("primary_borough"):
             lead_data["primary_borough"] = linked_boros[0]
-        lead_data["building_types"] = {
-            **type_counts,
-            "unknown": 0,
-            "total": int(lead_data.get("portfolio_size") or 0),
-            "total_rental": type_counts["rental_elevator"] + type_counts["rental_walkup"] + type_counts["small_residential"],
-        }
+        lead_data["building_types"] = building_types
         lead_data["_type_units_for_revenue"] = type_units
 
         existing_buildings = lead_data.get("buildings") or []
@@ -505,6 +597,7 @@ async def get_lead(request: Request, lead_id: str, session: AsyncSession = Depen
                 or int(lead_data.get("total_units") or 0) != int(linked_units)
                 or int(lead_data.get("portfolio_size") or 0) != int(len(addresses))
                 or int(lead_data.get("total_units") or 0) <= 0 < linked_units
+                or existing_building_types != building_types
             )
         )
 
@@ -516,6 +609,7 @@ async def get_lead(request: Request, lead_id: str, session: AsyncSession = Depen
                         portfolio_size = :portfolio_size,
                         total_units = :total_units,
                         boros = CAST(:boros AS JSONB),
+                        building_types = CAST(:building_types AS JSONB),
                         primary_borough = :primary_borough,
                         updated_at = NOW()
                     WHERE lead_id = :lid
@@ -526,6 +620,7 @@ async def get_lead(request: Request, lead_id: str, session: AsyncSession = Depen
                     "portfolio_size": int(lead_data.get("portfolio_size") or 0),
                     "total_units": int(lead_data.get("total_units") or 0),
                     "boros": json.dumps(lead_data.get("boros") or []),
+                    "building_types": json.dumps(building_types),
                     "primary_borough": lead_data.get("primary_borough"),
                 },
             )
@@ -702,7 +797,7 @@ async def get_lead_lineage(
 ):
     lead_row = (await session.execute(
         text("""
-            SELECT lead_id, company_name, agent_name, owner_name, updated_at, enrichment_sources
+            SELECT lead_id, company_name, agent_name, owner_name, primary_contact, updated_at, enrichment_sources
             FROM leads
             WHERE lead_id = :lid
         """),
@@ -712,6 +807,13 @@ async def get_lead_lineage(
         raise HTTPException(status_code=404, detail="Lead not found")
 
     lead_data = dict(lead_row._mapping)
+    display_name_key = str(
+        lead_data.get("company_name")
+        or lead_data.get("agent_name")
+        or lead_data.get("owner_name")
+        or lead_data.get("primary_contact")
+        or lead_id
+    ).strip().upper()
     linked_buildings = int((await session.execute(
         text("""
             SELECT COUNT(DISTINCT bbl)
@@ -724,6 +826,7 @@ async def get_lead_lineage(
     building_scope_missing = "no linked buildings for lead" if linked_buildings == 0 else None
 
     source_rows = []
+    sibling_rows = []
 
     def append_source(source_name: str, record_count: int, last_updated, mapped_fields: list[str], missing_reason: Optional[str]) -> None:
         source_rows.append({
@@ -810,12 +913,41 @@ async def get_lead_lineage(
         "lead has not been enriched yet" if len(enrichment_sources) == 0 else None,
     )
 
+    if display_name_key and display_name_key != lead_id.upper():
+        sibling_result = await session.execute(
+            text(f"""
+                SELECT
+                    lead_id,
+                    COALESCE(NULLIF(company_name, ''), NULLIF(agent_name, ''), NULLIF(owner_name, ''), NULLIF(primary_contact, ''), lead_id) AS entity_name,
+                    pipeline_stage,
+                    outreach_status,
+                    updated_at
+                FROM leads
+                WHERE lead_id <> :lid
+                  AND {DISPLAY_NAME_KEY_SQL} = :display_name_key
+                ORDER BY updated_at DESC NULLS LAST, lead_id ASC
+            """),
+            {"lid": lead_id, "display_name_key": display_name_key},
+        )
+        sibling_rows = [
+            {
+                "lead_id": row.lead_id,
+                "entity_name": row.entity_name,
+                "pipeline_stage": row.pipeline_stage,
+                "outreach_status": row.outreach_status,
+                "last_updated": row.updated_at.isoformat() if row.updated_at else None,
+            }
+            for row in sibling_result
+        ]
+
     return {
         "lead_id": lead_id,
         "entity_name": lead_data.get("company_name") or lead_data.get("agent_name") or lead_data.get("owner_name") or "",
         "last_updated": lead_data.get("updated_at").isoformat() if lead_data.get("updated_at") else None,
         "linked_buildings": linked_buildings,
         "sources": source_rows,
+        "sibling_count": len(sibling_rows),
+        "sibling_leads": sibling_rows,
     }
 
 
@@ -935,6 +1067,116 @@ async def update_lead(
         "next_follow_up": str(row["next_follow_up"]) if row.get("next_follow_up") else None,
         "priority_rank": row.get("priority_rank"),
         "notes": row.get("notes"),
+    }
+
+
+@router.patch("/lead-batches/pipeline-stage")
+@limiter.limit("20/minute")
+async def update_leads_pipeline_stage_batch(
+    request: Request,
+    body: BatchPipelineStageUpdateRequest,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    valid_stages = {
+        "research", "first_contact", "follow_up", "meeting_scheduled",
+        "meeting_done", "loi", "due_diligence", "closed",
+    }
+    if body.pipeline_stage not in valid_stages:
+        raise HTTPException(400, f"Invalid pipeline stage. Must be one of: {', '.join(valid_stages)}")
+
+    lead_ids = [lead_id.strip() for lead_id in body.lead_ids if str(lead_id).strip()]
+    if not lead_ids:
+        raise HTTPException(400, "lead_ids must contain at least one lead id")
+
+    placeholders = ", ".join(f":lid_{i}" for i in range(len(lead_ids)))
+    params = {"ps": body.pipeline_stage}
+    for i, lead_id in enumerate(lead_ids):
+        params[f"lid_{i}"] = lead_id
+
+    existing_rows = await session.execute(
+        text(f"SELECT lead_id FROM leads WHERE lead_id IN ({placeholders})"),
+        params,
+    )
+    found_ids = {str(row[0]) for row in existing_rows.fetchall()}
+    missing_ids = [lead_id for lead_id in lead_ids if lead_id not in found_ids]
+    if not found_ids:
+        raise HTTPException(404, "No matching leads found")
+
+    await session.execute(
+        text(f"""
+            UPDATE leads
+            SET pipeline_stage = :ps,
+                updated_at = NOW()
+            WHERE lead_id IN ({placeholders})
+        """),
+        params,
+    )
+    await session.commit()
+
+    return {
+        "status": "success",
+        "pipeline_stage": body.pipeline_stage,
+        "updated_count": len(found_ids),
+        "missing_lead_ids": missing_ids,
+    }
+
+
+@router.post("/lead-batches/enrichment")
+@limiter.limit("10/minute")
+async def start_selected_leads_enrichment(
+    request: Request,
+    body: EnrichmentRequest,
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    lead_ids = [lead_id.strip() for lead_id in body.lead_ids if str(lead_id).strip()]
+    if not lead_ids:
+        raise HTTPException(400, "lead_ids must contain at least one lead id")
+
+    deduped_lead_ids = list(dict.fromkeys(lead_ids))
+    placeholders = ", ".join(f":lid_{i}" for i in range(len(deduped_lead_ids)))
+    params = {f"lid_{i}": lead_id for i, lead_id in enumerate(deduped_lead_ids)}
+
+    existing_rows = await session.execute(
+        text(f"SELECT lead_id FROM leads WHERE lead_id IN ({placeholders})"),
+        params,
+    )
+    found_ids = {str(row[0]) for row in existing_rows.fetchall()}
+    missing_ids = [lead_id for lead_id in deduped_lead_ids if lead_id not in found_ids]
+    selected_lead_ids = [lead_id for lead_id in deduped_lead_ids if lead_id in found_ids]
+    if not selected_lead_ids:
+        raise HTTPException(404, "No matching leads found")
+
+    job_result = await session.execute(
+        text("""INSERT INTO ingestion_jobs (job_type, source, status, started_at, created_at, updated_at)
+                VALUES ('enrichment', 'enrichment_selected', 'queued', now(), now(), now()) RETURNING id""")
+    )
+    job_id = job_result.scalar_one()
+    await session.commit()
+
+    dispatch_mode = "celery"
+    try:
+        from src.tasks.enrich import run_enrichment_job
+        run_enrichment_job.delay(job_id=job_id, limit=len(selected_lead_ids), lead_ids=selected_lead_ids)
+    except Exception as exc:
+        logger.warning(
+            "Celery dispatch failed for selected enrichment job %s, falling back to in-process execution: %s",
+            job_id,
+            exc,
+        )
+        from src.tasks.enrich import _run_enrichment_job_async
+        asyncio.create_task(
+            _run_enrichment_job_async(job_id=job_id, limit=len(selected_lead_ids), lead_ids=selected_lead_ids)
+        )
+        dispatch_mode = "in_process"
+
+    return {
+        "status": "queued",
+        "job_id": job_id,
+        "target_count": len(selected_lead_ids),
+        "missing_lead_ids": missing_ids,
+        "dispatch_mode": dispatch_mode,
     }
 
 

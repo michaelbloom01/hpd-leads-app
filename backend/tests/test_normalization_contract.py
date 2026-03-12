@@ -4,6 +4,7 @@ from src.routers.leads import _row_to_response
 from src.services.lead_generation import (
     _collapse_duplicate_company_leads,
     _is_probably_junk_name,
+    summarize_portfolio_building_types,
 )
 from src.transform.normalize import normalize_name, normalize_name_for_grouping
 
@@ -95,6 +96,37 @@ def test_row_to_response_parses_json_like_fields():
     assert payload["revenue_breakdown"] == [{"label": "x"}]
 
 
+def test_summarize_portfolio_building_types_matches_ui_categories():
+    building_types, type_units = summarize_portfolio_building_types(
+        [
+            {"building_type": "Condo", "unit_count": 10},
+            {"building_type": "Co-op", "unit_count": 20},
+            {"building_type": "Rental Elevator", "unit_count": 30},
+            {"building_type": "Rental Walk-Up", "unit_count": 8},
+            {"building_type": "Small Residential", "unit_count": 3},
+            {"building_type": "", "unit_count": 1},
+        ]
+    )
+
+    assert building_types == {
+        "condo": 1,
+        "coop": 1,
+        "rental_elevator": 1,
+        "rental_walkup": 1,
+        "small_residential": 1,
+        "other": 1,
+        "unknown": 0,
+        "total": 6,
+        "total_rental": 3,
+    }
+    assert type_units["condo"] == 10
+    assert type_units["coop"] == 20
+    assert type_units["rental_elevator"] == 30
+    assert type_units["rental_walkup"] == 8
+    assert type_units["small_residential"] == 3
+    assert type_units["other"] == 1
+
+
 def test_leads_search_query_does_not_partition_by_normalized_name():
     """
     Regression guard: search results should not be deduped by normalized_name.
@@ -103,6 +135,14 @@ def test_leads_search_query_does_not_partition_by_normalized_name():
     leads_router = Path(__file__).resolve().parents[1] / "src" / "routers" / "leads.py"
     source = leads_router.read_text(encoding="utf-8")
     assert "PARTITION BY COALESCE(NULLIF(normalized_name, ''), lead_id)" not in source
+
+
+def test_generate_leads_persists_building_types_snapshot():
+    lead_generation = Path(__file__).resolve().parents[1] / "src" / "services" / "lead_generation.py"
+    source = lead_generation.read_text(encoding="utf-8")
+    assert "building_types" in source
+    assert "CAST(:building_types AS JSONB)" in source
+    assert "building_types = EXCLUDED.building_types" in source
 
 
 def test_admin_recompute_portfolio_uses_building_management():

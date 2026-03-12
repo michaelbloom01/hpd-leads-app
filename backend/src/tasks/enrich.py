@@ -28,13 +28,14 @@ def _job_status_from_counts(succeeded: int, failed: int) -> str:
     return "succeeded"
 
 
-async def _run_enrichment_job_async(job_id: int, limit: int) -> dict[str, Any]:
+async def _run_enrichment_job_async(job_id: int, limit: int, lead_ids: list[str] | None = None) -> dict[str, Any]:
     from sqlalchemy import text
     from src.db.session import get_session_factory
     from src.routers.leads import enrich_lead_all_core
 
     session_factory = get_session_factory()
     safe_limit = max(1, int(limit or 1))
+    requested_lead_ids = [str(lead_id).strip() for lead_id in (lead_ids or []) if str(lead_id).strip()]
 
     async with session_factory() as session:
         await session.execute(
@@ -51,18 +52,33 @@ async def _run_enrichment_job_async(job_id: int, limit: int) -> dict[str, Any]:
             """),
             {"job_id": job_id},
         )
-        result = await session.execute(
-            text("""
-                SELECT lead_id
-                FROM leads
-                WHERE COALESCE(enrichment_status, 'none') IN ('none', 'pending', 'failed')
-                ORDER BY score DESC NULLS LAST, updated_at ASC NULLS FIRST
-                LIMIT :limit
-            """),
-            {"limit": safe_limit},
-        )
-        lead_ids = [r[0] for r in result.fetchall()]
-        total = len(lead_ids)
+        if requested_lead_ids:
+            requested_unique_ids = list(dict.fromkeys(requested_lead_ids))
+            placeholders = ", ".join(f":lid_{i}" for i in range(len(requested_unique_ids)))
+            params = {f"lid_{i}": lead_id for i, lead_id in enumerate(requested_unique_ids)}
+            result = await session.execute(
+                text(f"""
+                    SELECT lead_id
+                    FROM leads
+                    WHERE lead_id IN ({placeholders})
+                    ORDER BY score DESC NULLS LAST, updated_at ASC NULLS FIRST
+                """),
+                params,
+            )
+            target_lead_ids = [r[0] for r in result.fetchall()]
+        else:
+            result = await session.execute(
+                text("""
+                    SELECT lead_id
+                    FROM leads
+                    WHERE COALESCE(enrichment_status, 'none') IN ('none', 'pending', 'failed')
+                    ORDER BY score DESC NULLS LAST, updated_at ASC NULLS FIRST
+                    LIMIT :limit
+                """),
+                {"limit": safe_limit},
+            )
+            target_lead_ids = [r[0] for r in result.fetchall()]
+        total = len(target_lead_ids)
         await session.execute(
             text("""
                 UPDATE ingestion_jobs
@@ -78,7 +94,7 @@ async def _run_enrichment_job_async(job_id: int, limit: int) -> dict[str, Any]:
     failed = 0
     last_error: str | None = None
 
-    for lead_id in lead_ids:
+    for lead_id in target_lead_ids:
         async with session_factory() as session:
             try:
                 await enrich_lead_all_core(lead_id=lead_id, session=session)
@@ -138,7 +154,7 @@ async def _run_enrichment_job_async(job_id: int, limit: int) -> dict[str, Any]:
     return {
         "job_id": job_id,
         "status": _job_status_from_counts(succeeded=succeeded, failed=failed),
-        "total": len(lead_ids),
+        "total": len(target_lead_ids),
         "processed": processed,
         "succeeded": succeeded,
         "failed": failed,
@@ -146,9 +162,9 @@ async def _run_enrichment_job_async(job_id: int, limit: int) -> dict[str, Any]:
 
 
 @celery_app.task(bind=True, name="src.tasks.enrich.run_enrichment_job")
-def run_enrichment_job(self, job_id: int, limit: int = 500):
+def run_enrichment_job(self, job_id: int, limit: int = 500, lead_ids: list[str] | None = None):
     """Run batch enrichment for top leads and update ingestion_jobs lifecycle."""
-    return asyncio.run(_run_enrichment_job_async(job_id=job_id, limit=limit))
+    return asyncio.run(_run_enrichment_job_async(job_id=job_id, limit=limit, lead_ids=lead_ids))
 
 
 def _build_dos_cache_payload(corporate_owner_name: str, dos_entity: Any, officers: list[dict[str, Any]]) -> dict[str, Any]:

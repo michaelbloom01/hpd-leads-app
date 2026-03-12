@@ -27,6 +27,12 @@ class UpdateLeadRequest(BaseModel):
     priority_rank: Optional[int] = None
 
 
+class BatchPipelineStageUpdateRequest(BaseModel):
+    """Request to update pipeline stage for multiple leads."""
+    lead_ids: List[str]
+    pipeline_stage: str
+
+
 class OutreachEventRequest(BaseModel):
     """Request to log an outreach event (Phase 5.3)."""
     stage: str
