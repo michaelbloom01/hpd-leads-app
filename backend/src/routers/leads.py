@@ -51,13 +51,16 @@ LIVE_UNITS_PER_BUILDING_SQL = (
     f"THEN {LIVE_TOTAL_UNITS_SQL}::float / {LIVE_PORTFOLIO_COUNT_SQL} ELSE 0 END"
 )
 
-DISPLAY_NAME_KEY_SQL = """
+
+def _display_name_key_sql(alias: Optional[str] = None) -> str:
+    prefix = f"{alias}." if alias else ""
+    return f"""
 UPPER(TRIM(COALESCE(
-    NULLIF(company_name, ''),
-    NULLIF(agent_name, ''),
-    NULLIF(owner_name, ''),
-    NULLIF(primary_contact, ''),
-    lead_id
+    NULLIF({prefix}company_name, ''),
+    NULLIF({prefix}agent_name, ''),
+    NULLIF({prefix}owner_name, ''),
+    NULLIF({prefix}primary_contact, ''),
+    {prefix}lead_id
 )))
 """.strip()
 
@@ -416,7 +419,7 @@ async def get_leads(
                 {LIVE_PORTFOLIO_COUNT_SQL} AS live_portfolio_size,
                 {LIVE_TOTAL_UNITS_SQL} AS live_total_units,
                 {LIVE_UNITS_PER_BUILDING_SQL} AS live_units_per_bldg,
-                {DISPLAY_NAME_KEY_SQL} AS display_name_key
+                {_display_name_key_sql("leads")} AS display_name_key
             FROM leads
             LEFT JOIN live_link_stats ON live_link_stats.lead_id = leads.lead_id
             WHERE {where_sql}
@@ -870,7 +873,7 @@ async def get_lead_lineage(
                     updated_at
                 FROM leads
                 WHERE lead_id <> :lid
-                  AND {DISPLAY_NAME_KEY_SQL} = :display_name_key
+                  AND {_display_name_key_sql("leads")} = :display_name_key
                 ORDER BY updated_at DESC NULLS LAST, lead_id ASC
             """),
             {"lid": lead_id, "display_name_key": display_name_key},
