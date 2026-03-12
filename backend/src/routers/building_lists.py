@@ -224,7 +224,9 @@ async def list_buildings_in_list(
     result = await session.execute(
         text("""
             SELECT b.bbl, b.address, b.borough, b.unit_count, b.building_type,
-                   b.churn_score, b.churn_category, m.added_at
+                   b.churn_score, b.churn_category,
+                   b.latitude, b.longitude, b.coordinate_source, b.coordinate_precision,
+                   m.added_at
             FROM building_list_members m
             JOIN buildings b ON b.bbl = m.bbl
             WHERE m.list_id = :list_id

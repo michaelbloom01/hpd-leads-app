@@ -42,12 +42,21 @@ export interface JobsSummary {
   avg_duration_seconds_24h: number;
 }
 
+export interface StartJobResponse {
+  status: string;
+  job_type: string;
+  requested_job_type?: string;
+  job_id?: number;
+  limit?: number;
+  dispatch_mode?: string;
+}
+
 export const fetchJobs = (status?: string, limit = 20): Promise<Job[]> =>
   apiGet(`/api/v1/jobs${status ? `?status=${status}&limit=${limit}` : `?limit=${limit}`}`);
 
 export const fetchJob = (id: number): Promise<Job> => apiGet(`/api/v1/jobs/${id}`);
 
-export const startJob = (jobType: string): Promise<{ status: string; job_type: string; dispatch_mode?: string }> =>
+export const startJob = (jobType: string): Promise<StartJobResponse> =>
   apiPost(`/api/v1/jobs/${jobType}/start`);
 
 export const fetchJobsSummary = (): Promise<JobsSummary> => apiGet('/api/v1/jobs/summary');

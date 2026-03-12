@@ -162,6 +162,9 @@ def _check_freshness(session: Session) -> list[dict]:
         "facade_inspections": 120,
         "pad": 120,
         "hpd_buildings": 30,
+        "building_coordinates": 14,
+        "lead_generation": 14,
+        "lead_coverage": 14,
     }
 
     for source, max_days in thresholds.items():

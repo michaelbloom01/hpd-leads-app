@@ -229,7 +229,7 @@ async def start_job(
         "dob_permits", "hpd_litigation", "emergency_repairs", "aep",
         "evictions", "energy", "facades", "pad", "scoring", "enrichment",
         "smart_lists_evaluation", "entity_resolution", "quality_checks",
-        "lead_generation", "lead_reconciliation",
+        "lead_generation", "lead_reconciliation", "building_coordinates",
     ]
     if job_type not in valid_types:
         raise HTTPException(400, f"Unknown job type: {job_type}. Valid: {valid_types}")
@@ -279,6 +279,30 @@ async def start_job(
             )
             from src.tasks.ingest import ingest_buildings_from_hpd
             asyncio.create_task(asyncio.to_thread(ingest_buildings_from_hpd.run, job_id=job_id))
+            dispatch_mode = "in_process"
+
+        return {
+            "status": "queued",
+            "job_type": job_type,
+            "requested_job_type": original_job_type,
+            "job_id": job_id,
+            "limit": limit,
+            "dispatch_mode": dispatch_mode,
+        }
+
+    if job_type == "building_coordinates":
+        dispatch_mode = "celery"
+        try:
+            from src.tasks.ingest import backfill_building_coordinates
+            backfill_building_coordinates.delay(job_id=job_id, limit=limit)
+        except Exception as exc:
+            logger.warning(
+                "Celery dispatch failed for building_coordinates job %s, falling back to in-process execution: %s",
+                job_id,
+                exc,
+            )
+            from src.tasks.ingest import backfill_building_coordinates
+            asyncio.create_task(asyncio.to_thread(backfill_building_coordinates.run, job_id=job_id, limit=limit))
             dispatch_mode = "in_process"
 
         return {

@@ -19,15 +19,17 @@ RUNNABLE_JOB_TYPES = {
     "buildings", "hpd_complaints", "acris", "hpd_violations",
     "dob_permits", "hpd_litigation", "emergency_repairs", "aep",
     "evictions", "energy", "facades", "pad", "scoring", "enrichment",
+    "building_coordinates",
 }
 
 SOURCE_REGISTRY = [
-    {"source_name": "hpd_registrations", "dataset_id": "tesw-yqqr", "table_name": "buildings", "job_type": "buildings", "ui_surface": "leads+buildings"},
-    {"source_name": "hpd_contacts", "dataset_id": "feu5-w2e2", "table_name": "building_contacts", "job_type": "buildings", "ui_surface": "lead_detail_contacts"},
-    {"source_name": "pluto", "dataset_id": "64uk-42ks", "table_name": "buildings", "job_type": "buildings", "ui_surface": "lead_detail+building_detail"},
+    {"source_name": "hpd_registrations", "dataset_id": "tesw-yqqr", "table_name": "buildings", "job_type": "buildings", "ui_surface": "leads+buildings", "quality_sources": ["hpd_registrations", "hpd_buildings"]},
+    {"source_name": "hpd_contacts", "dataset_id": "feu5-w2e2", "table_name": "building_contacts", "job_type": "buildings", "ui_surface": "lead_detail_contacts", "quality_sources": ["hpd_contacts", "hpd_buildings"]},
+    {"source_name": "pluto", "dataset_id": "64uk-42ks", "table_name": "buildings", "job_type": "buildings", "ui_surface": "lead_detail+building_detail", "quality_sources": ["pluto", "hpd_buildings"]},
+    {"source_name": "building_coordinates", "dataset_id": "planninglabs|nominatim", "table_name": "buildings", "job_type": "building_coordinates", "ui_surface": "portfolio_map"},
     {"source_name": "hpd_complaints", "dataset_id": "ygpa-z7cr", "table_name": "hpd_complaints", "job_type": "hpd_complaints", "ui_surface": "building_timeline+churn"},
     {"source_name": "hpd_violations", "dataset_id": "wvxf-dwi5", "table_name": "hpd_violations", "job_type": "hpd_violations", "ui_surface": "lead_distress+timeline"},
-    {"source_name": "acris_transactions", "dataset_id": "bnx9-e6tj|8h5j-fqxa|636b-3b5g", "table_name": "acris_transactions", "job_type": "acris", "ui_surface": "building_timeline+churn"},
+    {"source_name": "acris_transactions", "dataset_id": "bnx9-e6tj|8h5j-fqxa|636b-3b5g", "table_name": "acris_transactions", "job_type": "acris", "ui_surface": "building_timeline+churn", "quality_sources": ["acris_transactions", "acris"]},
     {"source_name": "dob_permits", "dataset_id": "ipu4-2vj7|rbx6-tga4", "table_name": "dob_permits", "job_type": "dob_permits", "ui_surface": "building_timeline+churn"},
     {"source_name": "hpd_litigation", "dataset_id": "59kj-x8nc", "table_name": "hpd_litigation", "job_type": "hpd_litigation", "ui_surface": "building_timeline+churn"},
     {"source_name": "emergency_repairs", "dataset_id": "24cj-meh5", "table_name": "emergency_repairs", "job_type": "emergency_repairs", "ui_surface": "churn_only"},
@@ -47,6 +49,14 @@ def _source_row_status(table_exists: bool, has_quality_log: bool, runnable_job: 
     if not has_quality_log:
         return "no_recent_ingest"
     return "operational"
+
+
+def _pick_latest_quality_row(source: dict, latest_quality: dict[str, dict]) -> Optional[dict]:
+    quality_sources = source.get("quality_sources") or [source["source_name"]]
+    matches = [latest_quality.get(name) for name in quality_sources if latest_quality.get(name)]
+    if not matches:
+        return None
+    return max(matches, key=lambda row: row.get("run_timestamp") or datetime.min.replace(tzinfo=timezone.utc))
 
 
 @router.get("/data-health")
@@ -395,7 +405,7 @@ async def source_audit(session: AsyncSession = Depends(get_session)):
         source_name = source["source_name"]
         table_name = source["table_name"]
         job_type = source["job_type"]
-        quality = latest_quality.get(source_name)
+        quality = _pick_latest_quality_row(source, latest_quality)
         table_exists = table_name in existing_tables
         has_quality_log = quality is not None
         runnable_job = job_type in RUNNABLE_JOB_TYPES
@@ -424,7 +434,7 @@ async def source_audit(session: AsyncSession = Depends(get_session)):
     }
 
     critical_gaps = [
-        r for r in rows if r["status"] in {"not_wired", "schema_missing"}
+        r for r in rows if r["status"] in {"not_wired", "schema_missing", "no_recent_ingest"}
     ]
 
     return {

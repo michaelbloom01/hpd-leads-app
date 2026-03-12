@@ -19,35 +19,14 @@ const smallMarker = new L.Icon({
   popupAnchor: [0, -6],
 });
 
-// NYC borough approximate coordinates for geocoding fallback
-const NYC_BOROUGH_COORDS: Record<string, [number, number]> = {
-  'MANHATTAN': [40.7831, -73.9712],
-  'BROOKLYN': [40.6782, -73.9442],
-  'QUEENS': [40.7282, -73.7949],
-  'BRONX': [40.8448, -73.8648],
-  'STATEN ISLAND': [40.5795, -74.1502],
-};
-
-// Simple address to approximate coordinates using street number + borough
-function approximateCoords(address: string, boro?: string): [number, number] | null {
-  const boroKey = boro?.toUpperCase() || '';
-  const base = NYC_BOROUGH_COORDS[boroKey] || [40.7128, -73.95];
-  
-  // Use address hash to spread markers within the borough area
-  let hash = 0;
-  for (let i = 0; i < address.length; i++) {
-    hash = ((hash << 5) - hash) + address.charCodeAt(i);
-    hash |= 0;
-  }
-  
-  // Spread within ~0.03 degrees (~2 miles) of borough center
-  const latOffset = ((hash & 0xFF) / 255 - 0.5) * 0.06;
-  const lngOffset = (((hash >> 8) & 0xFF) / 255 - 0.5) * 0.06;
-  
-  return [base[0] + latOffset, base[1] + lngOffset];
-}
-
 type GeocodeResult = { coords: [number, number]; source: 'planninglabs' | 'nominatim' } | null;
+type MapPosition = {
+  position: [number, number];
+  address: string;
+  source: string;
+  precision?: string | null;
+  persisted: boolean;
+};
 const geocodeCache = new Map<string, GeocodeResult>();
 
 async function geocodeAddress(address: string, borough?: string): Promise<GeocodeResult> {
@@ -129,19 +108,36 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
   return null;
 }
 
-export type BuildingMapEntry = string | { address: string; borough?: string };
+export type BuildingMapEntry =
+  | string
+  | {
+      address: string;
+      borough?: string;
+      latitude?: number | null;
+      longitude?: number | null;
+      coordinate_source?: string | null;
+      coordinate_precision?: string | null;
+    };
 
 interface PortfolioMapProps {
   buildings: (string | BuildingMapEntry)[];
   boro?: string;
   boros?: string[];
   height?: string;
+  allowClientGeocodingFallback?: boolean;
 }
 
-const PortfolioMap: React.FC<PortfolioMapProps> = ({ buildings, boro, boros, height = '250px' }) => {
+const PortfolioMap: React.FC<PortfolioMapProps> = ({
+  buildings,
+  boro,
+  boros,
+  height = '250px',
+  allowClientGeocodingFallback = false,
+}) => {
   const mapRef = useRef<any>(null);
   const [isResolving, setIsResolving] = useState(false);
-  const [positions, setPositions] = useState<Array<{ position: [number, number]; address: string; approximate: boolean; source: 'planninglabs' | 'nominatim' | 'borough_fallback' }>>([]);
+  const [positions, setPositions] = useState<MapPosition[]>([]);
+  const [skippedCount, setSkippedCount] = useState(0);
 
   const normalizedBuildings = useMemo(() => {
     const seen = new Set<string>();
@@ -149,7 +145,16 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({ buildings, boro, boros, hei
       const addr = typeof building === 'string' ? building : building.address;
       const entryBoro = typeof building === 'object' && building.borough ? building.borough : undefined;
       const buildingBoro = entryBoro || boro || '';
-      return { addr: (addr || '').trim(), buildingBoro };
+      const latitude = typeof building === 'object' ? Number(building.latitude) : NaN;
+      const longitude = typeof building === 'object' ? Number(building.longitude) : NaN;
+      return {
+        addr: (addr || '').trim(),
+        buildingBoro,
+        latitude: Number.isFinite(latitude) ? latitude : null,
+        longitude: Number.isFinite(longitude) ? longitude : null,
+        coordinateSource: typeof building === 'object' ? building.coordinate_source ?? null : null,
+        coordinatePrecision: typeof building === 'object' ? building.coordinate_precision ?? null : null,
+      };
     });
     return rows.filter(({ addr, buildingBoro }) => {
       if (!addr) return false;
@@ -170,18 +175,40 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({ buildings, boro, boros, hei
         return;
       }
 
-      const resolved: Array<{ position: [number, number]; address: string; approximate: boolean; source: 'planninglabs' | 'nominatim' | 'borough_fallback' }> = [];
+      const resolved: MapPosition[] = [];
+      let skipped = 0;
       for (let i = 0; i < normalizedBuildings.length; i++) {
-        const { addr, buildingBoro } = normalizedBuildings[i];
+        const { addr, buildingBoro, latitude, longitude, coordinateSource, coordinatePrecision } = normalizedBuildings[i];
+        if (latitude !== null && longitude !== null) {
+          resolved.push({
+            position: [latitude, longitude],
+            address: addr,
+            source: coordinateSource || 'stored',
+            precision: coordinatePrecision,
+            persisted: true,
+          });
+          continue;
+        }
+        if (!allowClientGeocodingFallback) {
+          skipped += 1;
+          continue;
+        }
         const geocoded = await geocodeAddress(addr, buildingBoro);
-        let approximate = !geocoded;
-        let source: 'planninglabs' | 'nominatim' | 'borough_fallback' = geocoded?.source || 'borough_fallback';
-        let coords = geocoded?.coords || null;
-        if (!coords) coords = approximateCoords(addr, buildingBoro);
-        if (coords) resolved.push({ position: coords, address: addr, approximate, source });
+        if (geocoded?.coords) {
+          resolved.push({
+            position: geocoded.coords,
+            address: addr,
+            source: geocoded.source,
+            precision: null,
+            persisted: false,
+          });
+        } else {
+          skipped += 1;
+        }
       }
 
       if (!cancelled) setPositions(resolved);
+      if (!cancelled) setSkippedCount(skipped);
       if (!cancelled) setIsResolving(false);
     };
     resolvePositions();
@@ -197,7 +224,16 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({ buildings, boro, boros, hei
       </div>
     );
   }
-  if (positions.length === 0) return null;
+  if (positions.length === 0) {
+    if (skippedCount > 0) {
+      return (
+        <div style={{ height, width: '100%' }} className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
+          Map unavailable right now because this portfolio does not yet have persisted building coordinates. Run the coordinate sync job to materialize stored markers instead of relying on approximate browser geocoding.
+        </div>
+      );
+    }
+    return null;
+  }
 
   const center: [number, number] = positions.length > 0 
     ? [
@@ -205,19 +241,14 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({ buildings, boro, boros, hei
         positions.reduce((sum, p) => sum + p.position[1], 0) / positions.length,
       ]
     : [40.7128, -73.95];
+  const persistedCount = positions.filter((p) => p.persisted).length;
+  const geocodedCount = positions.length - persistedCount;
 
   return (
     <div style={{ height, width: '100%' }} className="rounded-lg overflow-hidden">
-      {positions.some((p) => p.approximate) && (
-        <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
-          Marker provenance: Planning Labs and OpenStreetMap geocoders are used first; borough-center fallback markers are approximate.
-        </div>
-      )}
-      {!positions.some((p) => p.approximate) && (
-        <div className="mb-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-600">
-          Marker provenance: positions are geocoded from public map services and should be treated as directional, not survey-grade coordinates.
-        </div>
-      )}
+      <div className={`mb-2 rounded-lg px-3 py-2 text-[11px] ${skippedCount > 0 ? 'border border-amber-200 bg-amber-50 text-amber-700' : 'border border-gray-200 bg-gray-50 text-gray-600'}`}>
+        Marker provenance: {persistedCount} stored, {geocodedCount} geocoded. {skippedCount > 0 ? `${skippedCount} building${skippedCount === 1 ? '' : 's'} are omitted until persisted coordinates are available.` : geocodedCount > 0 ? 'Stored coordinates are preferred; remaining markers were derived from public geocoding services.' : 'All visible markers are using persisted building coordinates.'}
+      </div>
       <MapContainer
         ref={mapRef}
         center={center}
@@ -236,7 +267,7 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({ buildings, boro, boros, hei
             <Popup>
               <span className="text-xs">
                 {p.address}
-                {p.approximate ? ' (approximate borough fallback)' : ` (${p.source})`}
+                {` (${p.source}${p.precision ? `, ${p.precision}` : ''})`}
               </span>
             </Popup>
           </Marker>

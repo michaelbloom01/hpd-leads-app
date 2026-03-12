@@ -46,6 +46,11 @@ class Building(TimestampMixin, Base):
     community_board: Mapped[Optional[str]] = mapped_column(String(10))
     census_tract: Mapped[Optional[str]] = mapped_column(String(20))
     nta: Mapped[Optional[str]] = mapped_column(String(10))
+    latitude: Mapped[Optional[float]] = mapped_column(Float)
+    longitude: Mapped[Optional[float]] = mapped_column(Float)
+    coordinate_source: Mapped[Optional[str]] = mapped_column(String(30))
+    coordinate_precision: Mapped[Optional[str]] = mapped_column(String(30))
+    coordinates_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     # Churn scoring
     churn_score: Mapped[Optional[float]] = mapped_column(Float)
@@ -78,6 +83,7 @@ class Building(TimestampMixin, Base):
         Index("idx_buildings_scoring_config", "scoring_config_id"),
         Index("idx_buildings_borough", "borough"),
         Index("idx_buildings_outreach_status", "outreach_status"),
+        Index("idx_buildings_coordinates", "latitude", "longitude"),
     )
 
 

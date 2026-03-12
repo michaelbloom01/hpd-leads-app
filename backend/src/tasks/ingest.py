@@ -12,12 +12,14 @@ Each task follows the standard pattern from the plan:
 import logging
 import os
 import threading
+import time
 from typing import Optional
 
 import requests
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from src.services.building_geocode import geocode_building
 
 try:
     from src.worker import app as celery_app
@@ -29,6 +31,9 @@ except ImportError:
     celery_app = _FakeCelery()
 
 logger = logging.getLogger(__name__)
+
+BUILDING_COORDINATE_PROGRESS_INTERVAL = 50
+BUILDING_COORDINATE_THROTTLE_SECONDS = 0.1
 
 APP_TOKEN = os.environ.get("NYC_OPEN_DATA_APP_TOKEN", "")
 SOCRATA_BASE = "https://data.cityofnewyork.us/resource"
@@ -75,6 +80,7 @@ def _socrata_fetch(dataset_id: str, params: dict, max_retries: int = 3) -> list[
     while True:
         params["$offset"] = offset
         params["$limit"] = limit
+        resp = None
 
         for attempt in range(max_retries):
             try:
@@ -85,6 +91,10 @@ def _socrata_fetch(dataset_id: str, params: dict, max_retries: int = 3) -> list[
                         raise RuntimeError(
                             f"Circuit breaker: 5 consecutive 5xx from {dataset_id}"
                         )
+                    if attempt == max_retries - 1:
+                        raise RuntimeError(
+                            f"{dataset_id} returned HTTP {resp.status_code} after {max_retries} attempts"
+                        )
                     continue
                 resp.raise_for_status()
                 consecutive_failures = 0
@@ -93,6 +103,8 @@ def _socrata_fetch(dataset_id: str, params: dict, max_retries: int = 3) -> list[
                 if attempt == max_retries - 1:
                     raise
                 logger.warning(f"Retry {attempt+1} for {dataset_id}: {e}")
+        if resp is None:
+            raise RuntimeError(f"{dataset_id} request failed before a response was returned")
 
         batch = resp.json()
         if not batch:
@@ -212,6 +224,150 @@ def _compute_bbl(boro_id, block, lot) -> str | None:
         return f"{b}{bl}{lt}"
     except (ValueError, TypeError):
         return None
+
+
+@celery_app.task(bind=True, name="src.tasks.ingest.backfill_building_coordinates")
+def backfill_building_coordinates(self, job_id: Optional[int] = None, limit: int = 1000):
+    """Persist coordinates/provenance for buildings missing map geometry."""
+    session = _get_pg_session()
+    job_id = _ensure_or_create_job(session, job_id, "building_coordinates", "building_coordinates")
+    session.commit()
+
+    processed = 0
+    succeeded = 0
+    failed = 0
+
+    try:
+        rows = session.execute(
+            text(
+                """
+                SELECT bbl, address, borough
+                FROM buildings
+                WHERE address IS NOT NULL
+                  AND TRIM(address) <> ''
+                  AND (latitude IS NULL OR longitude IS NULL)
+                ORDER BY updated_at DESC NULLS LAST, bbl ASC
+                LIMIT :limit
+                """
+            ),
+            {"limit": limit},
+        ).fetchall()
+
+        total = len(rows)
+        for row in rows:
+            processed += 1
+            geocoded = geocode_building(str(row.address or ""), row.borough)
+            if geocoded:
+                session.execute(
+                    text(
+                        """
+                        UPDATE buildings
+                        SET latitude = :latitude,
+                            longitude = :longitude,
+                            coordinate_source = :coordinate_source,
+                            coordinate_precision = :coordinate_precision,
+                            coordinates_updated_at = NOW(),
+                            updated_at = NOW()
+                        WHERE bbl = :bbl
+                        """
+                    ),
+                    {
+                        "bbl": row.bbl,
+                        "latitude": geocoded.latitude,
+                        "longitude": geocoded.longitude,
+                        "coordinate_source": geocoded.coordinate_source,
+                        "coordinate_precision": geocoded.coordinate_precision,
+                    },
+                )
+                succeeded += 1
+            else:
+                failed += 1
+
+            if BUILDING_COORDINATE_THROTTLE_SECONDS > 0:
+                time.sleep(BUILDING_COORDINATE_THROTTLE_SECONDS)
+
+            if processed % BUILDING_COORDINATE_PROGRESS_INTERVAL == 0:
+                session.execute(
+                    text(
+                        """
+                        UPDATE ingestion_jobs
+                        SET processed = :processed,
+                            succeeded = :succeeded,
+                            failed = :failed,
+                            total = :total,
+                            updated_at = NOW()
+                        WHERE id = :job_id
+                        """
+                    ),
+                    {
+                        "job_id": job_id,
+                        "processed": processed,
+                        "succeeded": succeeded,
+                        "failed": failed,
+                        "total": total,
+                    },
+                )
+                session.commit()
+
+        session.execute(
+            text(
+                """
+                UPDATE ingestion_jobs
+                SET processed = :processed,
+                    succeeded = :succeeded,
+                    failed = :failed,
+                    total = :total,
+                    updated_at = NOW()
+                WHERE id = :job_id
+                """
+            ),
+            {
+                "job_id": job_id,
+                "processed": processed,
+                "succeeded": succeeded,
+                "failed": failed,
+                "total": total,
+            },
+        )
+        _log_quality(
+            session,
+            "building_coordinates",
+            job_id,
+            total,
+            succeeded,
+            failed,
+            succeeded,
+            notes="Persisted coordinates for buildings missing latitude/longitude",
+        )
+        _finish_job(session, job_id, "completed", total, succeeded, failed)
+        session.commit()
+        return {"processed": processed, "succeeded": succeeded, "failed": failed}
+    except Exception as exc:
+        session.rollback()
+        session.execute(
+            text(
+                """
+                UPDATE ingestion_jobs
+                SET processed = :processed,
+                    succeeded = :succeeded,
+                    failed = :failed,
+                    total = COALESCE(total, :processed),
+                    updated_at = NOW()
+                WHERE id = :job_id
+                """
+            ),
+            {
+                "job_id": job_id,
+                "processed": processed,
+                "succeeded": succeeded,
+                "failed": failed,
+            },
+        )
+        _finish_job(session, job_id, "failed", processed, succeeded, failed, str(exc))
+        session.commit()
+        raise
+    finally:
+        session.close()
 
 
 @celery_app.task(bind=True, name="src.tasks.ingest.ingest_buildings_from_hpd")
@@ -422,6 +578,26 @@ def ingest_buildings_from_hpd(self, job_id: Optional[int] = None):
                 t.start()
         except Exception as lead_exc:
             logger.warning("Failed to queue follow-up lead generation job after buildings ingestion: %s", lead_exc)
+        try:
+            geocode_job_id = _create_job(session, "building_coordinates", "building_coordinates")
+            session.commit()
+            try:
+                backfill_building_coordinates.delay(job_id=geocode_job_id, limit=5000)
+                logger.info("Queued follow-up building_coordinates job %s after buildings ingestion", geocode_job_id)
+            except Exception as dispatch_exc:
+                logger.warning(
+                    "Celery dispatch failed for follow-up building_coordinates job %s, using in-process fallback: %s",
+                    geocode_job_id,
+                    dispatch_exc,
+                )
+                t = threading.Thread(
+                    target=backfill_building_coordinates.run,
+                    kwargs={"job_id": geocode_job_id, "limit": 5000},
+                    daemon=True,
+                )
+                t.start()
+        except Exception as geocode_exc:
+            logger.warning("Failed to queue follow-up building_coordinates job after buildings ingestion: %s", geocode_exc)
         logger.info(f"Buildings backfill complete: {inserted} inserted, {rejected} rejected")
         return {"inserted": inserted, "rejected": rejected}
 

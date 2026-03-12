@@ -168,14 +168,15 @@ const DataHealthSection: React.FC = () => {
   const { data: sourceAudit } = useQuery({ queryKey: ['quality-source-audit'], queryFn: fetchSourceAudit, staleTime: 30000 });
   const { data: jobs } = useQuery({ queryKey: ['jobs'], queryFn: () => fetchJobs(undefined, 10), refetchInterval: 10000 });
   const { data: jobsSummary } = useQuery({ queryKey: ['jobs-summary'], queryFn: fetchJobsSummary, refetchInterval: 10000 });
+  const coordinateAudit = sourceAudit?.sources.find((source) => source.source_name === 'building_coordinates');
 
   const triggerJob = useMutation({
     mutationFn: startJob,
     onSuccess: (data, jobType) => {
       if (data.dispatch_mode === 'in_process') {
-        toast(`${jobType} job started in local fallback mode`);
+        toast(`${jobType} job started in local fallback mode${data.job_id ? ` (#${data.job_id})` : ''}`);
       } else {
-        toast.success(`${jobType} job started`);
+        toast.success(`${jobType} job started${data.job_id ? ` (#${data.job_id})` : ''}`);
       }
     },
     onError: (_, jobType) => toast.error(`Failed to start ${jobType}`),
@@ -216,6 +217,30 @@ const DataHealthSection: React.FC = () => {
           </div>
         </div>
       )}
+
+      <div className="bg-white rounded-lg border border-gray-200 p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h3 className="text-sm font-medium text-gray-700">Map Coordinate Backfill</h3>
+            <p className="text-sm text-gray-500 mt-1">
+              Persist coordinates and provenance for buildings that still rely on browser geocoding so portfolio maps load faster and with clearer source attribution.
+            </p>
+            {coordinateAudit && (
+              <p className="text-xs text-gray-500 mt-2">
+                Source status: <span className="font-medium text-gray-700">{coordinateAudit.status}</span>
+                {coordinateAudit.last_run ? ` • last run ${new Date(coordinateAudit.last_run).toLocaleString()}` : ' • no run recorded yet'}
+              </p>
+            )}
+          </div>
+          <button
+            onClick={() => triggerJob.mutate('building_coordinates')}
+            disabled={triggerJob.isPending}
+            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium"
+          >
+            {triggerJob.isPending ? 'Queuing...' : 'Run Coordinate Sync'}
+          </button>
+        </div>
+      </div>
 
       {/* Source Freshness */}
       {quality && quality.length > 0 && (

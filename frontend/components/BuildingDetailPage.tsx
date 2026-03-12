@@ -476,7 +476,14 @@ const BuildingDetailPage: React.FC = () => {
         </div>
         <Suspense fallback={<div className="h-[280px] bg-gray-100 rounded-lg animate-pulse" />}>
           <PortfolioMap
-            buildings={[{ address: building.address || building.bbl, borough: building.borough || undefined }]}
+            buildings={[{
+              address: building.address || building.bbl,
+              borough: building.borough || undefined,
+              latitude: building.latitude ?? null,
+              longitude: building.longitude ?? null,
+              coordinate_source: building.coordinate_source ?? null,
+              coordinate_precision: building.coordinate_precision ?? null,
+            }]}
             boro={building.borough || undefined}
             height="280px"
           />

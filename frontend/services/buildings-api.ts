@@ -41,6 +41,10 @@ export interface BuildingRow {
   coverage_ratio: number | null;
   outreach_status: string | null;
   last_scored_at: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  coordinate_source?: string | null;
+  coordinate_precision?: string | null;
   current_lead_id: string | null;
   estimated_annual_revenue?: number | null;
   pm_company?: string | null;
@@ -79,6 +83,11 @@ export interface BuildingDetail {
   scoring_config_id: number | null;
   last_scored_at: string | null;
   outreach_status: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  coordinate_source?: string | null;
+  coordinate_precision?: string | null;
+  coordinates_updated_at?: string | null;
   current_lead_id: string | null;
   all_contacts?: BuildingContactEntry[];
   management_company?: string | null;

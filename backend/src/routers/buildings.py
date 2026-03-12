@@ -207,6 +207,7 @@ async def list_buildings(
             SELECT b.bbl, b.address, b.borough, b.unit_count, b.building_type,
                    b.churn_score, b.churn_category, b.key_signal,
                    b.coverage_ratio, b.outreach_status, b.last_scored_at,
+                   b.latitude, b.longitude, b.coordinate_source, b.coordinate_precision,
                    m.lead_id AS current_lead_id, pm.pm_company
             FROM buildings b
             LEFT JOIN LATERAL (
