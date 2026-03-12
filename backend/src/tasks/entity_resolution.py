@@ -553,6 +553,15 @@ def materialize_canonical_proposals(
     engine = session.get_bind()
     try:
         clusters = _resolve_clusters(_build_entity_graph(session))
+        if conservative_mode:
+            clusters = sorted(
+                clusters,
+                key=lambda cluster: (
+                    int(cluster.get("node_count") or 0),
+                    int(cluster.get("portfolio_size") or 0),
+                    str(cluster.get("canonical_name") or ""),
+                ),
+            )
         counts = _empty_counts()
         proposal_sync = {
             "entities_synced": 0,
