@@ -10,6 +10,72 @@ import {
   updateSmartList,
   runDueAutoEvaluations,
 } from '../services/api';
+import { BOROUGHS, PIPELINE_STAGES } from '../utils/format';
+
+const ENTITY_TYPE_OPTIONS = [
+  { value: 'company', label: 'Company' },
+  { value: 'individual_agent', label: 'Individual' },
+  { value: 'owner_operator', label: 'Owner-Op' },
+];
+
+type SmartListDraftFilters = {
+  search: string;
+  boroughs: string[];
+  minScore: string;
+  minUnits: string;
+  pipelineStages: string[];
+  entityTypes: string[];
+  hasPhone: boolean;
+  hasEmail: boolean;
+};
+
+const EMPTY_DRAFT_FILTERS: SmartListDraftFilters = {
+  search: '',
+  boroughs: [],
+  minScore: '',
+  minUnits: '',
+  pipelineStages: [],
+  entityTypes: [],
+  hasPhone: false,
+  hasEmail: false,
+};
+
+const toggleArrayValue = (current: string[], value: string) => (
+  current.includes(value)
+    ? current.filter((item) => item !== value)
+    : [...current, value]
+);
+
+const buildSmartListFilterPayload = (draft: SmartListDraftFilters): Record<string, unknown> => {
+  const filters: Record<string, unknown> = {};
+  if (draft.search.trim()) filters.search = draft.search.trim();
+  if (draft.boroughs.length > 0) filters.boroughs = draft.boroughs;
+  if (draft.minScore.trim()) filters.min_score = Number(draft.minScore);
+  if (draft.minUnits.trim()) filters.min_units = Number(draft.minUnits);
+  if (draft.pipelineStages.length > 0) filters.pipeline_stages = draft.pipelineStages;
+  if (draft.entityTypes.length > 0) filters.entity_types = draft.entityTypes;
+  if (draft.hasPhone) filters.has_phone = true;
+  if (draft.hasEmail) filters.has_email = true;
+  return filters;
+};
+
+const summarizeFilters = (filters: Record<string, unknown> | null | undefined): string[] => {
+  if (!filters) return [];
+  const summary: string[] = [];
+  const search = String(filters.search || '').trim();
+  if (search) summary.push(`Search: ${search}`);
+  const boroughs = Array.isArray(filters.boroughs) ? filters.boroughs : [];
+  if (boroughs.length > 0) summary.push(`Boroughs: ${boroughs.join(', ')}`);
+  if (filters.min_score) summary.push(`Min score: ${filters.min_score}`);
+  if (filters.min_units) summary.push(`Min units: ${filters.min_units}`);
+  const pipelineStages = Array.isArray(filters.pipeline_stages) ? filters.pipeline_stages : [];
+  if (pipelineStages.length > 0) summary.push(`Stages: ${pipelineStages.join(', ')}`);
+  const entityTypes = Array.isArray(filters.entity_types) ? filters.entity_types : [];
+  if (entityTypes.length > 0) summary.push(`Entities: ${entityTypes.join(', ')}`);
+  if (filters.has_phone) summary.push('Has phone');
+  if (filters.has_email) summary.push('Has email');
+  return summary;
+};
 
 const SmartListsPage: React.FC = () => {
   const [lists, setLists] = useState<SmartList[]>([]);
@@ -20,6 +86,7 @@ const SmartListsPage: React.FC = () => {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
+  const [newFilters, setNewFilters] = useState<SmartListDraftFilters>(EMPTY_DRAFT_FILTERS);
   const [nameError, setNameError] = useState<string | null>(null);
   const [runningDueEvals, setRunningDueEvals] = useState(false);
   const navigate = useNavigate();
@@ -51,10 +118,16 @@ const SmartListsPage: React.FC = () => {
     setNameError(null);
     setCreating(true);
     try {
-      await createSmartList({ name: newName.trim(), description: newDesc.trim(), filters: {}, pinned: false });
+      await createSmartList({
+        name: newName.trim(),
+        description: newDesc.trim(),
+        filters: buildSmartListFilterPayload(newFilters),
+        pinned: false,
+      });
       toast.success(`Smart List "${newName}" created`);
       setNewName('');
       setNewDesc('');
+      setNewFilters(EMPTY_DRAFT_FILTERS);
       setShowCreate(false);
       loadLists();
     } catch (err) {
@@ -145,6 +218,7 @@ const SmartListsPage: React.FC = () => {
       const boros = Array.isArray(filters.boroughs) ? filters.boroughs : String(filters.boroughs).split(',');
       if (boros.length > 0) params.set('boro', boros.join(','));
     }
+    if (filters.neighborhood) params.set('neighborhood', String(filters.neighborhood));
     if (filters.min_score) params.set('min_score', String(filters.min_score));
     if (filters.max_score) params.set('max_score', String(filters.max_score));
     if (filters.min_portfolio) params.set('min_portfolio', String(filters.min_portfolio));
@@ -224,8 +298,132 @@ const SmartListsPage: React.FC = () => {
             onChange={(e) => setNewDesc(e.target.value)}
           />
           <p className="text-xs text-gray-400">
-            Tip: Create the list first, then use "Save Current Filters" from the Leads page to populate it with your active filter set.
+            Define the core filters here now, then refine further from the Leads page if needed.
           </p>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">Search</label>
+              <input
+                type="text"
+                placeholder="Company or owner name"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                value={newFilters.search}
+                onChange={(e) => setNewFilters((prev) => ({ ...prev, search: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">Minimums</label>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="Min score"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  value={newFilters.minScore}
+                  onChange={(e) => setNewFilters((prev) => ({ ...prev, minScore: e.target.value }))}
+                />
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="Min units"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  value={newFilters.minUnits}
+                  onChange={(e) => setNewFilters((prev) => ({ ...prev, minUnits: e.target.value }))}
+                />
+              </div>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">Boroughs</label>
+            <div className="flex flex-wrap gap-2">
+              {BOROUGHS.map((borough) => (
+                <button
+                  key={borough}
+                  type="button"
+                  onClick={() => setNewFilters((prev) => ({ ...prev, boroughs: toggleArrayValue(prev.boroughs, borough) }))}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                    newFilters.boroughs.includes(borough)
+                      ? 'bg-blue-50 border-blue-300 text-blue-700'
+                      : 'bg-gray-50 border-gray-200 text-gray-600 hover:text-gray-800'
+                  }`}
+                >
+                  {borough}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">Pipeline stages</label>
+            <div className="flex flex-wrap gap-2">
+              {PIPELINE_STAGES.map((stage) => (
+                <button
+                  key={stage.value}
+                  type="button"
+                  onClick={() => setNewFilters((prev) => ({ ...prev, pipelineStages: toggleArrayValue(prev.pipelineStages, stage.value) }))}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                    newFilters.pipelineStages.includes(stage.value)
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
+                      : 'bg-gray-50 border-gray-200 text-gray-600 hover:text-gray-800'
+                  }`}
+                >
+                  {stage.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">Entity types</label>
+            <div className="flex flex-wrap gap-2">
+              {ENTITY_TYPE_OPTIONS.map((entityType) => (
+                <button
+                  key={entityType.value}
+                  type="button"
+                  onClick={() => setNewFilters((prev) => ({ ...prev, entityTypes: toggleArrayValue(prev.entityTypes, entityType.value) }))}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                    newFilters.entityTypes.includes(entityType.value)
+                      ? 'bg-purple-50 border-purple-300 text-purple-700'
+                      : 'bg-gray-50 border-gray-200 text-gray-600 hover:text-gray-800'
+                  }`}
+                >
+                  {entityType.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+              <input
+                type="checkbox"
+                checked={newFilters.hasPhone}
+                onChange={(e) => setNewFilters((prev) => ({ ...prev, hasPhone: e.target.checked }))}
+                className="rounded border-gray-300"
+              />
+              Has phone
+            </label>
+            <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+              <input
+                type="checkbox"
+                checked={newFilters.hasEmail}
+                onChange={(e) => setNewFilters((prev) => ({ ...prev, hasEmail: e.target.checked }))}
+                className="rounded border-gray-300"
+              />
+              Has email
+            </label>
+          </div>
+          <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2">Filter summary</div>
+            <div className="flex flex-wrap gap-2">
+              {summarizeFilters(buildSmartListFilterPayload(newFilters)).length > 0 ? (
+                summarizeFilters(buildSmartListFilterPayload(newFilters)).map((item) => (
+                  <span key={item} className="px-2 py-1 rounded bg-white border border-gray-200 text-xs text-gray-700">
+                    {item}
+                  </span>
+                ))
+              ) : (
+                <span className="text-xs text-gray-400">No filters yet. This will create a watchlist shell.</span>
+              )}
+            </div>
+          </div>
           <div className="flex gap-2">
             <button onClick={handleCreate} disabled={creating || !isNameValid} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-500 disabled:opacity-50 flex items-center gap-2">
               {creating ? (
@@ -237,7 +435,16 @@ const SmartListsPage: React.FC = () => {
                 'Create'
               )}
             </button>
-            <button onClick={() => { setShowCreate(false); setNameError(null); }} className="px-4 py-2 bg-gray-100 text-gray-700 text-sm rounded-lg">Cancel</button>
+            <button
+              onClick={() => {
+                setShowCreate(false);
+                setNameError(null);
+                setNewFilters(EMPTY_DRAFT_FILTERS);
+              }}
+              className="px-4 py-2 bg-gray-100 text-gray-700 text-sm rounded-lg"
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}
@@ -283,6 +490,17 @@ const SmartListsPage: React.FC = () => {
                     <span>Next auto-eval: {new Date(list.next_evaluation_at).toLocaleString()}</span>
                   )}
                   <span>Created: {new Date(list.created_at).toLocaleDateString()}</span>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {summarizeFilters(list.filters as Record<string, unknown>).length > 0 ? (
+                    summarizeFilters(list.filters as Record<string, unknown>).map((item) => (
+                      <span key={item} className="px-2 py-1 rounded bg-gray-50 border border-gray-200 text-[11px] text-gray-600">
+                        {item}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-[11px] text-gray-400">No filters saved yet.</span>
+                  )}
                 </div>
                 <div className="mt-2 flex items-center gap-2">
                   <button

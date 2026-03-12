@@ -1,10 +1,10 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'react-hot-toast';
-import { useNavigate } from 'react-router-dom';
-import { fetchLeads, ApiLead, enrichLeads, API_BASE_URL, checkHealth, searchBuildings, BuildingSearchResult, createSmartList, fetchDataHealth, type DataHealthResponse } from '../services/api';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { fetchLeads, ApiLead, startSelectedLeadsEnrichment, updateLeadPipelineStages, API_BASE_URL, checkHealth, searchBuildings, BuildingSearchResult, createSmartList, fetchDataHealth, type DataHealthResponse } from '../services/api';
 import { getAuthHeaders } from '../services/auth';
-import { BOROUGHS, BOROUGH_SHORT, formatCurrency, scoreColor } from '../utils/format';
+import { BOROUGHS, BOROUGH_SHORT, PIPELINE_STAGES, formatCurrency, scoreColor } from '../utils/format';
 import { useLeadFilters } from '../hooks/useLeadFilters';
 import { useFilterUrl } from '../hooks/useFilterUrl';
 import LeadKanban from './leads/LeadKanban';
@@ -31,9 +31,60 @@ const HEALTH_POLL_INTERVAL = 5000;
 
 type SortField = 'agent_name' | 'portfolio_size' | 'total_units' | 'units_per_bldg' | 'score' | 'boro' | 'enrichment_status' | 'estimated_annual_revenue' | 'violations_per_unit';
 type SortDir = 'asc' | 'desc';
+type ViewMode = 'table' | 'kanban';
+
+const DEFAULT_SORT_FIELD: SortField = 'score';
+const DEFAULT_SORT_DIR: SortDir = 'desc';
+const DEFAULT_PAGE_SIZE = 50;
+const DEFAULT_VIEW_MODE: ViewMode = 'table';
+const VALID_PAGE_SIZES = new Set([25, 50, 100, 250, 500]);
+const VALID_SORT_FIELDS = new Set<SortField>([
+  'agent_name',
+  'portfolio_size',
+  'total_units',
+  'units_per_bldg',
+  'score',
+  'boro',
+  'enrichment_status',
+  'estimated_annual_revenue',
+  'violations_per_unit',
+]);
+
+function parseSortField(value: string | null): SortField {
+  return value && VALID_SORT_FIELDS.has(value as SortField)
+    ? (value as SortField)
+    : DEFAULT_SORT_FIELD;
+}
+
+function parseSortDir(value: string | null): SortDir {
+  return value === 'asc' ? 'asc' : DEFAULT_SORT_DIR;
+}
+
+function parsePageIndex(value: string | null): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 1 ? parsed - 1 : 0;
+}
+
+function parsePageSize(value: string | null): number {
+  const parsed = Number(value);
+  return VALID_PAGE_SIZES.has(parsed) ? parsed : DEFAULT_PAGE_SIZE;
+}
+
+function parseViewMode(value: string | null): ViewMode {
+  return value === 'kanban' ? 'kanban' : DEFAULT_VIEW_MODE;
+}
+
+function setOptionalParam(params: URLSearchParams, key: string, value: string | null) {
+  if (!value) {
+    params.delete(key);
+    return;
+  }
+  params.set(key, value);
+}
 
 const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPresetConsumed }) => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { filters, setField, toggle, clearAll: clearFilterState, applyPreset, activeFiltersCount, toApiParams } = useLeadFilters();
   useFilterUrl(filters, applyPreset);
 
@@ -47,22 +98,62 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
   const [dataHealth, setDataHealth] = useState<DataHealthResponse | null>(null);
 
   // Sorting
-  const [sortField, setSortField] = useState<SortField>('score');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [sortField, setSortField] = useState<SortField>(() => parseSortField(searchParams.get('sort')));
+  const [sortDir, setSortDir] = useState<SortDir>(() => parseSortDir(searchParams.get('dir')));
 
   // Server-side pagination
-  const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState(50);
+  const [page, setPage] = useState(() => parsePageIndex(searchParams.get('page')));
+  const [pageSize, setPageSize] = useState(() => parsePageSize(searchParams.get('limit')));
 
   // Selection for bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [enriching, setEnriching] = useState(false);
-  const [viewMode, setViewMode] = useState<'table' | 'kanban'>('table');
+  const [bulkPipelineStage, setBulkPipelineStage] = useState('');
+  const [updatingPipelineStage, setUpdatingPipelineStage] = useState(false);
+  const [showSaveListDialog, setShowSaveListDialog] = useState(false);
+  const [smartListName, setSmartListName] = useState('');
+  const [savingSmartList, setSavingSmartList] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>(() => parseViewMode(searchParams.get('view')));
 
   const isMounted = useRef(true);
   useEffect(() => {
     return () => { isMounted.current = false; };
   }, []);
+
+  useEffect(() => {
+    const nextSortField = parseSortField(searchParams.get('sort'));
+    const nextSortDir = parseSortDir(searchParams.get('dir'));
+    const nextPage = parsePageIndex(searchParams.get('page'));
+    const nextPageSize = parsePageSize(searchParams.get('limit'));
+    const nextViewMode = parseViewMode(searchParams.get('view'));
+
+    if (sortField !== nextSortField) setSortField(nextSortField);
+    if (sortDir !== nextSortDir) setSortDir(nextSortDir);
+    if (page !== nextPage) setPage(nextPage);
+    if (pageSize !== nextPageSize) setPageSize(nextPageSize);
+    if (viewMode !== nextViewMode) setViewMode(nextViewMode);
+  }, [page, pageSize, searchParams, sortDir, sortField, viewMode]);
+
+  const hasWrittenListState = useRef(false);
+  useEffect(() => {
+    if (!hasWrittenListState.current) {
+      hasWrittenListState.current = true;
+      return;
+    }
+
+    const nextParams = new URLSearchParams(searchParams);
+    setOptionalParam(nextParams, 'page', page > 0 ? String(page + 1) : null);
+    setOptionalParam(nextParams, 'limit', pageSize !== DEFAULT_PAGE_SIZE ? String(pageSize) : null);
+    setOptionalParam(nextParams, 'sort', sortField !== DEFAULT_SORT_FIELD ? sortField : null);
+    setOptionalParam(nextParams, 'dir', sortDir !== DEFAULT_SORT_DIR ? sortDir : null);
+    setOptionalParam(nextParams, 'view', viewMode !== DEFAULT_VIEW_MODE ? viewMode : null);
+
+    const nextStr = nextParams.toString();
+    const currentStr = searchParams.toString();
+    if (nextStr !== currentStr) {
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [page, pageSize, searchParams, setSearchParams, sortDir, sortField, viewMode]);
 
   // Fetch leads from server with current filters, sort, and search
   // This is called explicitly by the "Go" button, sort clicks, page changes, etc.
@@ -111,7 +202,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
       } else {
         setBackendStarting(false);
         // Backend is ready — trigger first data load
-        loadLeadsRef.current?.(0);
+        loadLeadsRef.current?.(page);
       }
     };
     
@@ -129,29 +220,46 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
       .catch(() => undefined);
   }, []);
 
-  // Auto-reload on sort change (clicking a column header is an explicit action)
+  // Auto-reload on list-state changes after the initial health-check load.
   const hasMounted = React.useRef(false);
+  const previousListState = React.useRef({ sortField, sortDir, page, pageSize });
   useEffect(() => {
     if (!hasMounted.current) {
       hasMounted.current = true;
+      previousListState.current = { sortField, sortDir, page, pageSize };
       return; // Skip first run — handled by health check
     }
     if (backendStarting) return;
-    setPage(0);
-    loadLeadsRef.current?.(0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortField, sortDir]);
 
-  // Page change (user clicking next/prev) - only fire when page > 0 to avoid double-fetch
-  useEffect(() => {
-    if (page > 0) {
+    const previous = previousListState.current;
+    previousListState.current = { sortField, sortDir, page, pageSize };
+
+    const sortChanged = previous.sortField !== sortField || previous.sortDir !== sortDir;
+    const pageSizeChanged = previous.pageSize !== pageSize;
+    const pageChanged = previous.page !== page;
+
+    if (sortChanged) {
+      if (page !== 0) {
+        setPage(0);
+      }
+      loadLeadsRef.current?.(0);
+      return;
+    }
+
+    if (pageSizeChanged) {
+      loadLeadsRef.current?.(page);
+      return;
+    }
+
+    if (pageChanged) {
       loadLeadsRef.current?.(page);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page]);
+  }, [backendStarting, page, pageSize, sortDir, sortField]);
 
   // Apply filters within the currently selected workspace.
   const applyFilters = () => {
+    const shouldLoadFirstPageDirectly = page === 0;
     setPage(0);
     setError(null);
 
@@ -184,7 +292,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     if (addressResults.length > 0) {
       setAddressResults([]);
     }
-    loadLeads(0);
+    if (shouldLoadFirstPageDirectly) {
+      loadLeads(0);
+    }
   };
   useEffect(() => {
     if (!filterPreset) return;
@@ -198,7 +308,11 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
       hasEmail: filterPreset.hasEmail ? true : null,
     });
     onFilterPresetConsumed?.();
-    setTimeout(() => { loadLeadsRef.current?.(0); }, 0);
+    if (page === 0) {
+      setTimeout(() => { loadLeadsRef.current?.(0); }, 0);
+    } else {
+      setPage(0);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterPreset]);
 
@@ -208,6 +322,12 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
 
   // Server handles filtering, sorting, and search — display leads directly
   const displayLeads = leads;
+  const buildLeadHref = useCallback((leadId: string) => {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set('lead', leadId);
+    const query = nextParams.toString();
+    return query ? `/leads?${query}` : '/leads';
+  }, [searchParams]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -229,34 +349,95 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     setSelectedIds(newSelected);
   };
 
-  const selectAll = () => {
-    if (selectedIds.size === displayLeads.length) {
-      setSelectedIds(new Set());
+  const toggleSelectMany = (ids: string[]) => {
+    if (ids.length === 0) return;
+    const nextSelected = new Set(selectedIds);
+    const everySelected = ids.every((id) => nextSelected.has(id));
+    if (everySelected) {
+      ids.forEach((id) => nextSelected.delete(id));
     } else {
-      setSelectedIds(new Set(displayLeads.map(l => l.lead_id)));
+      ids.forEach((id) => nextSelected.add(id));
     }
+    setSelectedIds(nextSelected);
+  };
+
+  const clearSelected = () => {
+    setSelectedIds(new Set());
+  };
+
+  const visibleLeadIds = displayLeads.map((lead) => lead.lead_id);
+  const allVisibleSelected = visibleLeadIds.length > 0 && visibleLeadIds.every((id) => selectedIds.has(id));
+
+  const selectAll = () => {
+    toggleSelectMany(visibleLeadIds);
+  };
+
+  const toggleStageSelection = (stage: string) => {
+    toggleSelectMany(
+      displayLeads
+        .filter((lead) => (lead.pipeline_stage || 'research') === stage)
+        .map((lead) => lead.lead_id)
+    );
+  };
+
+  const isStageFullySelected = (stage: string) => {
+    const stageLeadIds = displayLeads
+      .filter((lead) => (lead.pipeline_stage || 'research') === stage)
+      .map((lead) => lead.lead_id);
+    return stageLeadIds.length > 0 && stageLeadIds.every((id) => selectedIds.has(id));
   };
 
   const handleEnrichSelected = async () => {
     if (selectedIds.size === 0) return;
     setEnriching(true);
     try {
-      await enrichLeads(Array.from(selectedIds));
-      loadLeads(page);
+      const result = await startSelectedLeadsEnrichment(Array.from(selectedIds));
+      if (result.missing_lead_ids.length > 0) {
+        toast.success(`Queued enrichment for ${result.target_count} lead(s). ${result.missing_lead_ids.length} selection(s) were skipped.`);
+      } else if (result.dispatch_mode === 'in_process') {
+        toast.success(`Queued enrichment for ${result.target_count} lead(s) in local fallback mode.`);
+      } else {
+        toast.success(`Queued enrichment for ${result.target_count} selected lead(s).`);
+      }
       setSelectedIds(new Set());
     } catch (err) {
       console.error('Enrichment failed:', err);
-      toast.error('Enrichment failed. Please try again.');
+      toast.error('Failed to queue enrichment. Please try again.');
     } finally {
       setEnriching(false);
+    }
+  };
+
+  const handleBulkPipelineStageUpdate = async () => {
+    if (selectedIds.size === 0 || !bulkPipelineStage) return;
+    setUpdatingPipelineStage(true);
+    try {
+      const result = await updateLeadPipelineStages(Array.from(selectedIds), bulkPipelineStage);
+      const stageLabel = PIPELINE_STAGES.find((stage) => stage.value === bulkPipelineStage)?.label || bulkPipelineStage;
+      if (result.missing_lead_ids.length > 0) {
+        toast.success(`Moved ${result.updated_count} lead(s) to ${stageLabel}. ${result.missing_lead_ids.length} selection(s) were skipped.`);
+      } else {
+        toast.success(`Moved ${result.updated_count} lead(s) to ${stageLabel}.`);
+      }
+      loadLeadsRef.current?.(page);
+      setSelectedIds(new Set());
+      setBulkPipelineStage('');
+    } catch (err) {
+      console.error('Bulk pipeline update failed:', err);
+      toast.error('Failed to update selected leads. Please try again.');
+    } finally {
+      setUpdatingPipelineStage(false);
     }
   };
 
   const clearFilters = async () => {
     clearFilterState();
     setAddressResults([]);
-    setPage(0);
-    setTimeout(() => loadLeadsRef.current?.(0), 0);
+    if (page === 0) {
+      setTimeout(() => loadLeadsRef.current?.(0), 0);
+    } else {
+      setPage(0);
+    }
   };
 
   const exportToCsv = async () => {
@@ -307,30 +488,53 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     }
   };
 
-  const saveAsSmartList = async () => {
-    const name = window.prompt('Smart List name:');
-    if (!name?.trim()) return;
-    try {
-      const smartFilters: Record<string, unknown> = {};
-      if (filters.boroughs.length > 0) smartFilters.boroughs = filters.boroughs;
-      if (filters.minScore) smartFilters.min_score = filters.minScore;
-      if (filters.maxScore) smartFilters.max_score = filters.maxScore;
-      if (filters.minPortfolio) smartFilters.min_portfolio = filters.minPortfolio;
-      if (filters.maxPortfolio) smartFilters.max_portfolio = filters.maxPortfolio;
-      if (filters.minUnits) smartFilters.min_units = filters.minUnits;
-      if (filters.maxUnits) smartFilters.max_units = filters.maxUnits;
-      if (filters.entityTypes.length > 0) smartFilters.entity_types = filters.entityTypes;
-      if (filters.pipelineStages.length > 0) smartFilters.pipeline_stages = filters.pipelineStages;
-      if (filters.outreachStatuses.length > 0) smartFilters.outreach_statuses = filters.outreachStatuses;
-      if (filters.enrichmentStatuses.length > 0) smartFilters.enrichment_statuses = filters.enrichmentStatuses;
-      if (filters.hasPhone) smartFilters.has_phone = true;
-      if (filters.hasEmail) smartFilters.has_email = true;
-      if (filters.searchTerm.trim()) smartFilters.search = filters.searchTerm.trim();
+  const buildSmartListFilters = useCallback(() => {
+    const smartFilters: Record<string, unknown> = {};
+    if (filters.boroughs.length > 0) smartFilters.boroughs = filters.boroughs;
+    if (filters.neighborhood.trim()) smartFilters.neighborhood = filters.neighborhood.trim();
+    if (filters.minScore) smartFilters.min_score = filters.minScore;
+    if (filters.maxScore) smartFilters.max_score = filters.maxScore;
+    if (filters.minPortfolio) smartFilters.min_portfolio = filters.minPortfolio;
+    if (filters.maxPortfolio) smartFilters.max_portfolio = filters.maxPortfolio;
+    if (filters.minUnits) smartFilters.min_units = filters.minUnits;
+    if (filters.maxUnits) smartFilters.max_units = filters.maxUnits;
+    if (filters.entityTypes.length > 0) smartFilters.entity_types = filters.entityTypes;
+    if (filters.pipelineStages.length > 0) smartFilters.pipeline_stages = filters.pipelineStages;
+    if (filters.outreachStatuses.length > 0) smartFilters.outreach_statuses = filters.outreachStatuses;
+    if (filters.enrichmentStatuses.length > 0) smartFilters.enrichment_statuses = filters.enrichmentStatuses;
+    if (filters.hasPhone) smartFilters.has_phone = true;
+    if (filters.hasEmail) smartFilters.has_email = true;
+    if (filters.searchTerm.trim()) smartFilters.search = filters.searchTerm.trim();
+    return smartFilters;
+  }, [filters]);
 
-      await createSmartList({ name: name.trim(), filters: smartFilters });
-      toast.success(`Smart List "${name}" saved`);
+  const smartListSummary = [
+    filters.searchTerm.trim() ? `Search: ${filters.searchTerm.trim()}` : null,
+    filters.boroughs.length > 0 ? `Boroughs: ${filters.boroughs.join(', ')}` : null,
+    filters.neighborhood.trim() ? `Neighborhood: ${filters.neighborhood.trim()}` : null,
+    filters.buildingTypes.length > 0 ? `Types: ${filters.buildingTypes.join(', ')}` : null,
+    filters.pipelineStages.length > 0 ? `Stages: ${filters.pipelineStages.join(', ')}` : null,
+    filters.outreachStatuses.length > 0 ? `Outreach: ${filters.outreachStatuses.join(', ')}` : null,
+    filters.entityTypes.length > 0 ? `Entities: ${filters.entityTypes.join(', ')}` : null,
+    filters.hasPhone ? 'Has phone' : null,
+    filters.hasEmail ? 'Has email' : null,
+  ].filter(Boolean) as string[];
+
+  const saveAsSmartList = async () => {
+    if (!smartListName.trim()) {
+      toast.error('Please enter a Smart List name.');
+      return;
+    }
+    setSavingSmartList(true);
+    try {
+      await createSmartList({ name: smartListName.trim(), filters: buildSmartListFilters() });
+      toast.success(`Smart List "${smartListName.trim()}" saved`);
+      setShowSaveListDialog(false);
+      setSmartListName('');
     } catch (err) {
       toast.error('Failed to save Smart List');
+    } finally {
+      setSavingSmartList(false);
     }
   };
 
@@ -431,6 +635,21 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
               </button>
             ))}
           </div>
+          <div className="flex flex-col gap-1.5 min-w-[180px]">
+            <input
+              type="text"
+              placeholder="Neighborhood / NTA"
+              className="px-3 py-2 sm:px-2 sm:py-1.5 bg-white border border-gray-300 rounded text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              value={filters.neighborhood}
+              onChange={(e) => setField('neighborhood', e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  applyFilters();
+                }
+              }}
+            />
+            <span className="text-[10px] text-gray-400 px-1">Search NTA or community board, e.g. `Midtown` or `MN05`</span>
+          </div>
           <div className="flex gap-1.5">
             <button onClick={() => setField('hasPhone', filters.hasPhone === true ? null : true)}
               className={`px-3 py-2 sm:px-2 sm:py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1 ${filters.hasPhone === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:text-gray-700'}`}>
@@ -457,7 +676,11 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
             Export
           </button>
           {activeFiltersCount > 0 && (
-            <button onClick={saveAsSmartList}
+            <button
+              onClick={() => {
+                setSmartListName(smartListName || '');
+                setShowSaveListDialog(true);
+              }}
               className="hidden sm:inline-flex px-3 py-2 bg-white border border-blue-200 rounded-lg text-xs text-blue-700 hover:bg-blue-50 transition-colors items-center gap-1.5"
               title="Save current filters as a Smart List for tracking changes over time">
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" /></svg>
@@ -659,13 +882,35 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
             </div>
           )}
           {showLeadWorkspace && selectedIds.size > 0 && (
-            <button
-              onClick={handleEnrichSelected}
-              disabled={enriching}
-              className="px-4 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {enriching ? 'Enriching...' : `Enrich ${selectedIds.size} Selected`}
-            </button>
+            <div className="flex items-center gap-2">
+              <select
+                value={bulkPipelineStage}
+                onChange={(e) => setBulkPipelineStage(e.target.value)}
+                className="px-2 py-1.5 bg-white border border-gray-200 rounded text-xs text-gray-700 focus:outline-none"
+                aria-label="Move selected leads to pipeline stage"
+              >
+                <option value="">Move selected to...</option>
+                {PIPELINE_STAGES.map((stage) => (
+                  <option key={stage.value} value={stage.value}>
+                    {stage.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={handleBulkPipelineStageUpdate}
+                disabled={updatingPipelineStage || !bulkPipelineStage}
+                className="px-4 py-1.5 bg-emerald-600 text-white text-xs font-medium rounded-lg hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {updatingPipelineStage ? 'Moving...' : 'Move Selected'}
+              </button>
+              <button
+                onClick={handleEnrichSelected}
+                disabled={enriching}
+                className="px-4 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {enriching ? 'Enriching...' : `Enrich ${selectedIds.size} Selected`}
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -685,6 +930,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
           </div>
           <p className="text-[11px] text-gray-500 mt-2">
             These integrity counters help explain why a lead may look incomplete or duplicated while upstream cleanup runs.
+          </p>
+          <p className="text-[11px] text-gray-500 mt-1">
+            The Leads list now hides likely same-name duplicate rows by default to reduce clutter. Open a lead to review any sibling records that were kept for audit/history.
           </p>
         </div>
       )}
@@ -761,7 +1009,18 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
       {showLeadWorkspace && (
       <div className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
         {viewMode === 'kanban' ? (
-          <LeadKanban leads={displayLeads} onSelectLead={onSelectLead} />
+          <LeadKanban
+            leads={displayLeads}
+            onSelectLead={onSelectLead}
+            getLeadHref={buildLeadHref}
+            selectedLeadIds={selectedIds}
+            onToggleSelect={toggleSelect}
+            onToggleVisibleSelect={selectAll}
+            areAllVisibleSelected={allVisibleSelected}
+            onToggleStageSelect={toggleStageSelection}
+            isStageFullySelected={isStageFullySelected}
+            onClearSelection={clearSelected}
+          />
         ) : (
           <>
         {/* Desktop Table */}
@@ -772,7 +1031,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                 <th className="px-4 py-3 w-8">
                   <input
                     type="checkbox"
-                    checked={selectedIds.size === displayLeads.length && displayLeads.length > 0}
+                    checked={allVisibleSelected}
                     onChange={selectAll}
                     className="rounded bg-white border-gray-300"
                   />
@@ -829,7 +1088,13 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                   </td>
                   <td className="px-4 py-3">
                     <div className="font-medium text-gray-800 text-sm flex items-center gap-1.5">
-                      {getLeadDisplayName(lead)}
+                      <Link
+                        to={buildLeadHref(lead.lead_id)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="truncate hover:text-blue-700 hover:underline"
+                      >
+                        {getLeadDisplayName(lead)}
+                      </Link>
                       {lead.data_staleness === 'expired' && (
                         <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-red-50 text-red-500" title="Registration not confirmed in last refresh">EXPIRED</span>
                       )}
@@ -1007,7 +1272,13 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                     className="rounded bg-white border-gray-300 mt-0.5 flex-shrink-0"
                   />
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-gray-800 text-sm truncate">{getLeadDisplayName(lead)}</div>
+                    <Link
+                      to={buildLeadHref(lead.lead_id)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="font-medium text-gray-800 text-sm truncate block hover:text-blue-700 hover:underline"
+                    >
+                      {getLeadDisplayName(lead)}
+                    </Link>
                   <div className="flex items-center gap-1.5 mt-1">
                     <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
                       lead.entity_type === 'company' ? 'bg-blue-50 text-blue-700' :
@@ -1114,7 +1385,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
             <span className="text-xs text-gray-400">Per page:</span>
             <select
               value={pageSize}
-              onChange={(e) => { const newSize = Number(e.target.value); setPageSize(newSize); setPage(0); setTimeout(() => loadLeadsRef.current?.(0), 0); }}
+                onChange={(e) => { const newSize = Number(e.target.value); setPageSize(newSize); setPage(0); }}
               className="px-2 py-1.5 bg-white border border-gray-200 rounded text-xs text-gray-700 focus:outline-none"
             >
               <option value={25}>25</option>
@@ -1128,6 +1399,62 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
           </>
         )}
       </div>
+      )}
+      {showSaveListDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" onClick={() => { if (!savingSmartList) setShowSaveListDialog(false); }}>
+          <div className="w-full max-w-lg rounded-2xl border border-gray-200 bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="space-y-1">
+              <h3 className="text-lg font-bold text-gray-900">Save Smart List</h3>
+              <p className="text-sm text-gray-500">Save the current lead filters as a reusable segment.</p>
+            </div>
+            <div className="mt-4 space-y-3">
+              <input
+                type="text"
+                value={smartListName}
+                onChange={(e) => setSmartListName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !savingSmartList) {
+                    saveAsSmartList();
+                  }
+                }}
+                placeholder="List name"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                autoFocus
+              />
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Filter summary</div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {smartListSummary.length > 0 ? smartListSummary.map((item) => (
+                    <span key={item} className="rounded-full bg-white px-2 py-1 text-[11px] text-gray-700 border border-gray-200">
+                      {item}
+                    </span>
+                  )) : (
+                    <span className="text-xs text-gray-500">No filters selected yet. This will save the current broad Leads view.</span>
+                  )}
+                </div>
+                <div className="mt-3 text-xs text-gray-500">
+                  Current result set: <span className="font-medium text-gray-700">{totalLeads.toLocaleString()}</span> leads
+                </div>
+              </div>
+            </div>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setShowSaveListDialog(false)}
+                disabled={savingSmartList}
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveAsSmartList}
+                disabled={savingSmartList || !smartListName.trim()}
+                className="px-4 py-2 rounded-lg bg-blue-600 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+              >
+                {savingSmartList ? 'Saving...' : 'Save Smart List'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

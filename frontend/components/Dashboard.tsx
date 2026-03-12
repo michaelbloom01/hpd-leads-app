@@ -460,6 +460,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
             <svg className={`w-3.5 h-3.5 text-gray-400 transition-transform ${showReadyDrawer ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
           </button>
 
+          {enrichmentGaps && enrichmentGaps.unenriched > 0 && (
+            <>
+              <div className="h-5 w-px bg-gray-200 hidden md:block" />
+              <button
+                onClick={() => onNavigateToLeads?.({ enrichmentStatuses: ['none', 'failed'] })}
+                className="flex items-center gap-2 hover:bg-emerald-50 rounded-lg px-2 py-1 -mx-2 -my-1 transition-colors"
+                title="Open leads that still need enrichment"
+              >
+                <span className="flex items-center justify-center w-7 h-7 rounded-full bg-emerald-100 text-emerald-700 text-sm font-bold">
+                  {enrichmentGaps.unenriched}
+                </span>
+                <span className="text-sm text-emerald-700 font-medium">need enrichment</span>
+              </button>
+            </>
+          )}
+
           {/* Enrichment running indicator */}
           {enrichmentStatus?.running && (
             <>

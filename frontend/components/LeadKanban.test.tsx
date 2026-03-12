@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import LeadKanban from './leads/LeadKanban';
 import type { ApiLead } from '../services/api';
@@ -40,5 +40,33 @@ describe('LeadKanban', () => {
 
     render(<LeadKanban leads={[blankLead]} onSelectLead={vi.fn()} />);
     expect(screen.getByText('lead-fallback-1')).toBeInTheDocument();
+  });
+
+  it('renders selection controls and stage actions when bulk-selection props are provided', () => {
+    const onToggleVisibleSelect = vi.fn();
+    const onToggleStageSelect = vi.fn();
+    const onClearSelection = vi.fn();
+
+    render(
+      <LeadKanban
+        leads={[baseLead]}
+        onSelectLead={vi.fn()}
+        selectedLeadIds={new Set([baseLead.lead_id])}
+        onToggleSelect={vi.fn()}
+        onToggleVisibleSelect={onToggleVisibleSelect}
+        areAllVisibleSelected={true}
+        onToggleStageSelect={onToggleStageSelect}
+        isStageFullySelected={(stage) => stage === 'first_contact'}
+        onClearSelection={onClearSelection}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear Visible' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear Selection' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear Stage' }));
+
+    expect(onToggleVisibleSelect).toHaveBeenCalledTimes(1);
+    expect(onClearSelection).toHaveBeenCalledTimes(1);
+    expect(onToggleStageSelect).toHaveBeenCalledWith('first_contact');
   });
 });

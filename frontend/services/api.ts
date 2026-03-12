@@ -493,6 +493,14 @@ export interface LeadLineageResponse {
   last_updated: string | null;
   linked_buildings: number;
   sources: SourceLineageRow[];
+  sibling_count: number;
+  sibling_leads: Array<{
+    lead_id: string;
+    entity_name: string;
+    pipeline_stage: string | null;
+    outreach_status: string | null;
+    last_updated: string | null;
+  }>;
 }
 
 export interface LeadContactsResponse {
@@ -574,6 +582,42 @@ export async function updateLead(
     body: JSON.stringify(updates),
   });
   if (!response.ok) throw new Error(`Failed to update lead: ${response.statusText}`);
+  return response.json();
+}
+
+export async function updateLeadPipelineStages(
+  leadIds: string[],
+  pipelineStage: string,
+): Promise<{
+  status: string;
+  pipeline_stage: string;
+  updated_count: number;
+  missing_lead_ids: string[];
+}> {
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/lead-batches/pipeline-stage`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lead_ids: leadIds, pipeline_stage: pipelineStage }),
+  });
+  if (!response.ok) throw new Error(`Failed to update leads: ${response.statusText}`);
+  return response.json();
+}
+
+export async function startSelectedLeadsEnrichment(
+  leadIds: string[],
+): Promise<{
+  status: string;
+  job_id: number;
+  target_count: number;
+  missing_lead_ids: string[];
+  dispatch_mode?: string;
+}> {
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/lead-batches/enrichment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lead_ids: leadIds }),
+  });
+  if (!response.ok) throw new Error(`Failed to queue selected enrichment: ${response.statusText}`);
   return response.json();
 }
 

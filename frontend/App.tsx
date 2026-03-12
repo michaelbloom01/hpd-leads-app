@@ -1,6 +1,6 @@
 
 import React, { Component, useState, useCallback, useEffect, Suspense, lazy } from 'react';
-import { BrowserRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation, useMatch, useNavigate, useSearchParams } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster, toast } from 'react-hot-toast';
 import Sidebar from './components/Sidebar';
@@ -66,6 +66,8 @@ const PAGE_TITLES: Record<string, string> = {
   '/smart-lists': 'Smart Lists',
 };
 
+type SelectedLeadSource = 'route' | 'standalone' | null;
+
 const AppContent: React.FC = () => {
   const { isAuthenticated, isLoading, logout } = useAuth();
 
@@ -94,17 +96,94 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const { user } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+  const leadRouteMatch = useMatch('/leads/:leadId');
+  const leadPathId = leadRouteMatch?.params.leadId;
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedLead, setSelectedLead] = useState<ApiLead | null>(null);
+  const [selectedLeadSource, setSelectedLeadSource] = useState<SelectedLeadSource>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isAgentOpen, setIsAgentOpen] = useState(false);
   const [leadFilterPreset, setLeadFilterPreset] = useState<LeadFilterPreset | null>(null);
 
+  const replaceLeadSearchParam = useCallback((leadId: string | null) => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (leadId) {
+      nextParams.set('lead', leadId);
+    } else {
+      nextParams.delete('lead');
+    }
+    setSearchParams(nextParams, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  const handleLeadsSelectLead = useCallback((lead: ApiLead) => {
+    setSelectedLead(lead);
+    setSelectedLeadSource('route');
+    replaceLeadSearchParam(lead.lead_id);
+  }, [replaceLeadSearchParam]);
+
+  const clearRouteSelectedLead = useCallback(() => {
+    if (leadPathId) {
+      const nextSearch = searchParams.toString();
+      navigate(
+        {
+          pathname: '/leads',
+          search: nextSearch ? `?${nextSearch}` : '',
+        },
+        { replace: true },
+      );
+      return;
+    }
+    replaceLeadSearchParam(null);
+  }, [leadPathId, navigate, replaceLeadSearchParam, searchParams]);
+
   const handleLeadUpdated = useCallback((updatedLead: ApiLead) => {
     setSelectedLead(updatedLead);
     setRefreshKey(k => k + 1);
   }, []);
+
+  useEffect(() => {
+    const isLeadsRoute = location.pathname === '/leads' || location.pathname.startsWith('/leads/');
+    if (!isLeadsRoute) {
+      if (selectedLeadSource === 'route') {
+        setSelectedLead(null);
+        setSelectedLeadSource(null);
+      }
+      return;
+    }
+
+    const leadId = leadPathId ? decodeURIComponent(leadPathId) : searchParams.get('lead');
+    if (!leadId) {
+      if (selectedLeadSource === 'route') {
+        setSelectedLead(null);
+        setSelectedLeadSource(null);
+      }
+      return;
+    }
+
+    if (selectedLead?.lead_id === leadId && selectedLeadSource === 'route') {
+      return;
+    }
+
+    let cancelled = false;
+    fetchLead(leadId)
+      .then((lead) => {
+        if (cancelled) return;
+        setSelectedLead(lead);
+        setSelectedLeadSource('route');
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error('Failed to fetch lead from route:', err);
+        toast.error('Could not load lead details');
+        clearRouteSelectedLead();
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [clearRouteSelectedLead, leadPathId, location.pathname, searchParams, selectedLead?.lead_id, selectedLeadSource]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -232,7 +311,9 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                   <Route path="/" element={
                     <RouteErrorBoundary>
                       <Dashboard
-                        onSelectLead={setSelectedLead}
+                        onSelectLead={(lead) => {
+                          navigate(`/leads/${encodeURIComponent(lead.lead_id)}`);
+                        }}
                         onNavigateToLeads={(filters) => {
                           if (filters) setLeadFilterPreset(filters);
                           navigate('/leads');
@@ -243,7 +324,16 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                   <Route path="/leads" element={
                     <RouteErrorBoundary>
                       <LeadTable
-                        onSelectLead={setSelectedLead}
+                        onSelectLead={handleLeadsSelectLead}
+                        filterPreset={leadFilterPreset}
+                        onFilterPresetConsumed={() => setLeadFilterPreset(null)}
+                      />
+                    </RouteErrorBoundary>
+                  } />
+                  <Route path="/leads/:leadId" element={
+                    <RouteErrorBoundary>
+                      <LeadTable
+                        onSelectLead={handleLeadsSelectLead}
                         filterPreset={leadFilterPreset}
                         onFilterPresetConsumed={() => setLeadFilterPreset(null)}
                       />
@@ -295,9 +385,8 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
             isOpen={isAgentOpen}
             onClose={() => setIsAgentOpen(false)}
             onSelectLead={(leadId) => {
-              fetchLead(leadId)
-                .then(lead => { if (lead) setSelectedLead(lead); })
-                .catch(err => { console.error('Failed to fetch lead:', err); toast.error('Could not load lead details'); });
+              setIsAgentOpen(false);
+              navigate(`/leads/${encodeURIComponent(leadId)}`);
             }}
           />
         </RouteErrorBoundary>
@@ -308,7 +397,14 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
           <RouteErrorBoundary>
             <LeadDetail 
               lead={selectedLead} 
-              onClose={() => setSelectedLead(null)}
+              onClose={() => {
+                if (selectedLeadSource === 'route' && (location.pathname === '/leads' || location.pathname.startsWith('/leads/'))) {
+                  clearRouteSelectedLead();
+                } else {
+                  setSelectedLead(null);
+                  setSelectedLeadSource(null);
+                }
+              }}
               onLeadUpdated={handleLeadUpdated}
             />
           </RouteErrorBoundary>

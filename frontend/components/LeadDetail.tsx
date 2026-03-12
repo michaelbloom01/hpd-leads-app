@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { toast } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { ApiLead, fetchLead, updateLead, addOutreachAttempt, enrichLeadAll, estimateLeadRevenue, OutreachAttempt, fetchLeadContacts } from '../services/api';
+import { ApiLead, fetchLead, fetchLeadLineage, type LeadLineageResponse, updateLead, addOutreachAttempt, enrichLeadAll, estimateLeadRevenue, OutreachAttempt, fetchLeadContacts } from '../services/api';
 import { addBuildingToPipeline, fetchBuildings, type BuildingRow, type BuildingContactEntry } from '../services/buildings-api';
 import { PIPELINE_STAGES, OUTREACH_STATUSES, OUTREACH_METHODS, OUTREACH_OUTCOMES, formatCurrency } from '../utils/format';
 import { getLeadDisplayName } from '../utils/leads';
@@ -63,6 +63,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   const [revenueEstimateFailed, setRevenueEstimateFailed] = useState(false);
   const [linkedBuildings, setLinkedBuildings] = useState<BuildingRow[]>([]);
   const [loadingLinkedBuildings, setLoadingLinkedBuildings] = useState(false);
+  const [leadLineage, setLeadLineage] = useState<LeadLineageResponse | null>(null);
   const [pipelineAddBusy, setPipelineAddBusy] = useState<Record<string, boolean>>({});
   const [buildingContacts, setBuildingContacts] = useState<{ bbl: string; address: string; outreach_status?: string | null; contacts: BuildingContactEntry[] }[]>([]);
   const [loadingBuildingContacts, setLoadingBuildingContacts] = useState(false);
@@ -134,6 +135,20 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     loadLinkedBuildings();
     return () => { cancelled = true; };
   }, [activeTab, enrichedLead.lead_id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadLeadLineage = async () => {
+      try {
+        const lineage = await fetchLeadLineage(lead.lead_id);
+        if (!cancelled) setLeadLineage(lineage);
+      } catch (err) {
+        if (!cancelled) setLeadLineage(null);
+      }
+    };
+    loadLeadLineage();
+    return () => { cancelled = true; };
+  }, [lead.lead_id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -530,6 +545,21 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
               </select>
             </div>
           </div>
+          {leadLineage && leadLineage.sibling_count > 0 && (
+            <div className="mx-4 sm:mx-5 mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+              <div className="text-xs font-bold uppercase tracking-wider text-amber-700">Potential duplicate records hidden in list view</div>
+              <p className="mt-1 text-sm text-amber-800">
+                This entity has {leadLineage.sibling_count} sibling lead record{leadLineage.sibling_count === 1 ? '' : 's'} with the same display identity. The Leads table now hides likely duplicates to reduce clutter, but the underlying rows remain available for audit.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {leadLineage.sibling_leads.map((sibling) => (
+                  <span key={sibling.lead_id} className="rounded-full border border-amber-200 bg-white px-2 py-1 text-[11px] text-amber-800">
+                    {sibling.lead_id} · {sibling.pipeline_stage || 'research'}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Tab bar — scrollable on mobile */}
           <div className="flex overflow-x-auto border-b border-gray-200 scrollbar-hide">
@@ -734,7 +764,14 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                       buildings={linkedBuildings.length > 0
                         ? linkedBuildings
                             .filter((b) => Boolean(b.address))
-                            .map((b) => ({ address: b.address, borough: b.borough || undefined }))
+                            .map((b) => ({
+                              address: b.address,
+                              borough: b.borough || undefined,
+                              latitude: b.latitude ?? null,
+                              longitude: b.longitude ?? null,
+                              coordinate_source: b.coordinate_source ?? null,
+                              coordinate_precision: b.coordinate_precision ?? null,
+                            }))
                         : enrichedLead.buildings}
                       boro={enrichedLead.boro}
                       boros={enrichedLead.boros}
@@ -1089,7 +1126,14 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                     buildings={linkedBuildings.length > 0
                       ? linkedBuildings
                           .filter((b) => Boolean(b.address))
-                          .map((b) => ({ address: b.address, borough: b.borough || undefined }))
+                          .map((b) => ({
+                            address: b.address,
+                            borough: b.borough || undefined,
+                            latitude: b.latitude ?? null,
+                            longitude: b.longitude ?? null,
+                            coordinate_source: b.coordinate_source ?? null,
+                            coordinate_precision: b.coordinate_precision ?? null,
+                          }))
                       : enrichedLead.buildings}
                     boro={enrichedLead.boro}
                     boros={enrichedLead.boros}

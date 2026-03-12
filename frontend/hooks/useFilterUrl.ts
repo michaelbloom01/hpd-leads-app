@@ -12,6 +12,7 @@ import type { FilterState } from './useLeadFilters';
 const FILTER_PARAM_MAP: Record<string, keyof FilterState> = {
   q: 'searchTerm',
   boro: 'boroughs',
+  neighborhood: 'neighborhood',
   min_score: 'minScore',
   max_score: 'maxScore',
   min_portfolio: 'minPortfolio',
@@ -37,6 +38,7 @@ const ARRAY_FIELDS = new Set<keyof FilterState>([
 ]);
 
 const BOOL_FIELDS = new Set<keyof FilterState>(['hasPhone', 'hasEmail', 'hasWebsite']);
+const FILTER_PARAM_KEYS = Object.keys(FILTER_PARAM_MAP);
 
 function filtersToParams(filters: FilterState): URLSearchParams {
   const params = new URLSearchParams();
@@ -100,7 +102,12 @@ export function useFilterUrl(
     if (prevFilters.current === filters) return;
     prevFilters.current = filters;
 
-    const newParams = filtersToParams(filters);
+    const newParams = new URLSearchParams(searchParams);
+    FILTER_PARAM_KEYS.forEach((param) => newParams.delete(param));
+    const filterParams = filtersToParams(filters);
+    filterParams.forEach((value, key) => {
+      newParams.set(key, value);
+    });
     const newStr = newParams.toString();
     const currentStr = searchParams.toString();
     if (newStr !== currentStr) {

@@ -10,6 +10,7 @@ import { useReducer, useCallback, useMemo } from 'react';
 export interface FilterState {
   searchTerm: string;
   boroughs: string[];
+  neighborhood: string;
   minScore: string;
   maxScore: string;
   minPortfolio: string;
@@ -35,6 +36,7 @@ export interface FilterState {
 const INITIAL_STATE: FilterState = {
   searchTerm: '',
   boroughs: [],
+  neighborhood: '',
   minScore: '',
   maxScore: '',
   minPortfolio: '',
@@ -106,6 +108,7 @@ export function useLeadFilters() {
   const activeFiltersCount = useMemo(() => {
     return [
       filters.entityTypes.length > 0,
+      filters.neighborhood !== '',
       filters.outreachStatuses.length > 0,
       filters.enrichmentStatuses.length > 0,
       filters.pipelineStages.length > 0,
@@ -137,6 +140,7 @@ export function useLeadFilters() {
       if (num(filters.minPortfolio) !== undefined) params.min_portfolio = num(filters.minPortfolio);
       if (num(filters.maxPortfolio) !== undefined) params.max_portfolio = num(filters.maxPortfolio);
       if (filters.boroughs.length > 0) params.boro = filters.boroughs.join(',');
+      if (filters.neighborhood.trim()) params.neighborhood = filters.neighborhood.trim();
       if (filters.hasPhone !== null) params.has_phone = filters.hasPhone;
       if (filters.hasEmail !== null) params.has_email = filters.hasEmail;
       if (filters.entityTypes.length > 0) params.entity_type = filters.entityTypes.join(',');
