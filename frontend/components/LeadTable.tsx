@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'react-hot-toast';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { fetchLeads, ApiLead, startSelectedLeadsEnrichment, updateLeadPipelineStages, API_BASE_URL, checkHealth, searchBuildings, BuildingSearchResult, createSmartList, fetchDataHealth, type DataHealthResponse } from '../services/api';
+import { fetchLeads, ApiLead, startSelectedLeadsEnrichment, updateLeadPipelineStages, API_BASE_URL, checkHealth, searchBuildings, BuildingSearchResult, createSmartList } from '../services/api';
 import { getAuthHeaders } from '../services/auth';
 import { BOROUGHS, BOROUGH_SHORT, PIPELINE_STAGES, formatCurrency, scoreColor } from '../utils/format';
 import { useLeadFilters } from '../hooks/useLeadFilters';
@@ -108,7 +108,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
   const [backendStarting, setBackendStarting] = useState(false);
   const [addressResults, setAddressResults] = useState<BuildingSearchResult[]>([]);
   const [addressSearching, setAddressSearching] = useState(false);
-  const [dataHealth, setDataHealth] = useState<DataHealthResponse | null>(null);
 
   // Sorting
   const [sortField, setSortField] = useState<SortField>(() => parseSortField(searchParams.get('sort')));
@@ -223,14 +222,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     return () => { clearTimeout(timerId); };
     // Only run once on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    fetchDataHealth()
-      .then((result) => {
-        if (isMounted.current) setDataHealth(result);
-      })
-      .catch(() => undefined);
   }, []);
 
   // Auto-reload on list-state changes after the initial health-check load.
@@ -946,29 +937,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
           )}
         </div>
       </div>
-      {/* Address Search Results */}
-      {showLeadWorkspace && dataHealth?.integrity && (
-        <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-4">
-          <div className="flex flex-wrap gap-3 text-xs">
-            <span className="px-2 py-1 rounded bg-gray-100 text-gray-700">
-              Blank display names: {dataHealth.integrity.blank_display_name_leads.toLocaleString()}
-            </span>
-            <span className="px-2 py-1 rounded bg-gray-100 text-gray-700">
-              Leads with no active building links: {dataHealth.integrity.leads_with_zero_active_links.toLocaleString()}
-            </span>
-            <span className="px-2 py-1 rounded bg-gray-100 text-gray-700">
-              Buildings with multiple current PM links: {dataHealth.integrity.buildings_with_multiple_current_pm_links.toLocaleString()}
-            </span>
-          </div>
-          <p className="text-[11px] text-gray-500 mt-2">
-            These integrity counters help explain why a lead may look incomplete or duplicated while upstream cleanup runs.
-          </p>
-          <p className="text-[11px] text-gray-500 mt-1">
-            The Leads list now hides likely same-name duplicate rows by default to reduce clutter. Open a lead to review any sibling records that were kept for audit/history.
-          </p>
-        </div>
-      )}
-
       {filters.searchMode === 'address' && addressResults.length > 0 && (
         <div className="bg-white shadow-sm border border-blue-200 rounded-xl p-4 mb-3">
           <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3">

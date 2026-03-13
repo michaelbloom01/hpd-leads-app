@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.session import get_session
@@ -487,12 +488,6 @@ async def get_leads(
         )
     """
 
-    count_result = await session.execute(
-        text(f"{dedupe_cte_sql} SELECT COUNT(*) FROM ranked_leads WHERE dedupe_rank = 1"),
-        params,
-    )
-    total = count_result.scalar() or 0
-
     result = await session.execute(
         text(f"""
             {dedupe_cte_sql}
@@ -505,6 +500,17 @@ async def get_leads(
         params,
     )
     leads = [_row_to_response(dict(r._mapping)) for r in result]
+    try:
+        count_result = await session.execute(
+            text(f"{dedupe_cte_sql} SELECT COUNT(*) FROM ranked_leads WHERE dedupe_rank = 1"),
+            params,
+        )
+        total = count_result.scalar() or 0
+    except DBAPIError as exc:
+        # Production can temporarily exhaust Postgres temp space on the exact count.
+        # Return the current page with a conservative total estimate instead of failing.
+        logger.warning("Lead count query fell back to estimated total: %s", exc)
+        total = offset + len(leads) + (1 if len(leads) == limit else 0)
     return {"leads": leads, "total": total, "offset": offset, "limit": limit}
 
 
