@@ -220,6 +220,40 @@ def _row_to_response(r: dict) -> dict:
     }
 
 
+LEAD_LIST_SELECT_SQL = """
+    lead_id,
+    agent_name,
+    owner_name,
+    owner_type,
+    live_portfolio_size,
+    live_total_units,
+    phone,
+    email,
+    website,
+    business_summary,
+    address,
+    primary_borough,
+    boros,
+    score,
+    enrichment_status,
+    outreach_status,
+    entity_type,
+    company_name,
+    primary_contact,
+    primary_contact_title,
+    estimated_monthly_revenue,
+    estimated_annual_revenue,
+    violation_count,
+    violation_class_a,
+    violation_class_b,
+    violation_class_c,
+    violations_per_unit,
+    pipeline_stage,
+    next_follow_up,
+    priority_rank
+""".strip()
+
+
 @router.get("/leads")
 @limiter.limit("60/minute")
 async def get_leads(
@@ -462,7 +496,7 @@ async def get_leads(
     result = await session.execute(
         text(f"""
             {dedupe_cte_sql}
-            SELECT *
+            SELECT {LEAD_LIST_SELECT_SQL}
             FROM ranked_leads
             WHERE dedupe_rank = 1
             ORDER BY {sort_col} {sort_direction} NULLS LAST
