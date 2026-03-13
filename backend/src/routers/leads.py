@@ -255,6 +255,40 @@ LEAD_LIST_SELECT_SQL = """
 """.strip()
 
 
+LEAD_LIST_SIMPLE_SELECT_SQL = """
+    lead_id,
+    agent_name,
+    owner_name,
+    owner_type,
+    portfolio_size AS live_portfolio_size,
+    total_units AS live_total_units,
+    phone,
+    email,
+    website,
+    business_summary,
+    address,
+    primary_borough,
+    boros,
+    score,
+    enrichment_status,
+    outreach_status,
+    entity_type,
+    company_name,
+    primary_contact,
+    primary_contact_title,
+    estimated_monthly_revenue,
+    estimated_annual_revenue,
+    violation_count,
+    violation_class_a,
+    violation_class_b,
+    violation_class_c,
+    violations_per_unit,
+    pipeline_stage,
+    next_follow_up,
+    priority_rank
+""".strip()
+
+
 @router.get("/leads")
 @limiter.limit("60/minute")
 async def get_leads(
@@ -437,6 +471,26 @@ async def get_leads(
     else:
         sort_col = "score"
     sort_direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
+
+    if where_sql == "1=1" and sort_col == "score" and sort_direction == "DESC":
+        simple_result = await session.execute(
+            text(f"""
+                SELECT {LEAD_LIST_SIMPLE_SELECT_SQL}
+                FROM leads
+                ORDER BY score DESC NULLS LAST, updated_at DESC NULLS LAST, lead_id ASC
+                LIMIT :limit OFFSET :offset
+            """),
+            params,
+        )
+        leads = [_row_to_response(dict(r._mapping)) for r in simple_result]
+        try:
+            total = (
+                await session.execute(text("SELECT COUNT(*) FROM leads"))
+            ).scalar() or 0
+        except DBAPIError as exc:
+            logger.warning("Simple lead count fell back to estimated total: %s", exc)
+            total = offset + len(leads) + (1 if len(leads) == limit else 0)
+        return {"leads": leads, "total": total, "offset": offset, "limit": limit}
 
     dedupe_cte_sql = f"""
         WITH live_link_stats AS (
