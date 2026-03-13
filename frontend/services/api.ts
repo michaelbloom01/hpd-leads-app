@@ -431,7 +431,8 @@ export async function fetchLeads(params?: {
   }
   
   const url = `${API_BASE_URL}/api/leads${searchParams.toString() ? '?' + searchParams.toString() : ''}`;
-  const response = await fetchWithRetry(url);
+  // Lead list payloads can be large on cold production queries.
+  const response = await fetchWithRetry(url, {}, 1, 90000);
   
   if (!response.ok) {
     throw new Error(`Failed to fetch leads: ${response.statusText}`);

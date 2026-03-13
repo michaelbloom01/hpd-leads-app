@@ -252,7 +252,10 @@ async def list_buildings(
             SELECT b.bbl, b.address, b.borough, b.unit_count, b.building_type,
                    b.churn_score, b.churn_category, b.key_signal,
                    b.coverage_ratio, b.outreach_status, b.last_scored_at,
-                   b.latitude, b.longitude, b.coordinate_source, b.coordinate_precision,
+                   NULL::double precision AS latitude,
+                   NULL::double precision AS longitude,
+                   NULL::varchar AS coordinate_source,
+                   NULL::varchar AS coordinate_precision,
                    m.current_lead_id, m.current_link_count, m.current_link_lead_ids,
                    m.current_link_conflict, pm.pm_company
             FROM buildings b

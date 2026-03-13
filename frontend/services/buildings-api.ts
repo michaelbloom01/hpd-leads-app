@@ -201,7 +201,7 @@ export function fetchBuildings(params: BuildingsQueryParams = {}): Promise<Build
     if (v !== undefined && v !== null && v !== '') sp.set(k, String(v));
   });
   const qs = sp.toString();
-  return apiGet(`/api/v1/buildings${qs ? '?' + qs : ''}`);
+  return apiGet(`/api/v1/buildings${qs ? '?' + qs : ''}`, 60000);
 }
 
 export function fetchBuildingStats(): Promise<BuildingStats> {
@@ -255,7 +255,7 @@ export interface BuildingListMember extends BuildingRow {
 }
 
 export async function getBuildingLists(): Promise<{ building_lists: BuildingList[] }> {
-  return apiGet('/api/v1/building-lists');
+  return apiGet('/api/v1/building-lists', 60000);
 }
 
 export async function createBuildingList(name: string): Promise<{ id: string; name: string }> {
@@ -298,7 +298,7 @@ export async function removeBuildingFromList(listId: string, bbl: string): Promi
 }
 
 export async function fetchBuildingListMembers(listId: string): Promise<{ buildings: BuildingListMember[] }> {
-  return apiGet(`/api/v1/building-lists/${listId}/buildings`);
+  return apiGet(`/api/v1/building-lists/${listId}/buildings`, 60000);
 }
 
 export function logBuildingOutreachEvent(

@@ -17,6 +17,11 @@ router = APIRouter(prefix="/api/v1/building-lists", tags=["building-lists"])
 limiter = Limiter(key_func=get_remote_address)
 
 
+def _auth_user_id(user: AuthUser) -> str:
+    """Return the JWT subject id for ownership checks."""
+    return user.user_id
+
+
 async def ensure_building_lists_tables(session: AsyncSession) -> None:
     """Create building_lists tables if they don't exist (for dev without migrations)."""
     await session.execute(text("""
@@ -68,7 +73,7 @@ async def list_building_lists(
             WHERE user_id = :uid
             ORDER BY updated_at DESC
         """),
-        {"uid": user.id},
+        {"uid": _auth_user_id(user)},
     )
     rows = [dict(r._mapping) for r in result]
     return {"building_lists": rows}
@@ -89,7 +94,7 @@ async def create_building_list(
             INSERT INTO building_lists (id, user_id, name)
             VALUES (:id, :uid, :name)
         """),
-        {"id": list_id, "uid": user.id, "name": body.name.strip()},
+        {"id": list_id, "uid": _auth_user_id(user), "name": body.name.strip()},
     )
     await session.commit()
     return {"id": list_id, "name": body.name.strip()}
@@ -114,7 +119,7 @@ async def update_building_list(
             RETURNING id, name
             """
         ),
-        {"id": list_id, "uid": user.id, "name": body.name.strip()},
+        {"id": list_id, "uid": _auth_user_id(user), "name": body.name.strip()},
     )
     row = result.fetchone()
     await session.commit()
@@ -134,7 +139,7 @@ async def delete_building_list(
     """Delete a building list."""
     r = await session.execute(
         text("DELETE FROM building_lists WHERE id = :id AND user_id = :uid RETURNING id"),
-        {"id": list_id, "uid": user.id},
+        {"id": list_id, "uid": _auth_user_id(user)},
     )
     row = r.fetchone()
     await session.commit()
@@ -156,7 +161,7 @@ async def add_building_to_list(
     # Verify list ownership
     r = await session.execute(
         text("SELECT 1 FROM building_lists WHERE id = :id AND user_id = :uid"),
-        {"id": list_id, "uid": user.id},
+        {"id": list_id, "uid": _auth_user_id(user)},
     )
     if not r.fetchone():
         raise HTTPException(status_code=404, detail="Building list not found")
@@ -197,7 +202,7 @@ async def remove_building_from_list(
             AND EXISTS (SELECT 1 FROM building_lists WHERE id = :list_id AND user_id = :uid)
             RETURNING list_id
         """),
-        {"list_id": list_id, "bbl": bbl, "uid": user.id},
+        {"list_id": list_id, "bbl": bbl, "uid": _auth_user_id(user)},
     )
     row = r.fetchone()
     await session.commit()
@@ -217,7 +222,7 @@ async def list_buildings_in_list(
     """List buildings in a building list."""
     r = await session.execute(
         text("SELECT 1 FROM building_lists WHERE id = :id AND user_id = :uid"),
-        {"id": list_id, "uid": user.id},
+        {"id": list_id, "uid": _auth_user_id(user)},
     )
     if not r.fetchone():
         raise HTTPException(status_code=404, detail="Building list not found")
@@ -225,7 +230,10 @@ async def list_buildings_in_list(
         text("""
             SELECT b.bbl, b.address, b.borough, b.unit_count, b.building_type,
                    b.churn_score, b.churn_category,
-                   b.latitude, b.longitude, b.coordinate_source, b.coordinate_precision,
+                   NULL::double precision AS latitude,
+                   NULL::double precision AS longitude,
+                   NULL::varchar AS coordinate_source,
+                   NULL::varchar AS coordinate_precision,
                    m.added_at
             FROM building_list_members m
             JOIN buildings b ON b.bbl = m.bbl
