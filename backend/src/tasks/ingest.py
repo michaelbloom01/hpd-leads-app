@@ -710,7 +710,7 @@ def ingest_acris_transactions(self, job_id: Optional[int] = None):
         legals = _socrata_fetch(DATASETS["acris_legals"], {
             "$select": "document_id,borough,block,lot",
             "$where": "borough IS NOT NULL AND block IS NOT NULL AND lot IS NOT NULL",
-            "$limit": 50000,
+            "$limit": 10000,
             "$order": "document_id DESC",
         })
         doc_to_bbl = {}
@@ -723,7 +723,7 @@ def ingest_acris_transactions(self, job_id: Optional[int] = None):
             "$select": "document_id,doc_type,doc_type_description,recorded_datetime,doc_amount",
             "$where": "doc_type IN('DEED','MTGE','AGMT','ASST')",
             "$order": "recorded_datetime DESC",
-            "$limit": 50000,
+            "$limit": 10000,
         })
 
         inserted = matched = rejected = 0
