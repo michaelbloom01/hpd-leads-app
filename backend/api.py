@@ -54,24 +54,6 @@ from src.routers.building_lists import router as building_lists_router
 # Optional routers loaded conditionally.
 _optional_routers = []
 
-# Legacy SQLite routers are now opt-in only. This keeps PostgreSQL as the default runtime
-# and prevents accidental split-path execution when DATABASE_URL is misconfigured.
-_enable_legacy_sqlite_routers = os.environ.get("ENABLE_LEGACY_SQLITE_ROUTERS", "").lower() in {"1", "true", "yes"}
-if _enable_legacy_sqlite_routers:
-    logger.warning("ENABLE_LEGACY_SQLITE_ROUTERS is enabled; loading legacy SQLite routers.")
-    try:
-        from src.routers.enrichment import router as enrichment_router
-        _optional_routers.append(enrichment_router)
-    except Exception as exc:
-        logger.warning("Failed to load legacy enrichment router: %s", exc)
-        enrichment_router = None
-    try:
-        from src.routers.pipeline import router as pipeline_router
-        _optional_routers.append(pipeline_router)
-    except Exception as exc:
-        logger.warning("Failed to load legacy pipeline router: %s", exc)
-        pipeline_router = None
-
 # Agent router uses PostgreSQL — always load
 try:
     from src.routers.agent import router as agent_router

@@ -113,14 +113,6 @@ class GooglePlacesEnricher:
         self.api_key = api_key or os.environ.get("GOOGLE_PLACES_API_KEY")
         self.base_url = "https://maps.googleapis.com/maps/api/place"
         
-        # SQLite-backed persistent cache (Phase 2.7d)
-        self._db = None
-        try:
-            from src.storage.database import get_database
-            self._db = get_database()
-        except Exception:
-            pass  # Gracefully degrade without persistent cache
-        
     def is_configured(self) -> bool:
         return bool(self.api_key)
     
@@ -160,14 +152,7 @@ class GooglePlacesEnricher:
         return self._search_and_get_details(search_query)
     
     def _search_and_get_details(self, query: str) -> Optional[Dict]:
-        """Execute a Places text search + details lookup (with SQLite caching)."""
-        # Check persistent cache first
-        cache_key = query.lower().strip()
-        if self._db and self._db.has_places_cache(cache_key):
-            cached = self._db.get_places_cache(cache_key)
-            logger.debug(f"Google Places cache hit for: {query[:60]}")
-            return cached
-        
+        """Execute a Places text search + details lookup."""
         try:
             search_url = f"{self.base_url}/textsearch/json"
             response = requests.get(search_url, params={
@@ -211,10 +196,6 @@ class GooglePlacesEnricher:
                 "maps_url": result.get("url"),
                 "name": result.get("name"),
             }
-            
-            # Persist to SQLite cache
-            if self._db:
-                self._db.set_places_cache(cache_key, api_result)
             
             return api_result
         except Exception as e:

@@ -262,13 +262,6 @@ class Enricher:
             except Exception as e:
                 logger.warning(f"Failed to enrich {lead.agent_name}: {e}")
                 lead.enrichment_status = "failed"
-                # Increment retry counter (Phase 2.7)
-                try:
-                    from src.storage.database import get_database
-                    db = get_database()
-                    db.increment_enrichment_retries(lead.lead_id)
-                except Exception:
-                    pass
                 enriched.append(lead)
         
         logger.info(f"Enrichment complete: {success_count}/{len(batch)} successful")

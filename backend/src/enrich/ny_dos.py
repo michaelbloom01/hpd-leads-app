@@ -48,13 +48,6 @@ class NYDOSClient:
         # In-memory cache as first layer (fast)
         self._cache: Dict[str, Optional[DOSEntity]] = {}
         
-        # SQLite-backed persistent cache (survives restarts)
-        self._db = None
-        try:
-            from src.storage.database import get_database
-            self._db = get_database()
-        except Exception:
-            pass  # Gracefully degrade without persistent cache
     
     def _normalize_name(self, name: str) -> str:
         """Normalize company name for search."""
@@ -96,17 +89,6 @@ class NYDOSClient:
         if cache_key in self._cache:
             return self._cache[cache_key]
         
-        # Check persistent SQLite cache
-        if self._db and self._db.has_dos_cache(cache_key):
-            cached = self._db.get_dos_cache(cache_key)
-            if cached:
-                entity = DOSEntity(**cached)
-                self._cache[cache_key] = entity
-                return entity
-            else:
-                self._cache[cache_key] = None
-                return None
-        
         normalized = self._normalize_name(name)
         if not normalized:
             return None
@@ -139,9 +121,6 @@ class NYDOSClient:
             
             if not results:
                 self._cache[cache_key] = None
-                # Persist negative result to SQLite
-                if self._db:
-                    self._db.set_dos_cache(cache_key, None)
                 return None
             
             # Find best match (prefer exact match, then by recency)
@@ -157,12 +136,6 @@ class NYDOSClient:
                     best_match = entity
             
             self._cache[cache_key] = best_match
-            # Persist to SQLite
-            if self._db and best_match:
-                from dataclasses import asdict
-                self._db.set_dos_cache(cache_key, asdict(best_match))
-            elif self._db:
-                self._db.set_dos_cache(cache_key, None)
             return best_match
             
         except requests.RequestException as e:

@@ -88,11 +88,9 @@ GOOGLE_PLACES_API_KEY=...
 HUNTER_API_KEY=...
 REDIS_URL=redis://...
 CORS_ORIGINS=https://...,http://localhost:5173
-ENABLE_LEGACY_SQLITE_ROUTERS=0
 ```
 
 Notes:
-- `ENABLE_LEGACY_SQLITE_ROUTERS` is opt-in and defaults to disabled; PostgreSQL-first routing is now the default runtime.
 - Enrichment batch jobs are queued through `/api/v1/jobs/enrichment/start` and dispatched to Celery when available, with in-process async fallback for local reliability.
 - Canonical job lifecycle statuses are `queued`, `running`, `succeeded`, `failed` (legacy `completed` is normalized for compatibility).
 - Jobs API accepts source-style aliases for reruns (for example `energy_grades` -> `energy`, `aep_designations` -> `aep`).

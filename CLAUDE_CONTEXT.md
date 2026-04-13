@@ -9,7 +9,7 @@
   - one canonical runtime data path (PostgreSQL),
   - one durable async execution model (queue + worker),
   - one API contract layer consumed by frontend/agent.
-- Legacy SQLite/cache paths still exist in code and are treated as transitional.
+- Legacy SQLite paths have been removed; PostgreSQL is the sole runtime data path.
 
 ## What This Project Is
 
@@ -23,7 +23,7 @@ Double Edge (formerly HPD Leads) is a dual-purpose NYC housing intelligence plat
 
 ```
 Frontend: React + TypeScript + Tailwind CSS + Vite → Vercel
-Backend:  Python FastAPI + PostgreSQL (primary) + transitional SQLite paths → Railway
+Backend:  Python FastAPI + PostgreSQL → Railway
 ```
 
 ### Directory Structure
@@ -50,7 +50,6 @@ hpd-leads-app/
 │   │   │   ├── ai_summary.py     # Claude AI company descriptions
 │   │   │   └── batch_enricher.py # Batch enrichment logic
 │   │   └── storage/
-│   │       └── database.py       # SQLite persistence
 │   ├── config/scoring_weights.yaml
 │   └── requirements.txt
 ├── frontend/
@@ -180,7 +179,7 @@ ANTHROPIC_API_KEY=sk-ant-...         # AI summaries via Claude
 GOOGLE_PLACES_API_KEY=AIza...        # Google Places enrichment
 HUNTER_API_KEY=...                   # Hunter.io email finder
 CORS_ORIGINS=https://...             # CORS whitelist
-DATABASE_PATH=./leads.db
+DATABASE_URL=postgresql+asyncpg://...
 ```
 
 ### Frontend (Vercel)
@@ -208,7 +207,7 @@ VITE_GOOGLE_MAPS_KEY=AIza...
 
 ### Backend Dependencies
 - FastAPI, uvicorn, gunicorn (300s timeout)
-- SQLite with WAL mode
+- PostgreSQL via SQLAlchemy 2.0
 - anthropic (Claude AI summaries)
 - beautifulsoup4, trafilatura (web scraping)
 - googlesearch-python 1.2.5 (pinned)

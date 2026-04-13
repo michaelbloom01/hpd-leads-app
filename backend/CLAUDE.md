@@ -29,7 +29,7 @@ backend/
     routers/       FastAPI routers (leads.py, buildings.py, agent.py, quality.py, scoring.py, ...)
     agent/         AI Agent: orchestrator.py, tools.py, memory.py, types.py, system_prompt.py
     db/            session.py — SQLAlchemy 2.0 async engine + get_sync_url()
-    storage/       database.py — LEGACY SQLite wrapper (DO NOT USE for new code)
+    storage/       (legacy SQLite removed)
     tasks/         score.py — Celery task (no-op fallback for local dev)
     enrich/        contact_sources.py, ai_summary.py, web_crawl.py
   scripts/
@@ -66,8 +66,7 @@ engine = create_engine(get_sync_url(), ...)
 | `data_quality_log` | — | Ingestion audit log |
 | `ingestion_jobs` | — | Job tracking |
 
-### IMPORTANT: Never use `src/storage/database.py` for new code
-That file is the legacy SQLite wrapper. All new endpoints use `src.db.session.get_session`.
+All endpoints use `src.db.session.get_session` (PostgreSQL via SQLAlchemy 2.0).
 
 ## Key API Endpoints
 
@@ -218,7 +217,6 @@ SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, EMAIL_TO_DEFAULT  # Email briefi
 - ACRIS ownership change data not loaded -> `ownership_change` signal remains `0`
 - DOB permits, eviction, energy grade, facade signals are still incomplete / partially loaded
 - Portfolio/building maps now default to persisted coordinates; after fresh building ingest or migration rollout, run the `building_coordinates` job to materialize stored markers for unmapped portfolios
-- `src/storage/database.py` (SQLite) still exists but should be treated as dead code for new runtime paths
 - Some legacy documentation and historical notes still refer to the older ~38k / ~102k lead eras and need to be read as historical context only
 
 ## Status — Feb 23, 2026
