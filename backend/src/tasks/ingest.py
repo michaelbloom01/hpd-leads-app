@@ -84,7 +84,7 @@ def _socrata_fetch(dataset_id: str, params: dict, max_retries: int = 3) -> list[
 
         for attempt in range(max_retries):
             try:
-                resp = requests.get(url, params=params, headers=headers, timeout=60)
+                resp = requests.get(url, params=params, headers=headers, timeout=120)
                 if resp.status_code >= 500:
                     consecutive_failures += 1
                     if consecutive_failures >= 5:
