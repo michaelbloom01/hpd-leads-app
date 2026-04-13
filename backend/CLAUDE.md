@@ -226,3 +226,4 @@ Agent fully functional end-to-end:
 - Clicking agent leads opens LeadDetail drawer correctly
 - Lead table in agent paginated (10 per page, Show More button)
 - No 90-second timeout (execute_tool runs in thread pool)
+# Worker auto-deploy verified 2026-04-13
