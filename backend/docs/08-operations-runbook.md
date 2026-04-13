@@ -10,6 +10,9 @@ Production operations for the PostgreSQL + Redis + worker runtime.
 - `GET /api/health/db-pool` - DB pool utilization snapshot
 - `GET /api/v1/jobs/summary` - queue throughput and failure summary (24h)
 - `GET /api/v1/jobs/worker-health` - worker/broker liveness and stale-running count
+- `GET /api/v1/quality/data-health` - aggregate data quality plus canonical materialization counts
+- `GET /api/v1/canonical/entities` - materialized canonical entities
+- `GET /api/v1/canonical/proposals` - materialized canonical proposals and review buckets
 
 ## Job Hygiene
 
@@ -58,6 +61,17 @@ Default stale threshold is 120 minutes for jobs in `running` with no `finished_a
 - Purpose:
   - Syncs `leads.portfolio_size` and `leads.total_units` from `building_management` + `buildings`
   - Fixes stale snapshot drift that can undercount results in Leads filters
+
+## Canonical Prep Observability
+
+- Preview canonical-prep buckets without writes:
+  - `POST /api/admin/canonical-prep/preview`
+- Materialize additive canonical proposals without mutating workflow links:
+  - `POST /api/admin/canonical-prep/materialize`
+- Review materialized output:
+  - `GET /api/v1/canonical/entities`
+  - `GET /api/v1/canonical/proposals`
+  - `GET /api/leads/{lead_id}/lineage`
 
 ## Deployment Checklist (Railway + Vercel)
 

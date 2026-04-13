@@ -6,9 +6,27 @@
 
 1. Ingest public + enrichment data sources
 2. Normalize and aggregate into lead/building models
-3. Score/classify and persist canonical state in PostgreSQL
-4. Run long tasks via queue workers (not request lifecycle)
-5. Serve frontend and agent via stable API contracts
+3. Score/classify and persist workflow state in PostgreSQL
+4. Materialize additive canonical identity proposals for duplicate review
+5. Run long tasks via queue workers (not request lifecycle)
+6. Serve frontend and agent via stable API contracts
+
+## Canonical Identity Read Model
+
+Current production behavior separates:
+
+- `lead_id` workflow rows used by the CRM-style UI for pipeline stages, follow-ups, notes, and outreach history
+- canonical entity tables used for duplicate observability, audit-safe grouping, and future rollups
+
+Read surfaces now include:
+
+- `GET /api/leads/{lead_id}/lineage` for source lineage plus canonical memberships/proposals
+- `GET /api/v1/quality/data-health` for materialized canonical counts and review buckets
+- `GET /api/v1/canonical/entities`
+- `GET /api/v1/canonical/entities/{canonical_entity_id}`
+- `GET /api/v1/canonical/proposals`
+
+This keeps canonicalization additive and reviewable before any destructive merge behavior is introduced.
 
 ## High-Level Flow
 

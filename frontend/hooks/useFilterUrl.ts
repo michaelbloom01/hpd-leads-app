@@ -7,7 +7,7 @@
  */
 import { useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import type { FilterState } from './useLeadFilters';
+import { FILTER_INITIAL_STATE, type FilterState } from './useLeadFilters';
 
 const FILTER_PARAM_MAP: Record<string, keyof FilterState> = {
   q: 'searchTerm',
@@ -79,26 +79,36 @@ function paramsToPartial(params: URLSearchParams): Partial<FilterState> {
 
 export function useFilterUrl(
   filters: FilterState,
-  applyPreset: (preset: Partial<FilterState>) => void,
+  replaceAll: (next: FilterState) => void,
 ) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const isInitialized = useRef(false);
+  const lastWrittenFilterParams = useRef<string | null>(null);
 
-  // On mount: read URL params into filter state
+  const getFilterParamsString = (params: URLSearchParams) => {
+    const filterParams = new URLSearchParams();
+    FILTER_PARAM_KEYS.forEach((key) => {
+      const value = params.get(key);
+      if (value !== null) {
+        filterParams.set(key, value);
+      }
+    });
+    return filterParams.toString();
+  };
+
+  // On mount and browser history changes: read URL params into filter state.
   useEffect(() => {
-    if (isInitialized.current) return;
-    isInitialized.current = true;
+    const filterParamsString = getFilterParamsString(searchParams);
+    if (lastWrittenFilterParams.current === filterParamsString) return;
     const partial = paramsToPartial(searchParams);
-    if (Object.keys(partial).length > 0) {
-      applyPreset(partial);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    replaceAll({
+      ...FILTER_INITIAL_STATE,
+      ...partial,
+    });
+  }, [replaceAll, searchParams]);
 
   // On filter change: write to URL (skip first render)
   const prevFilters = useRef(filters);
   useEffect(() => {
-    if (!isInitialized.current) return;
     if (prevFilters.current === filters) return;
     prevFilters.current = filters;
 
@@ -110,6 +120,7 @@ export function useFilterUrl(
     });
     const newStr = newParams.toString();
     const currentStr = searchParams.toString();
+    lastWrittenFilterParams.current = filterParams.toString();
     if (newStr !== currentStr) {
       setSearchParams(newParams, { replace: true });
     }

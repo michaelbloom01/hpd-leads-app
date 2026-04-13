@@ -282,9 +282,15 @@ const SmartListsPage: React.FC = () => {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-gray-900">Smart Lists</h2>
-          <p className="text-sm text-gray-500">Saved filter segments that track lead changes over time.</p>
+          <p className="text-sm text-gray-500">Reusable lead segments you can author, evaluate, and reopen as recurring work queues.</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate('/building-lists')}
+            className="px-3 py-2 bg-white border border-gray-200 hover:bg-gray-50 text-sm font-medium rounded-lg transition-colors"
+          >
+            Open Building Lists
+          </button>
           <button
             onClick={handleRunDueAutoEvals}
             disabled={runningDueEvals}
@@ -300,6 +306,31 @@ const SmartListsPage: React.FC = () => {
             + New Smart List
           </button>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Smart Lists</p>
+          <p className="mt-2 text-2xl font-mono font-bold text-gray-900">{lists.length}</p>
+          <p className="mt-1 text-xs text-gray-500">Dynamic lead segments that recalculate over time.</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Pinned Queues</p>
+          <p className="mt-2 text-2xl font-mono font-bold text-amber-600">{lists.filter((list) => list.pinned).length}</p>
+          <p className="mt-1 text-xs text-gray-500">Pinned lists surface back on the dashboard as daily work queues.</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Auto-Evaluating</p>
+          <p className="mt-2 text-2xl font-mono font-bold text-emerald-600">{lists.filter((list) => list.auto_evaluate).length}</p>
+          <p className="mt-1 text-xs text-gray-500">Scheduled lists watch for changes without needing a manual refresh.</p>
+        </div>
+      </div>
+
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+        <p className="text-xs font-bold uppercase tracking-wider text-blue-700">Collection Model</p>
+        <p className="mt-2 text-sm text-blue-900">
+          Use <span className="font-semibold">Smart Lists</span> for dynamic lead segments based on filters. Use <span className="font-semibold">Building Lists</span> for manual building watchlists and outreach sets.
+        </p>
       </div>
 
       {showCreate && (
@@ -327,7 +358,7 @@ const SmartListsPage: React.FC = () => {
             onChange={(e) => setNewDesc(e.target.value)}
           />
           <p className="text-xs text-gray-400">
-            Define the core filters here now, then refine further from the Leads page if needed.
+            Author the segment here first: name it, summarize it, and lock in the key filters before you start working it in Leads.
           </p>
           <div className="grid gap-3 md:grid-cols-2">
             <div className="space-y-2">

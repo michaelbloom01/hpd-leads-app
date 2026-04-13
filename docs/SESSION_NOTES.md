@@ -4,6 +4,43 @@ Session notes and decisions from development work on Double Edge.
 
 ---
 
+## 2026-03-13 — Leads Completion Tranche (Stability, Workflow Closure, Canonical Read APIs)
+
+### Objective
+Close the active HPD Leads completion plan without rewriting already-landed work: stabilize production Leads browsing, finish the remaining list/workflow gaps, expose canonical identity as a first-class read model, and simplify the operator-facing UX.
+
+### What Changed
+1. **Production Leads stability**
+   - Expanded the stored-field-safe `GET /api/leads` path in `backend/src/routers/leads.py` so unfiltered browsing can avoid the heavier dedupe query for more supported sorts.
+   - Added a non-fatal total-count fallback for the simple list path.
+   - Bounded frontend cold-start polling in `frontend/components/LeadTable.tsx` and `frontend/components/Dashboard.tsx` so the UI degrades cleanly instead of spinning forever.
+2. **Leads workflow closure**
+   - `frontend/hooks/useFilterUrl.ts` now rehydrates filter state when URL params change after mount, not just on first render.
+   - Canonical lead links now converge on `/leads?lead=...`, with compatibility redirect behavior retained from `/leads/:leadId`.
+   - Hardened table/kanban selection UX: explicit clear-selection control plus selection resets on major workspace transitions.
+   - Expanded backend batch endpoint coverage and added focused frontend tests for lead links, selection, and URL filter sync.
+3. **Canonical observability + read APIs**
+   - `backend/src/routers/leads.py` lineage now returns materialized canonical memberships/proposals when present.
+   - `backend/src/routers/quality.py` now reports table-backed canonical materialization counts in addition to job-preview metadata.
+   - Added `backend/src/routers/canonical.py` with read-only canonical entity/proposal endpoints.
+4. **Product simplification**
+   - Dashboard now surfaces explicit “next best action” queue cards above analytics.
+   - Smart Lists and Building Lists now explain their distinct roles more clearly in the UI.
+   - Lead Detail header now includes a decision-oriented action summary (next action, follow-up, identity/audit state).
+
+### Validation
+- Backend:
+  - `pytest backend/tests/test_leads_list_stability.py backend/tests/test_lead_batch_endpoints.py backend/tests/test_canonical_api_contract.py backend/tests/test_entity_resolution_prep.py`
+- Frontend:
+  - `npm run test:run -- components/LeadTable.test.tsx components/LeadKanban.test.tsx hooks/useFilterUrl.test.tsx`
+  - `npm run build`
+
+### Notes
+- The Vercel CLI is authenticated on the local machine and can see both the `frontend` project and the older `hpd-leads-app` project. If the canonical alias still points at the older project, fix it operationally rather than in source code.
+- Canonical identity remains additive-first: workflow ownership still lives on `lead_id` rows.
+
+---
+
 ## 2026-03-12 — Worktree Stabilization, Smart Lists Coverage, And Geospatial Closure
 
 ### Objective

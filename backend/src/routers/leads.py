@@ -40,6 +40,17 @@ ALLOWED_SORT_COLS = {
     "violations_per_unit",
 }
 
+SIMPLE_SORT_COLS = {
+    "agent_name": "agent_name",
+    "portfolio_size": "portfolio_size",
+    "total_units": "total_units",
+    "score": "score",
+    "boro": "primary_borough",
+    "enrichment_status": "enrichment_status",
+    "estimated_annual_revenue": "estimated_annual_revenue",
+    "violations_per_unit": "violations_per_unit",
+}
+
 SORT_COL_EXPRESSIONS = {
     "units_per_bldg": "CASE WHEN portfolio_size > 0 THEN total_units::float / portfolio_size ELSE 0 END",
     "boro": "primary_borough",
@@ -92,6 +103,20 @@ def _parse_json_list(value) -> list:
     return []
 
 
+def _parse_json_object(value) -> dict:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
 def _lineage_status(record_count: int, missing_reason: Optional[str]) -> str:
     if record_count > 0:
         return "available"
@@ -125,6 +150,115 @@ def _split_csv_values(value: Optional[str]) -> list[str]:
     if not value:
         return []
     return [v.strip() for v in value.split(",") if v.strip()]
+
+
+async def _get_canonical_lineage_summary(session: AsyncSession, lead_id: str) -> dict[str, object]:
+    membership_result = await session.execute(
+        text("""
+            SELECT
+                ce.canonical_entity_id,
+                ce.normalized_name,
+                ce.display_name,
+                ce.status,
+                ce.confidence_score,
+                cel.relationship_type,
+                cel.is_primary,
+                cel.confidence_score AS membership_confidence,
+                cel.evidence
+            FROM canonical_entity_leads cel
+            JOIN canonical_entities ce ON ce.canonical_entity_id = cel.canonical_entity_id
+            WHERE cel.lead_id = :lid
+            ORDER BY cel.is_primary DESC, ce.updated_at DESC NULLS LAST, ce.canonical_entity_id ASC
+        """),
+        {"lid": lead_id},
+    )
+    memberships = []
+    for row in membership_result:
+        payload = dict(row._mapping)
+        payload["is_primary"] = bool(payload.get("is_primary"))
+        payload["evidence"] = _parse_json_object(payload.get("evidence"))
+        memberships.append(payload)
+
+    if not memberships:
+        return {
+            "primary_entity": None,
+            "memberships": [],
+            "aliases": [],
+            "proposals": [],
+        }
+
+    primary_entity_id = memberships[0]["canonical_entity_id"]
+    alias_result = await session.execute(
+        text("""
+            SELECT alias_name, normalized_alias, source, confidence_score
+            FROM canonical_entity_aliases
+            WHERE canonical_entity_id = :cid
+            ORDER BY confidence_score DESC NULLS LAST, alias_name ASC
+            LIMIT 15
+        """),
+        {"cid": primary_entity_id},
+    )
+    aliases = [dict(row._mapping) for row in alias_result]
+
+    proposal_result = await session.execute(
+        text("""
+            SELECT bucket, proposal_status, safe_to_execute, reasons, evidence, updated_at
+            FROM canonical_entity_match_proposals
+            WHERE canonical_entity_id = :cid OR lead_id = :lid
+            ORDER BY updated_at DESC NULLS LAST, id DESC
+            LIMIT 15
+        """),
+        {"cid": primary_entity_id, "lid": lead_id},
+    )
+    proposals = []
+    for row in proposal_result:
+        proposal = dict(row._mapping)
+        proposal["safe_to_execute"] = bool(proposal.get("safe_to_execute"))
+        proposal["reasons"] = _parse_json_object(proposal.get("reasons"))
+        proposal["evidence"] = _parse_json_object(proposal.get("evidence"))
+        proposal["updated_at"] = proposal["updated_at"].isoformat() if proposal.get("updated_at") else None
+        proposals.append(proposal)
+
+    primary_entity = dict(memberships[0])
+    primary_entity["aliases"] = aliases
+
+    return {
+        "primary_entity": primary_entity,
+        "memberships": memberships,
+        "aliases": aliases,
+        "proposals": proposals,
+    }
+
+
+def _estimate_page_total(*, offset: int, returned_count: int, limit: int) -> int:
+    return offset + returned_count + (1 if returned_count == limit else 0)
+
+
+async def _run_simple_leads_query(
+    session: AsyncSession,
+    *,
+    params: dict,
+    sort_sql: str,
+    sort_direction: str,
+) -> dict[str, object]:
+    simple_result = await session.execute(
+        text(f"""
+            SELECT {LEAD_LIST_SIMPLE_SELECT_SQL}
+            FROM leads
+            ORDER BY {sort_sql} {sort_direction} NULLS LAST, updated_at DESC NULLS LAST, lead_id ASC
+            LIMIT :limit OFFSET :offset
+        """),
+        params,
+    )
+    leads = [_row_to_response(dict(r._mapping)) for r in simple_result]
+    try:
+        total = (
+            await session.execute(text("SELECT COUNT(*) FROM leads"))
+        ).scalar() or 0
+    except DBAPIError as exc:
+        logger.warning("Simple lead count fell back to estimated total: %s", exc)
+        total = _estimate_page_total(offset=params["offset"], returned_count=len(leads), limit=params["limit"])
+    return {"leads": leads, "total": total, "offset": params["offset"], "limit": params["limit"]}
 
 
 def _row_to_response(r: dict) -> dict:
@@ -471,26 +605,15 @@ async def get_leads(
     else:
         sort_col = "score"
     sort_direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
+    simple_sort_col = SIMPLE_SORT_COLS.get(sort_by)
 
-    if where_sql == "1=1" and sort_col == "score" and sort_direction == "DESC":
-        simple_result = await session.execute(
-            text(f"""
-                SELECT {LEAD_LIST_SIMPLE_SELECT_SQL}
-                FROM leads
-                ORDER BY score DESC NULLS LAST, updated_at DESC NULLS LAST, lead_id ASC
-                LIMIT :limit OFFSET :offset
-            """),
-            params,
+    if where_sql == "1=1" and simple_sort_col:
+        return await _run_simple_leads_query(
+            session,
+            params=params,
+            sort_sql=simple_sort_col,
+            sort_direction=sort_direction,
         )
-        leads = [_row_to_response(dict(r._mapping)) for r in simple_result]
-        try:
-            total = (
-                await session.execute(text("SELECT COUNT(*) FROM leads"))
-            ).scalar() or 0
-        except DBAPIError as exc:
-            logger.warning("Simple lead count fell back to estimated total: %s", exc)
-            total = offset + len(leads) + (1 if len(leads) == limit else 0)
-        return {"leads": leads, "total": total, "offset": offset, "limit": limit}
 
     dedupe_cte_sql = f"""
         WITH live_link_stats AS (
@@ -542,17 +665,31 @@ async def get_leads(
         )
     """
 
-    result = await session.execute(
-        text(f"""
-            {dedupe_cte_sql}
-            SELECT {LEAD_LIST_SELECT_SQL}
-            FROM ranked_leads
-            WHERE dedupe_rank = 1
-            ORDER BY {sort_col} {sort_direction} NULLS LAST
-            LIMIT :limit OFFSET :offset
-        """),
-        params,
-    )
+    try:
+        result = await session.execute(
+            text(f"""
+                {dedupe_cte_sql}
+                SELECT {LEAD_LIST_SELECT_SQL}
+                FROM ranked_leads
+                WHERE dedupe_rank = 1
+                ORDER BY {sort_col} {sort_direction} NULLS LAST
+                LIMIT :limit OFFSET :offset
+            """),
+            params,
+        )
+    except DBAPIError as exc:
+        if where_sql == "1=1" and simple_sort_col:
+            logger.warning(
+                "Lead list rich query failed for unfiltered request; falling back to stored-field list: %s",
+                exc,
+            )
+            return await _run_simple_leads_query(
+                session,
+                params=params,
+                sort_sql=simple_sort_col,
+                sort_direction=sort_direction,
+            )
+        raise
     leads = [_row_to_response(dict(r._mapping)) for r in result]
     try:
         count_result = await session.execute(
@@ -564,7 +701,7 @@ async def get_leads(
         # Production can temporarily exhaust Postgres temp space on the exact count.
         # Return the current page with a conservative total estimate instead of failing.
         logger.warning("Lead count query fell back to estimated total: %s", exc)
-        total = offset + len(leads) + (1 if len(leads) == limit else 0)
+        total = _estimate_page_total(offset=offset, returned_count=len(leads), limit=limit)
     return {"leads": leads, "total": total, "offset": offset, "limit": limit}
 
 
@@ -992,6 +1129,7 @@ async def get_lead_lineage(
         blank_display_name=blank_display_name,
         sibling_rows=sibling_rows,
     )
+    canonical_lineage = await _get_canonical_lineage_summary(session, lead_id)
 
     return {
         "lead_id": lead_id,
@@ -1001,6 +1139,9 @@ async def get_lead_lineage(
         "sources": source_rows,
         "sibling_count": len(sibling_rows),
         "sibling_leads": sibling_rows,
+        "canonical_entity": canonical_lineage["primary_entity"],
+        "canonical_memberships": canonical_lineage["memberships"],
+        "canonical_proposals": canonical_lineage["proposals"],
         "canonical_prep": {
             "candidate_bucket": canonical_bucket,
             "reasons": canonical_reasons,
@@ -1008,6 +1149,8 @@ async def get_lead_lineage(
             "has_active_links": linked_buildings > 0,
             "display_name_key": display_name_key,
             "safe_to_execute": canonical_bucket == "safe_keep",
+            "materialized_membership_count": len(canonical_lineage["memberships"]),
+            "materialized_proposal_count": len(canonical_lineage["proposals"]),
         },
     }
 

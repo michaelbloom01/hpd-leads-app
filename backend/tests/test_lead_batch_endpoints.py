@@ -89,6 +89,38 @@ async def test_update_leads_pipeline_stage_batch_rejects_empty_ids():
 
 
 @pytest.mark.anyio
+async def test_update_leads_pipeline_stage_batch_rejects_invalid_stage():
+    session = FakeAsyncSession([])
+
+    with pytest.raises(HTTPException) as exc:
+        await leads_router.update_leads_pipeline_stage_batch(
+            request=_make_request(),
+            body=BatchPipelineStageUpdateRequest(lead_ids=["lead-1"], pipeline_stage="invalid_stage"),
+            session=session,
+            user=AuthUser(user_id="u1", email="test@example.com"),
+        )
+
+    assert exc.value.status_code == 400
+    assert "Invalid pipeline stage" in str(exc.value.detail)
+
+
+@pytest.mark.anyio
+async def test_update_leads_pipeline_stage_batch_rejects_all_missing_ids():
+    session = FakeAsyncSession([FakeExecuteResult(rows=[])])
+
+    with pytest.raises(HTTPException) as exc:
+        await leads_router.update_leads_pipeline_stage_batch(
+            request=_make_request(),
+            body=BatchPipelineStageUpdateRequest(lead_ids=["missing-1", "missing-2"], pipeline_stage="research"),
+            session=session,
+            user=AuthUser(user_id="u1", email="test@example.com"),
+        )
+
+    assert exc.value.status_code == 404
+    assert "No matching leads found" in str(exc.value.detail)
+
+
+@pytest.mark.anyio
 async def test_start_selected_leads_enrichment_falls_back_to_in_process(monkeypatch):
     session = FakeAsyncSession(
         [
@@ -138,4 +170,71 @@ async def test_start_selected_leads_enrichment_falls_back_to_in_process(monkeypa
     task = captured["task"]
     await task
     assert captured["fallback_kwargs"] == {"job_id": 123, "limit": 2, "lead_ids": ["lead-1", "lead-2"]}
+
+
+@pytest.mark.anyio
+async def test_start_selected_leads_enrichment_rejects_empty_ids():
+    session = FakeAsyncSession([])
+
+    with pytest.raises(HTTPException) as exc:
+        await leads_router.start_selected_leads_enrichment(
+            request=_make_request(),
+            body=EnrichmentRequest(lead_ids=[" ", ""]),
+            session=session,
+            user=AuthUser(user_id="u1", email="test@example.com"),
+        )
+
+    assert exc.value.status_code == 400
+    assert "lead_ids must contain at least one lead id" in str(exc.value.detail)
+
+
+@pytest.mark.anyio
+async def test_start_selected_leads_enrichment_rejects_all_missing_ids():
+    session = FakeAsyncSession([FakeExecuteResult(rows=[])])
+
+    with pytest.raises(HTTPException) as exc:
+        await leads_router.start_selected_leads_enrichment(
+            request=_make_request(),
+            body=EnrichmentRequest(lead_ids=["missing-1"]),
+            session=session,
+            user=AuthUser(user_id="u1", email="test@example.com"),
+        )
+
+    assert exc.value.status_code == 404
+    assert "No matching leads found" in str(exc.value.detail)
+
+
+@pytest.mark.anyio
+async def test_start_selected_leads_enrichment_prefers_celery_dispatch(monkeypatch):
+    session = FakeAsyncSession(
+        [
+            FakeExecuteResult(rows=[("lead-1",)]),
+            FakeExecuteResult(scalar=321),
+        ]
+    )
+    captured: dict[str, object] = {}
+
+    class SuccessTask:
+        def delay(self, **kwargs):
+            captured["delay_kwargs"] = kwargs
+            return {"queued": True}
+
+    monkeypatch.setattr("src.tasks.enrich.run_enrichment_job", SuccessTask())
+
+    response = await leads_router.start_selected_leads_enrichment(
+        request=_make_request(),
+        body=EnrichmentRequest(lead_ids=["lead-1"]),
+        session=session,
+        user=AuthUser(user_id="u1", email="test@example.com"),
+    )
+
+    assert response == {
+        "status": "queued",
+        "job_id": 321,
+        "target_count": 1,
+        "missing_lead_ids": [],
+        "dispatch_mode": "celery",
+    }
+    assert session.commit_count == 1
+    assert captured["delay_kwargs"] == {"job_id": 321, "limit": 1, "lead_ids": ["lead-1"]}
 

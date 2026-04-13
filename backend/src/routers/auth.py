@@ -22,26 +22,52 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 limiter = Limiter(key_func=get_remote_address)
 
 
-async def _ensure_admin_user(session: AsyncSession):
-    """Create the admin user from env vars if it doesn't exist yet."""
-    admin_email = os.environ.get("ADMIN_EMAIL")
-    admin_password = os.environ.get("ADMIN_PASSWORD")
-    if not admin_email or not admin_password:
+async def _ensure_env_user(
+    session: AsyncSession,
+    *,
+    email: str | None,
+    password: str | None,
+    role: str,
+    label: str,
+):
+    """Create a bootstrap user from env vars if it doesn't exist yet."""
+    if not email or not password:
         return
-    existing = (await session.execute(
-        text("SELECT user_id FROM users WHERE email = :email"), {"email": admin_email}
-    )).first()
+    existing = (
+        await session.execute(
+            text("SELECT user_id FROM users WHERE email = :email"),
+            {"email": email},
+        )
+    ).first()
     if not existing:
         uid = str(_uuid.uuid4())
         await session.execute(
             text("""
                 INSERT INTO users (user_id, email, password_hash, role, created_at, updated_at)
-                VALUES (:uid, :email, :pw, 'admin', NOW(), NOW())
+                VALUES (:uid, :email, :pw, :role, NOW(), NOW())
             """),
-            {"uid": uid, "email": admin_email, "pw": hash_password(admin_password)},
+            {"uid": uid, "email": email, "pw": hash_password(password), "role": role},
         )
         await session.commit()
-        logger.info(f"Auth: Created admin user {admin_email}")
+        logger.info("Auth: Created %s user %s", label, email)
+
+
+async def _ensure_bootstrap_users(session: AsyncSession):
+    """Ensure env-provisioned users exist before login attempts."""
+    await _ensure_env_user(
+        session,
+        email=os.environ.get("ADMIN_EMAIL"),
+        password=os.environ.get("ADMIN_PASSWORD"),
+        role="admin",
+        label="admin",
+    )
+    await _ensure_env_user(
+        session,
+        email=os.environ.get("TEST_USER_EMAIL"),
+        password=os.environ.get("TEST_USER_PASSWORD"),
+        role="user",
+        label="test",
+    )
 
 
 @router.post("/login")
@@ -51,7 +77,7 @@ async def auth_login(
     req: LoginRequest,
     session: AsyncSession = Depends(get_session),
 ):
-    await _ensure_admin_user(session)
+    await _ensure_bootstrap_users(session)
 
     result = await session.execute(
         text("SELECT user_id, email, password_hash, role FROM users WHERE email = :email"),

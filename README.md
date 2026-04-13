@@ -180,6 +180,10 @@ npm run dev
 DATABASE_URL=postgresql+asyncpg://...     # PostgreSQL connection
 REDIS_URL=redis://...                      # Redis broker/result backend for Celery
 JWT_SECRET=...                             # JWT signing secret
+ADMIN_EMAIL=admin@example.com              # bootstrap admin user (optional)
+ADMIN_PASSWORD=...                         # bootstrap admin password
+TEST_USER_EMAIL=test@example.com           # bootstrap shared test user (optional)
+TEST_USER_PASSWORD=...                     # bootstrap shared test password
 ANTHROPIC_API_KEY=sk-ant-...              # AI summaries
 GOOGLE_PLACES_API_KEY=AIza...             # Google Places enrichment
 HUNTER_API_KEY=...                        # Hunter.io email finder

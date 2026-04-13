@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 import LeadKanban from './leads/LeadKanban';
 import type { ApiLead } from '../services/api';
 
@@ -40,6 +41,19 @@ describe('LeadKanban', () => {
 
     render(<LeadKanban leads={[blankLead]} onSelectLead={vi.fn()} />);
     expect(screen.getByText('lead-fallback-1')).toBeInTheDocument();
+  });
+
+  it('uses query-param lead links by default', () => {
+    render(
+      <MemoryRouter>
+        <LeadKanban leads={[baseLead]} onSelectLead={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getAllByRole('link', { name: 'Test Company LLC' })[0]).toHaveAttribute(
+      'href',
+      '/leads?lead=abc123',
+    );
   });
 
   it('renders selection controls and stage actions when bulk-selection props are provided', () => {

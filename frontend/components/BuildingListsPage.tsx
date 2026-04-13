@@ -114,7 +114,32 @@ const BuildingListsPage: React.FC = () => {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Building Lists</h1>
-        <p className="text-sm text-gray-500 mt-1">Saved collections of buildings for tracking and outreach.</p>
+        <p className="text-sm text-gray-500 mt-1">Manual building watchlists for tracking outreach sets, research batches, and operator-specific collections.</p>
+      </div>
+
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-wider text-blue-700">Collection Model</p>
+          <p className="mt-2 text-sm text-blue-900">
+            Building Lists are manual collections. Use Smart Lists when you want a dynamic segment that updates automatically from lead filters.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => navigate('/buildings')}
+            className="px-3 py-2 text-sm bg-white border border-blue-200 text-blue-700 rounded-lg hover:bg-blue-100/50"
+          >
+            Open Buildings
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/smart-lists')}
+            className="px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-500"
+          >
+            Open Smart Lists
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

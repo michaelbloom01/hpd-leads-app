@@ -14,13 +14,13 @@ const Sidebar: React.FC<Props> = ({ isMobileOpen = false, onToggleAgent, onLogou
   const navigate = useNavigate();
 
   const navItems = [
-    { path: '/', label: 'Dashboard', icon: (
+    { path: '/', label: 'Dashboard', subtitle: 'Daily work queue', icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
     )},
-    { path: '/leads', label: 'Leads', subtitle: 'PE Searcher', icon: (
+    { path: '/leads', label: 'Leads', subtitle: 'PM companies to work', icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
     )},
-    { path: '/buildings', label: 'Buildings', subtitle: 'PM Operator', icon: (
+    { path: '/buildings', label: 'Buildings', subtitle: 'Building evidence and sourcing', icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
     )},
     { path: '/smart-lists', label: 'Smart Lists', subtitle: 'Saved lead segments', icon: (
@@ -29,7 +29,7 @@ const Sidebar: React.FC<Props> = ({ isMobileOpen = false, onToggleAgent, onLogou
     { path: '/targets', label: 'Targets', subtitle: 'Acquisition cockpit', icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5h10M11 9h7M11 13h10M11 17h7M5 7h.01M5 11h.01M5 15h.01M5 19h.01"/></svg>
     )},
-    { path: '/building-lists', label: 'Building Lists', subtitle: 'Saved building collections', icon: (
+    { path: '/building-lists', label: 'Building Lists', subtitle: 'Manual building watchlists', icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h8M8 11h8M8 15h5M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/></svg>
     )},
     { path: '/alerts', label: 'Alerts', subtitle: 'Follow-ups and review', icon: (

@@ -62,6 +62,7 @@ type Action =
   | { type: 'SET_FIELD'; field: keyof FilterState; value: FilterState[keyof FilterState] }
   | { type: 'TOGGLE_ARRAY'; field: 'boroughs' | 'entityTypes' | 'outreachStatuses' | 'pipelineStages' | 'enrichmentStatuses' | 'buildingTypes'; value: string }
   | { type: 'CLEAR_ALL' }
+  | { type: 'REPLACE_ALL'; next: FilterState }
   | { type: 'APPLY_PRESET'; preset: Partial<FilterState> };
 
 function filterReducer(state: FilterState, action: Action): FilterState {
@@ -77,6 +78,8 @@ function filterReducer(state: FilterState, action: Action): FilterState {
     }
     case 'CLEAR_ALL':
       return { ...INITIAL_STATE };
+    case 'REPLACE_ALL':
+      return { ...action.next };
     case 'APPLY_PRESET':
       return { ...state, ...action.preset, showMoreFilters: true };
     default:
@@ -100,6 +103,7 @@ export function useLeadFilters() {
   );
 
   const clearAll = useCallback(() => dispatch({ type: 'CLEAR_ALL' }), []);
+  const replaceAll = useCallback((next: FilterState) => dispatch({ type: 'REPLACE_ALL', next }), []);
   const applyPreset = useCallback(
     (preset: Partial<FilterState>) => dispatch({ type: 'APPLY_PRESET', preset }),
     [],
@@ -158,7 +162,7 @@ export function useLeadFilters() {
     [filters],
   );
 
-  return { filters, setField, toggle, clearAll, applyPreset, activeFiltersCount, toApiParams };
+  return { filters, setField, toggle, clearAll, replaceAll, applyPreset, activeFiltersCount, toApiParams };
 }
 
 export type { Action as FilterAction };

@@ -122,6 +122,13 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     setSearchParams(nextParams, { replace: true });
   }, [searchParams, setSearchParams]);
 
+  const navigateToLeadWorkspace = useCallback((leadId: string) => {
+    navigate({
+      pathname: '/leads',
+      search: `?lead=${encodeURIComponent(leadId)}`,
+    });
+  }, [navigate]);
+
   const handleLeadsSelectLead = useCallback((lead: ApiLead) => {
     setSelectedLead(lead);
     setSelectedLeadSource('route');
@@ -129,19 +136,22 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   }, [replaceLeadSearchParam]);
 
   const clearRouteSelectedLead = useCallback(() => {
-    if (leadPathId) {
-      const nextSearch = searchParams.toString();
-      navigate(
-        {
-          pathname: '/leads',
-          search: nextSearch ? `?${nextSearch}` : '',
-        },
-        { replace: true },
-      );
-      return;
-    }
     replaceLeadSearchParam(null);
-  }, [leadPathId, navigate, replaceLeadSearchParam, searchParams]);
+  }, [replaceLeadSearchParam]);
+
+  useEffect(() => {
+    if (!leadPathId) return;
+    const normalizedLeadId = decodeURIComponent(leadPathId);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set('lead', normalizedLeadId);
+    navigate(
+      {
+        pathname: '/leads',
+        search: `?${nextParams.toString()}`,
+      },
+      { replace: true },
+    );
+  }, [leadPathId, navigate, searchParams]);
 
   const handleLeadUpdated = useCallback((updatedLead: ApiLead) => {
     setSelectedLead(updatedLead);
@@ -158,7 +168,7 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       return;
     }
 
-    const leadId = leadPathId ? decodeURIComponent(leadPathId) : searchParams.get('lead');
+    const leadId = searchParams.get('lead');
     if (!leadId) {
       if (selectedLeadSource === 'route') {
         setSelectedLead(null);
@@ -321,7 +331,7 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                     <RouteErrorBoundary>
                       <Dashboard
                         onSelectLead={(lead) => {
-                          navigate(`/leads/${encodeURIComponent(lead.lead_id)}`);
+                          navigateToLeadWorkspace(lead.lead_id);
                         }}
                         onNavigateToLeads={(filters) => {
                           if (filters) setLeadFilterPreset(filters);
@@ -410,7 +420,7 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
             onClose={() => setIsAgentOpen(false)}
             onSelectLead={(leadId) => {
               setIsAgentOpen(false);
-              navigate(`/leads/${encodeURIComponent(leadId)}`);
+              navigateToLeadWorkspace(leadId);
             }}
           />
         </RouteErrorBoundary>
@@ -422,7 +432,7 @@ const AuthenticatedApp: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
             <LeadDetail 
               lead={selectedLead} 
               onClose={() => {
-                if (selectedLeadSource === 'route' && (location.pathname === '/leads' || location.pathname.startsWith('/leads/'))) {
+                if (selectedLeadSource === 'route' && location.pathname === '/leads') {
                   clearRouteSelectedLead();
                 } else {
                   setSelectedLead(null);

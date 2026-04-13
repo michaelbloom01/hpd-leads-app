@@ -72,6 +72,37 @@ def _parse_json_object(value: Any) -> dict[str, Any]:
     return {}
 
 
+async def _load_canonical_materialization_stats(session: AsyncSession) -> dict[str, Any]:
+    counts_row = (await session.execute(text("""
+        SELECT
+            (SELECT COUNT(*) FROM canonical_entities) AS entity_count,
+            (SELECT COUNT(*) FROM canonical_entity_aliases) AS alias_count,
+            (SELECT COUNT(*) FROM canonical_entity_leads) AS lead_membership_count,
+            (SELECT COUNT(*) FROM canonical_entity_buildings) AS building_membership_count,
+            (SELECT COUNT(*) FROM canonical_entity_match_proposals) AS proposal_count,
+            (SELECT COUNT(*) FROM canonical_entity_match_proposals WHERE safe_to_execute = true) AS safe_proposal_count
+    """))).first()
+    bucket_rows = await session.execute(text("""
+        SELECT bucket, COUNT(*) AS cnt
+        FROM canonical_entity_match_proposals
+        GROUP BY bucket
+        ORDER BY bucket
+    """))
+    counts = dict(counts_row._mapping) if counts_row else {}
+    return {
+        "entity_count": int(counts.get("entity_count") or 0),
+        "alias_count": int(counts.get("alias_count") or 0),
+        "lead_membership_count": int(counts.get("lead_membership_count") or 0),
+        "building_membership_count": int(counts.get("building_membership_count") or 0),
+        "proposal_count": int(counts.get("proposal_count") or 0),
+        "safe_proposal_count": int(counts.get("safe_proposal_count") or 0),
+        "bucket_counts": {
+            str(row.bucket): int(row.cnt or 0)
+            for row in bucket_rows
+        },
+    }
+
+
 @router.get("/data-health")
 async def data_health(session: AsyncSession = Depends(get_session)):
     """Aggregated data-health metrics for the dashboard badge."""
@@ -262,6 +293,23 @@ async def data_health(session: AsyncSession = Depends(get_session)):
             "preview_counts": preview.get("counts"),
             "guardrails": preview.get("guardrails"),
         }
+    canonical_materialized = await _load_canonical_materialization_stats(session)
+    if canonical_prep is None and canonical_materialized["proposal_count"] > 0:
+        canonical_prep = {
+            "job_id": None,
+            "status": "materialized",
+            "started_at": None,
+            "finished_at": None,
+            "mode": "materialized_only",
+            "dry_run": False,
+            "confirm_execute": False,
+            "cohort_filter": None,
+            "write_permitted": False,
+            "preview_counts": None,
+            "guardrails": None,
+        }
+    if canonical_prep is not None:
+        canonical_prep["materialized"] = canonical_materialized
 
     staleness_result = await session.execute(text("""
         SELECT
@@ -316,6 +364,13 @@ async def data_health(session: AsyncSession = Depends(get_session)):
             warnings.append(
                 f"{int(preview_counts.get('unresolved') or 0):,} canonical clusters remain unresolved"
             )
+    if canonical_materialized["proposal_count"] > 0:
+        warnings.append(
+            f"{canonical_materialized['proposal_count']:,} canonical proposals are materialized for audit"
+        )
+        review_required = int(canonical_materialized["bucket_counts"].get("review_required") or 0)
+        if review_required > 0:
+            warnings.append(f"{review_required:,} materialized canonical proposals still require review")
 
     return {
         "total_leads": row["total_leads"],
@@ -347,6 +402,7 @@ async def data_health(session: AsyncSession = Depends(get_session)):
             else None
         ),
         "canonical_prep": canonical_prep,
+        "canonical_materialized": canonical_materialized,
         "warnings": warnings,
     }
 

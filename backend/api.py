@@ -43,6 +43,7 @@ from src.routers.scoring import router as scoring_router
 from src.routers.buildings import router as buildings_router
 from src.routers.jobs import router as jobs_router
 from src.routers.quality import router as quality_router
+from src.routers.canonical import router as canonical_router
 from src.routers.alerts import router as alerts_router
 from src.routers.outreach import router as outreach_router
 from src.routers.targets import router as targets_router
@@ -201,6 +202,7 @@ app.include_router(scoring_router)
 app.include_router(buildings_router)
 app.include_router(jobs_router)
 app.include_router(quality_router)
+app.include_router(canonical_router)
 app.include_router(alerts_router)
 app.include_router(outreach_router)
 app.include_router(targets_router)

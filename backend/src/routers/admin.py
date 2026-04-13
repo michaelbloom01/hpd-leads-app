@@ -15,7 +15,7 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.session import get_session
-from src.auth.auth import AuthUser, get_current_user
+from src.auth.auth import AuthUser, get_current_admin, get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["admin"])
@@ -87,7 +87,7 @@ async def sync_lead_portfolio_snapshot(session: AsyncSession) -> dict:
 async def recalculate_categories(
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(get_current_admin),
 ):
     """Recalculate churn_category in batches (70/40 thresholds). Returns immediately."""
     import threading
@@ -126,7 +126,7 @@ async def recalculate_categories(
 async def recompute_lead_portfolio(
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(get_current_admin),
 ):
     """Recompute lead portfolio_size and total_units from building_management + buildings."""
     snapshot = await sync_lead_portfolio_snapshot(session)
@@ -142,7 +142,7 @@ async def preview_lead_cleanup(
     request: Request,
     sample_limit: int = Query(default=10, ge=1, le=50),
     session: AsyncSession = Depends(get_session),
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(get_current_admin),
 ):
     """Preview conservative orphan-lead cleanup cohorts."""
     del session, user
@@ -160,7 +160,7 @@ async def cleanup_orphan_leads(
     request: Request,
     batch_size: int = Query(default=500, ge=50, le=5000),
     session: AsyncSession = Depends(get_session),
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(get_current_admin),
 ):
     """Migrate state from zero-link orphan leads into a clear keeper, then retire them."""
     del session, user
@@ -178,7 +178,7 @@ async def preview_canonical_prep(
     request: Request,
     sample_limit: int = Query(default=10, ge=1, le=50),
     session: AsyncSession = Depends(get_session),
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(get_current_admin),
 ):
     """Preview canonical-prep confidence buckets without mutating lead/building links."""
     del session, user
@@ -197,7 +197,7 @@ async def materialize_canonical_prep(
     sample_limit: int = Query(default=10, ge=1, le=50),
     conservative_mode: bool = Query(default=True),
     session: AsyncSession = Depends(get_session),
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(get_current_admin),
 ):
     """Persist canonical entity proposal rows without mutating live lead/building links."""
     del session, user
@@ -215,7 +215,7 @@ async def preview_current_link_conflict_cleanup(
     request: Request,
     sample_limit: int = Query(default=10, ge=1, le=50),
     session: AsyncSession = Depends(get_session),
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(get_current_admin),
 ):
     """Preview duplicate current-link cleanup and remaining multi-lead conflicts."""
     del session, user
@@ -232,7 +232,7 @@ async def preview_current_link_conflict_cleanup(
 async def cleanup_current_link_conflicts(
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(get_current_admin),
 ):
     """Delete exact duplicate active link rows and enforce exact-link uniqueness."""
     del session, user
@@ -249,7 +249,7 @@ async def cleanup_current_link_conflicts(
 async def recompute_lead_units(
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(get_current_admin),
 ):
     """Recompute total_units for all leads from building_contacts + buildings,
     then recalculate scores using the updated unit counts.
@@ -360,7 +360,7 @@ async def health_check(request: Request, session: AsyncSession = Depends(get_ses
 async def health_detailed(
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(get_current_admin),
 ):
     start = time.time()
     lead_count = (await session.execute(text("SELECT COUNT(*) FROM leads"))).scalar() or 0
@@ -411,7 +411,7 @@ async def health_detailed(
 async def contacts_reconciliation(
     request: Request,
     session: AsyncSession = Depends(get_session),
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(get_current_admin),
 ):
     """Report contact-linkage and cache freshness issues for monitoring."""
     buildings_multi_pm = (await session.execute(text("""

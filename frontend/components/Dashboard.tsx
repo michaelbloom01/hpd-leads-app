@@ -157,23 +157,36 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
   // Health check before first data load
   useEffect(() => {
     let timerId: ReturnType<typeof setTimeout>;
+    let startingRetries = 0;
     let errorRetries = 0;
-    const MAX_ERROR_RETRIES = 24; // ~2 minutes of polling at 5s intervals
+
+    const finishWithHealthError = (message: string) => {
+      setBackendStarting(false);
+      setLoading(false);
+      setLoadError(message);
+    };
     
     const pollHealth = async () => {
       const health = await checkHealth();
       if (!isMounted.current) return;
-      if (health.status === 'starting') {
+      if (health.status === 'starting' && startingRetries < 24) {
         setBackendStarting(true);
-        errorRetries = 0; // Reset error counter when we get a proper 'starting' response
+        setLoadError(null);
+        startingRetries++;
+        errorRetries = 0;
         timerId = setTimeout(pollHealth, 5000);
-      } else if (health.status === 'error' && errorRetries < MAX_ERROR_RETRIES) {
-        // Backend may be sleeping or crashing — keep polling
+      } else if (health.status === 'error' && errorRetries < 24) {
         setBackendStarting(true);
+        setLoadError(null);
         errorRetries++;
         timerId = setTimeout(pollHealth, 5000);
+      } else if (health.status === 'starting') {
+        finishWithHealthError(health.message || 'Backend is still starting up. Please try again in a moment.');
+      } else if (health.status === 'error') {
+        finishWithHealthError(health.message || 'Backend is unavailable right now. Please try again in a moment.');
       } else {
         setBackendStarting(false);
+        setLoadError(null);
         loadData();
       }
     };
@@ -381,6 +394,52 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
         .filter(([, v]) => v > 0)
         .map(([key, value]) => ({ name: ENRICHMENT_LABELS[key] || key, value, key }))
     : [];
+  const nextBestActions = [
+    {
+      key: 'followups',
+      title: 'Follow-Up Queue',
+      count: followUpsOverdue + followUpsDueToday,
+      description: followUpsOverdue > 0
+        ? `${followUpsOverdue} overdue and ${followUpsDueToday} due today`
+        : followUpsDueToday > 0
+          ? `${followUpsDueToday} due today`
+          : 'Nothing due right now',
+      accent: followUpsOverdue > 0 ? 'rose' : 'amber',
+      disabled: followUpsOverdue + followUpsDueToday === 0,
+      onClick: () => onNavigateToLeads?.({ pipelineStages: ['follow_up'] }),
+    },
+    {
+      key: 'ready',
+      title: 'Ready To Contact',
+      count: readyToContactLeads.length,
+      description: 'Companies with contact info and enough scale to work today',
+      accent: 'blue',
+      disabled: readyToContactLeads.length === 0,
+      onClick: () => onNavigateToLeads?.({ outreachStatuses: ['new'], minPortfolio: '10' }),
+    },
+    {
+      key: 'enrichment',
+      title: 'Needs Enrichment',
+      count: enrichmentGaps?.unenriched || 0,
+      description: 'Leads still missing contact or profile coverage',
+      accent: 'emerald',
+      disabled: !enrichmentGaps || enrichmentGaps.unenriched === 0,
+      onClick: () => onNavigateToLeads?.({ enrichmentStatuses: ['none', 'failed'] }),
+    },
+    {
+      key: 'lists',
+      title: 'Pinned Smart Lists',
+      count: pinnedSmartLists.length,
+      description: pinnedSmartLists.length > 0
+        ? `${pinnedSmartLists[0].name}${pinnedSmartLists.length > 1 ? ` +${pinnedSmartLists.length - 1} more` : ''}`
+        : 'Pin a list to turn it into a recurring work queue',
+      accent: 'purple',
+      disabled: pinnedSmartLists.length === 0,
+      onClick: () => {
+        if (pinnedSmartLists[0]) handleOpenSmartListInLeads(pinnedSmartLists[0]);
+      },
+    },
+  ] as const;
 
   // ─── Renders ─────────────────────────────────────────────────
 
@@ -423,6 +482,40 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
           <button onClick={() => { setLoadError(null); setLoading(true); loadData(); }} className="text-xs font-medium text-red-600 hover:text-red-800 px-3 py-1 bg-red-100 rounded-lg">Retry</button>
         </div>
       )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        {nextBestActions.map((action) => (
+          <button
+            key={action.key}
+            onClick={action.onClick}
+            disabled={action.disabled}
+            className={`bg-white shadow-sm border rounded-2xl p-4 text-left transition-colors disabled:opacity-60 disabled:cursor-default ${
+              action.disabled
+                ? 'border-gray-200'
+                : action.accent === 'rose'
+                  ? 'border-rose-200 hover:bg-rose-50/60'
+                  : action.accent === 'amber'
+                    ? 'border-amber-200 hover:bg-amber-50/60'
+                    : action.accent === 'emerald'
+                      ? 'border-emerald-200 hover:bg-emerald-50/60'
+                      : action.accent === 'purple'
+                        ? 'border-purple-200 hover:bg-purple-50/60'
+                        : 'border-blue-200 hover:bg-blue-50/60'
+            }`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{action.title}</p>
+                <p className="mt-2 text-2xl font-mono font-bold text-gray-900">{action.count}</p>
+              </div>
+              {!action.disabled && (
+                <span className="text-xs font-medium text-gray-400">Open</span>
+              )}
+            </div>
+            <p className="mt-2 text-xs text-gray-500 leading-relaxed">{action.description}</p>
+          </button>
+        ))}
+      </div>
 
       {/* ── Section 1: Today's Actions ─────────────────────────── */}
       <div className="bg-white shadow-sm border border-gray-200 rounded-2xl px-5 py-3">

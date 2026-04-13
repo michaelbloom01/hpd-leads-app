@@ -55,6 +55,7 @@ Double Edge (formerly HPD Leads) is a dual-purpose NYC housing intelligence plat
 - **Building Lists**: Saved building collections with CRUD and member management
 - **404 route**: Catch-all with styled page
 - **Bug fixes**: Multi-borough filter, CSV export path, per-lead revenue endpoint, building_type_has and units_per_bldg filters, leads query-time dedupe collision
+- **Leads completion tranche**: Production-safe lead browsing, canonical read APIs, route/query workflow closure, and task-first dashboard/list UX
 
 ## Remaining Backlog
 

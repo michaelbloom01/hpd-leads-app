@@ -1,5 +1,8 @@
 # Double Edge — Agent Context
 
+## Cross-Project Context
+For business strategy, deal pipeline, people context, and personal goals: read files in C:\Users\micha\brain\context\. Start with brain\CLAUDE.md for orientation.
+
 ## What This Project Does
 
 Dual-purpose NYC housing intelligence platform (formerly HPD Leads).

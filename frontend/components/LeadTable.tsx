@@ -41,6 +41,8 @@ interface Props {
 
 // R4: Cold-start polling interval (ms)
 const HEALTH_POLL_INTERVAL = 5000;
+const MAX_HEALTH_STARTING_RETRIES = 24; // ~2 minutes
+const MAX_HEALTH_ERROR_RETRIES = 24; // ~2 minutes
 
 type SortField = 'agent_name' | 'portfolio_size' | 'total_units' | 'units_per_bldg' | 'score' | 'boro' | 'enrichment_status' | 'estimated_annual_revenue' | 'violations_per_unit';
 type SortDir = 'asc' | 'desc';
@@ -98,8 +100,8 @@ function setOptionalParam(params: URLSearchParams, key: string, value: string | 
 const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPresetConsumed }) => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { filters, setField, toggle, clearAll: clearFilterState, applyPreset, activeFiltersCount, toApiParams } = useLeadFilters();
-  useFilterUrl(filters, applyPreset);
+  const { filters, setField, toggle, clearAll: clearFilterState, replaceAll, applyPreset, activeFiltersCount, toApiParams } = useLeadFilters();
+  useFilterUrl(filters, replaceAll);
 
   const [leads, setLeads] = useState<ApiLead[]>([]);
   const [totalLeads, setTotalLeads] = useState(0);
@@ -196,23 +198,40 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
   // R4: Health check on initial mount — show cold-start banner if backend is booting
   useEffect(() => {
     let timerId: ReturnType<typeof setTimeout>;
+    let startingRetries = 0;
     let errorRetries = 0;
-    const MAX_ERROR_RETRIES = 24; // ~2 minutes of polling at 5s intervals
+
+    const finishWithHealthError = (message: string) => {
+      setBackendStarting(false);
+      setLoading(false);
+      setError(message);
+    };
     
     const pollHealth = async () => {
       const health = await checkHealth();
       if (!isMounted.current) return;
-      if (health.status === 'starting') {
+      if (health.status === 'starting' && startingRetries < MAX_HEALTH_STARTING_RETRIES) {
         setBackendStarting(true);
-        errorRetries = 0; // Reset error counter when we get a proper 'starting' response
+        setError(null);
+        startingRetries++;
+        errorRetries = 0;
         timerId = setTimeout(pollHealth, HEALTH_POLL_INTERVAL);
-      } else if (health.status === 'error' && errorRetries < MAX_ERROR_RETRIES) {
-        // Backend may be sleeping or crashing — keep polling
+      } else if (health.status === 'error' && errorRetries < MAX_HEALTH_ERROR_RETRIES) {
         setBackendStarting(true);
+        setError(null);
         errorRetries++;
         timerId = setTimeout(pollHealth, HEALTH_POLL_INTERVAL);
+      } else if (health.status === 'starting') {
+        finishWithHealthError(
+          health.message || 'Backend is still starting up. Please try again in a moment.',
+        );
+      } else if (health.status === 'error') {
+        finishWithHealthError(
+          health.message || 'Backend is unavailable right now. Please try again in a moment.',
+        );
       } else {
         setBackendStarting(false);
+        setError(null);
         // Backend is ready — trigger first data load
         loadLeadsRef.current?.(page);
       }
@@ -264,6 +283,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
   // Apply filters within the currently selected workspace.
   const applyFilters = () => {
     const shouldLoadFirstPageDirectly = page === 0;
+    clearSelected();
     setPage(0);
     setError(null);
 
@@ -302,6 +322,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
   };
   useEffect(() => {
     if (!filterPreset) return;
+    clearSelected();
     applyPreset({
       searchTerm: filterPreset.searchTerm || '',
       boroughs: filterPreset.boroughs || [],
@@ -347,6 +368,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
   }, [searchParams]);
 
   const handleSort = (field: SortField) => {
+    clearSelected();
     if (sortField === field) {
       setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
     } else {
@@ -448,6 +470,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
   };
 
   const clearFilters = async () => {
+    clearSelected();
     clearFilterState();
     setAddressResults([]);
     if (page === 0) {
@@ -616,7 +639,13 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
           <div className="flex-1 min-w-[160px] md:min-w-[280px] flex flex-col gap-1.5">
             <div className="flex rounded-lg border border-gray-300 overflow-hidden" role="group">
               <button
-                onClick={() => { if (filters.searchMode !== 'leads') { setField('searchMode', 'leads'); setAddressResults([]); } }}
+                onClick={() => {
+                  if (filters.searchMode !== 'leads') {
+                    clearSelected();
+                    setField('searchMode', 'leads');
+                    setAddressResults([]);
+                  }
+                }}
                 className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors ${
                   filters.searchMode === 'leads'
                     ? 'bg-blue-600 text-white'
@@ -626,7 +655,13 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                 PM Companies
               </button>
               <button
-                onClick={() => { if (filters.searchMode !== 'address') { setField('searchMode', 'address'); setAddressResults([]); } }}
+                onClick={() => {
+                  if (filters.searchMode !== 'address') {
+                    clearSelected();
+                    setField('searchMode', 'address');
+                    setAddressResults([]);
+                  }
+                }}
                 className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors border-l border-gray-300 ${
                   filters.searchMode === 'address'
                     ? 'bg-blue-600 text-white'
@@ -906,6 +941,12 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
           )}
           {showLeadWorkspace && selectedIds.size > 0 && (
             <div className="flex items-center gap-2">
+              <button
+                onClick={clearSelected}
+                className="px-3 py-1.5 bg-white border border-gray-200 text-xs font-medium rounded-lg text-gray-600 hover:text-gray-800 hover:border-gray-300 transition-colors"
+              >
+                Clear Selection
+              </button>
               <select
                 value={bulkPipelineStage}
                 onChange={(e) => setBulkPipelineStage(e.target.value)}
@@ -961,6 +1002,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                   {b.lead_id ? (
                     <button
                       onClick={() => {
+                        clearSelected();
                         setField('searchMode', 'leads');
                         setField('searchTerm', b.lead_name || b.agent_name || b.pm_company || '');
                         setAddressResults([]);
@@ -1364,7 +1406,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
         <div className="flex flex-col sm:flex-row items-center justify-between gap-2 px-4 py-3 border-t border-gray-200 bg-gray-50">
           <div className="flex items-center justify-between w-full sm:w-auto gap-2">
             <button
-              onClick={() => setPage(Math.max(0, page - 1))}
+              onClick={() => {
+                clearSelected();
+                setPage(Math.max(0, page - 1));
+              }}
               disabled={page === 0}
               className="px-3 py-2 sm:py-1 text-sm text-gray-500 hover:text-gray-900 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
@@ -1374,7 +1419,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
               Page {page + 1} of {totalPages || 1}
             </div>
             <button
-              onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
+              onClick={() => {
+                clearSelected();
+                setPage(Math.min(totalPages - 1, page + 1));
+              }}
               disabled={page >= totalPages - 1}
               className="px-3 py-2 sm:py-1 text-sm text-gray-500 hover:text-gray-900 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
@@ -1385,7 +1433,12 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
             <span className="text-xs text-gray-400">Per page:</span>
             <select
               value={pageSize}
-                onChange={(e) => { const newSize = Number(e.target.value); setPageSize(newSize); setPage(0); }}
+              onChange={(e) => {
+                clearSelected();
+                const newSize = Number(e.target.value);
+                setPageSize(newSize);
+                setPage(0);
+              }}
               className="px-2 py-1.5 bg-white border border-gray-200 rounded text-xs text-gray-700 focus:outline-none"
             >
               <option value={25}>25</option>

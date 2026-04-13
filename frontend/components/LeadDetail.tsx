@@ -423,6 +423,21 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     { id: 'buildings', label: `Buildings (${enrichedLead.portfolio_size || 0})` },
     { id: 'dd', label: 'Due Diligence' },
   ];
+  const hasDirectContact = Boolean(enrichedLead.phone || enrichedLead.email);
+  const nextActionLabel = !hasDirectContact
+    ? 'Run Enrich Lead to gather contact coverage'
+    : pipelineStage === 'research'
+      ? 'Move to First Contact once outreach copy is ready'
+      : pipelineStage === 'first_contact'
+        ? 'Log outreach and set a follow-up date'
+        : pipelineStage === 'follow_up'
+          ? (nextFollowUp ? `Prepare for ${formatAbsoluteDate(nextFollowUp)} follow-up` : 'Set the next follow-up date')
+          : 'Review open diligence items and advance the deal';
+  const duplicateSummary = leadLineage?.canonical_entity
+    ? `Mapped to canonical entity ${leadLineage.canonical_entity.display_name || leadLineage.canonical_entity.normalized_name || leadLineage.canonical_entity.canonical_entity_id}`
+    : leadLineage?.sibling_count
+      ? `${leadLineage.sibling_count} related workflow row${leadLineage.sibling_count === 1 ? '' : 's'} hidden in Leads`
+      : 'No duplicate cohort surfaced for this lead';
 
   return (
     <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50 flex items-center justify-center p-0 md:p-4" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="lead-detail-title">
@@ -543,6 +558,27 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                   <option key={stage.value} value={stage.value}>{stage.label}</option>
                 ))}
               </select>
+            </div>
+          </div>
+          <div className="mx-4 sm:mx-5 mb-3 grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 md:col-span-2">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Next Best Action</div>
+              <p className="mt-1 text-sm font-medium text-gray-900">{nextActionLabel}</p>
+              <p className="mt-1 text-xs text-gray-500">
+                {hasDirectContact ? 'Contact coverage is ready for outreach work.' : 'Use enrichment before starting outreach.'}
+              </p>
+            </div>
+            <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Follow-Up</div>
+              <p className="mt-1 text-sm font-medium text-gray-900">{nextFollowUp ? formatAbsoluteDate(nextFollowUp) : 'Not scheduled'}</p>
+              <p className="mt-1 text-xs text-gray-500">{nextFollowUp ? formatRelativeDate(nextFollowUp) : 'Set a date once outreach is logged.'}</p>
+            </div>
+            <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Identity And Audit</div>
+              <p className="mt-1 text-sm font-medium text-gray-900">
+                {leadLineage?.canonical_entity ? 'Canonical entity linked' : leadLineage?.sibling_count ? 'Review duplicate cohort' : 'Single workflow row'}
+              </p>
+              <p className="mt-1 text-xs text-gray-500">{duplicateSummary}</p>
             </div>
           </div>
           {leadLineage && leadLineage.sibling_count > 0 && (

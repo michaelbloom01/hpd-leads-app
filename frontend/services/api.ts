@@ -502,6 +502,52 @@ export interface LeadLineageResponse {
     outreach_status: string | null;
     last_updated: string | null;
   }>;
+  canonical_entity: {
+    canonical_entity_id: string;
+    normalized_name?: string | null;
+    display_name?: string | null;
+    status?: string | null;
+    confidence_score?: number | null;
+    relationship_type?: string | null;
+    is_primary?: boolean;
+    membership_confidence?: number | null;
+    evidence?: Record<string, unknown>;
+    aliases?: Array<{
+      alias_name: string;
+      normalized_alias: string;
+      source?: string | null;
+      confidence_score?: number | null;
+    }>;
+  } | null;
+  canonical_memberships: Array<{
+    canonical_entity_id: string;
+    normalized_name?: string | null;
+    display_name?: string | null;
+    status?: string | null;
+    confidence_score?: number | null;
+    relationship_type?: string | null;
+    is_primary?: boolean;
+    membership_confidence?: number | null;
+    evidence?: Record<string, unknown>;
+  }>;
+  canonical_proposals: Array<{
+    bucket: string;
+    proposal_status?: string | null;
+    safe_to_execute: boolean;
+    reasons?: Record<string, unknown>;
+    evidence?: Record<string, unknown>;
+    updated_at?: string | null;
+  }>;
+  canonical_prep?: {
+    candidate_bucket: string;
+    reasons: string[];
+    blank_display_name: boolean;
+    has_active_links: boolean;
+    display_name_key: string;
+    safe_to_execute: boolean;
+    materialized_membership_count?: number;
+    materialized_proposal_count?: number;
+  };
 }
 
 export interface LeadContactsResponse {

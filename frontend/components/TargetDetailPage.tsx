@@ -156,7 +156,7 @@ const TargetDetailPage: React.FC = () => {
                 <h2 className="text-sm font-semibold text-gray-900">Matched Lead And Buildings</h2>
                 {matchedLead?.lead_id && (
                   <Link
-                    to={`/leads/${encodeURIComponent(String(matchedLead.lead_id))}`}
+                    to={`/leads?lead=${encodeURIComponent(String(matchedLead.lead_id))}`}
                     className="text-sm font-medium text-emerald-700 hover:text-emerald-800"
                   >
                     Open Lead

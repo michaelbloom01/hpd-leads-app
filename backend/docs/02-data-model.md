@@ -56,6 +56,24 @@ A "lead" is a unique agent or owner entity that manages/owns multiple buildings.
 | `reg_status` | str | HPD |
 | `last_registration` | date | HPD |
 
+## Canonical Identity Layer (Additive)
+
+The production workflow still operates on `lead_id` rows, but the codebase now has an additive canonical identity layer for duplicate review and future rollups.
+
+Primary tables:
+
+| Table | Purpose |
+|-------|---------|
+| `canonical_entities` | Stable canonical entity identity keyed by `canonical_entity_id` and `normalized_name` |
+| `canonical_entity_aliases` | Alias names and normalized variants with source + confidence |
+| `canonical_entity_leads` | Maps workflow `lead_id` rows into canonical entities without deleting the original lead rows |
+| `canonical_entity_buildings` | Canonical entity to building membership/evidence |
+| `canonical_entity_match_proposals` | Persisted duplicate/canonical proposals with bucket, reasons, evidence, and safety flags |
+
+Key rule:
+
+- Canonicalization is additive-first. `lead_id` remains the workflow owner for pipeline stage, follow-up, notes, and outreach history until an explicitly safe migration path is chosen.
+
 ## Deduplication Rules
 
 ### Name Normalization
