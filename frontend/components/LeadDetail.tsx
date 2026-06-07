@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { toast } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { ApiLead, fetchLead, fetchLeadLineage, type LeadLineageResponse, updateLead, addOutreachAttempt, enrichLeadAll, estimateLeadRevenue, OutreachAttempt, fetchLeadContacts, downloadPortfolioContactsCsv } from '../services/api';
+import { ApiLead, fetchLead, fetchLeadLineage, type LeadLineageResponse, updateLead, addOutreachAttempt, enrichLeadAll, estimateLeadRevenue, OutreachAttempt, fetchLeadContacts, downloadPortfolioContactsWorkbook } from '../services/api';
 import { addBuildingToPipeline, fetchBuildings, type BuildingRow, type BuildingContactEntry } from '../services/buildings-api';
 import { PIPELINE_STAGES, OUTREACH_STATUSES, OUTREACH_METHODS, OUTREACH_OUTCOMES, formatCurrency } from '../utils/format';
 import { getLeadDisplayName } from '../utils/leads';
@@ -374,7 +374,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     }
     setIsExportingContacts(true);
     try {
-      const { blob, filename } = await downloadPortfolioContactsCsv(companyName, enrichedLead.lead_id);
+      const { blob, filename } = await downloadPortfolioContactsWorkbook(companyName, enrichedLead.lead_id);
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -383,7 +383,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      toast.success('Portfolio contacts export downloaded');
+      toast.success('Portfolio workbook downloaded');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to export portfolio contacts');
     } finally {
