@@ -53,7 +53,21 @@ export const OUTREACH_STATUSES = [
 ] as const;
 
 export const OUTREACH_METHODS = ['phone', 'email', 'linkedin', 'in_person', 'other'] as const;
-export const OUTREACH_OUTCOMES = ['no_answer', 'left_voicemail', 'spoke_with_contact', 'sent_email', 'meeting_scheduled', 'not_interested', 'other'] as const;
+export const OUTREACH_OUTCOMES = [
+  'no_answer',
+  'left_voicemail',
+  'spoke_with_contact',
+  'sent_email',
+  'meeting_scheduled',
+  'not_interested',
+  'bounced',
+  'wrong_number',
+  'does_not_manage',
+  'referred',
+  'confirmed_manager',
+  'confirmed_decision_maker',
+  'other',
+] as const;
 
 export const OUTREACH_COLORS: Record<string, string> = {
   'new': '#94a3b8',

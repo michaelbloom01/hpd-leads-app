@@ -47,7 +47,7 @@ export async function createUnifiedOutreachEvent(body: {
   outcome?: string;
   notes?: string;
   next_follow_up?: string;
-}): Promise<{ status: string; event_id: number }> {
+}): Promise<{ status: string; event_id: number; truth_claim_ids?: string[] }> {
   return apiRequest('/api/v1/outreach/events', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

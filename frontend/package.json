@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test": "vitest",
-    "test:run": "vitest run",
-    "build": "tsc && vite build",
+    "test": "vitest --configLoader runner",
+    "test:run": "vitest run --configLoader runner",
+    "smoke:activation-packet": "node scripts/verify-activation-packet-smoke.mjs",
+    "smoke:truth-workflows": "node scripts/verify-truth-workflows-smoke.mjs",
+    "smoke:safe-clickthrough": "node scripts/verify-safe-clickthrough-smoke.mjs",
+    "build": "tsc && node scripts/vite-build.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

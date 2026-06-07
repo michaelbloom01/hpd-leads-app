@@ -16,6 +16,8 @@ class ChangePasswordRequest(BaseModel):
 class EnrichmentRequest(BaseModel):
     """Request to enrich specific leads."""
     lead_ids: List[str]
+    dry_run: bool = True
+    confirm_execute: bool = False
 
 
 class UpdateLeadRequest(BaseModel):

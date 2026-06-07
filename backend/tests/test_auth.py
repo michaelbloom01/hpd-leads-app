@@ -50,4 +50,3 @@ class TestJWT:
         token = create_access_token(user, expires_delta=timedelta(seconds=-10))
         with pytest.raises(HTTPException):
             decode_token(token)
-

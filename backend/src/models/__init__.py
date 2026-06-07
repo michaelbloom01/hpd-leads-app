@@ -47,6 +47,15 @@ from .signals import (
     HPDViolation,
 )
 from .targets import AcquisitionThesis, TargetList, TargetListItem, TargetMatch
+from .truth import (
+    ConfidenceSnapshot,
+    GoldenVerificationCase,
+    TruthClaim,
+    TruthEvidence,
+    TruthMaterializationManifest,
+    TruthReviewItem,
+    TruthValidationRun,
+)
 
 __all__ = [
     "Base",
@@ -64,6 +73,13 @@ __all__ = [
     "TargetList",
     "TargetListItem",
     "TargetMatch",
+    "TruthClaim",
+    "TruthEvidence",
+    "ConfidenceSnapshot",
+    "TruthMaterializationManifest",
+    "TruthReviewItem",
+    "GoldenVerificationCase",
+    "TruthValidationRun",
     # Signals
     "HPDComplaint",
     "ACRISTransaction",

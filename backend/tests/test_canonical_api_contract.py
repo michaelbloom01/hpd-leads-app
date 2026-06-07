@@ -227,3 +227,33 @@ async def test_load_canonical_materialization_stats_reports_bucket_counts():
         "safe_proposal_count": 2,
         "bucket_counts": {"review_required": 3, "safe_keep": 2},
     }
+
+
+@pytest.mark.anyio
+async def test_load_truth_confidence_stats_is_schema_gated(monkeypatch):
+    schema_status = {
+        "ready": False,
+        "current_revision": "008_lead_lineage",
+        "expected_revision": "010_truth_manifest",
+        "missing_tables": ["truth_claims", "truth_evidence"],
+    }
+
+    async def fake_schema_status(session):
+        return schema_status
+
+    monkeypatch.setattr(quality_router, "load_truth_schema_status", fake_schema_status)
+    monkeypatch.setattr(quality_router, "is_truth_schema_current", lambda status: False)
+    session = FakeAsyncSession([])
+
+    stats = await quality_router._load_truth_confidence_stats(session)
+
+    assert stats == {
+        "claim_count": 0,
+        "verified_claim_count": 0,
+        "conflicting_claim_count": 0,
+        "open_review_count": 0,
+        "active_golden_case_count": 0,
+        "actionability_distribution": {},
+        "schema_status": schema_status,
+    }
+    assert session.calls == []

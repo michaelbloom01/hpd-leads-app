@@ -1,11 +1,12 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 
 import LeadTable from './LeadTable';
 
 const fetchLeadsMock = vi.fn();
 const checkHealthMock = vi.fn();
+const searchBuildingsMock = vi.fn();
 
 vi.mock('../services/auth', () => ({
   getAuthHeaders: () => ({}),
@@ -17,7 +18,7 @@ vi.mock('../services/api', () => ({
   startSelectedLeadsEnrichment: vi.fn(),
   updateLeadPipelineStages: vi.fn(),
   checkHealth: (...args: unknown[]) => checkHealthMock(...args),
-  searchBuildings: vi.fn(),
+  searchBuildings: (...args: unknown[]) => searchBuildingsMock(...args),
   createSmartList: vi.fn(),
 }));
 
@@ -45,6 +46,10 @@ const lead = {
 } as const;
 
 describe('LeadTable', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     checkHealthMock.mockResolvedValue({ status: 'ok' });
@@ -53,6 +58,29 @@ describe('LeadTable', () => {
       total: 1,
       offset: 0,
       limit: 50,
+    });
+    searchBuildingsMock.mockResolvedValue({
+      query: '110 EAST 55TH ST',
+      total: 1,
+      buildings: [{
+        building_id: 'lead:lead-1',
+        bbl: null,
+        address: '110 EAST 55TH ST',
+        house_number: '110',
+        street_name: 'EAST 55TH ST',
+        boro: 'MANHATTAN',
+        units_res: 120,
+        building_class: '',
+        building_type: null,
+        lead_id: 'lead-1',
+        lead_name: 'Acme Management LLC',
+        agent_name: 'Acme Management LLC',
+        owner_name: '',
+        score: 88,
+        portfolio_size: 12,
+        total_units: 120,
+        status: 'lead_address',
+      }],
     });
   });
 
@@ -95,5 +123,34 @@ describe('LeadTable', () => {
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: 'Clear Selection' })).not.toBeInTheDocument();
     });
+  });
+
+  it('renders kanban columns when view=kanban is in the URL', async () => {
+    render(
+      <MemoryRouter initialEntries={['/leads?view=kanban']}>
+        <LeadTable onSelectLead={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('Research');
+
+    expect(screen.getByText('First Contact')).toBeInTheDocument();
+    expect(screen.getByText('Due Diligence')).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: 'Acme Management LLC' }).length).toBeGreaterThan(0);
+  });
+
+  it('hydrates address lookup results from URL filters', async () => {
+    render(
+      <MemoryRouter initialEntries={['/leads?mode=address&q=110%20EAST%2055TH%20ST']}>
+        <LeadTable onSelectLead={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('Address Results (1)');
+
+    expect(searchBuildingsMock).toHaveBeenCalledWith('110 EAST 55TH ST');
+    expect(screen.getByText('MANHATTAN - lead address record')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open building' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open lead (score: 88.0)' })).toBeInTheDocument();
   });
 });

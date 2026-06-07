@@ -111,6 +111,8 @@ export function useLeadFilters() {
 
   const activeFiltersCount = useMemo(() => {
     return [
+      filters.searchTerm.trim() !== '',
+      filters.boroughs.length > 0,
       filters.entityTypes.length > 0,
       filters.neighborhood !== '',
       filters.outreachStatuses.length > 0,
@@ -124,6 +126,8 @@ export function useLeadFilters() {
       filters.maxPortfolio !== '',
       filters.minUnitsPerBldg !== '',
       filters.maxUnitsPerBldg !== '',
+      filters.hasPhone === true,
+      filters.hasEmail === true,
       filters.hasWebsite === true,
       filters.buildingTypes.length > 0,
     ].filter(Boolean).length;
@@ -157,6 +161,10 @@ export function useLeadFilters() {
       if (num(filters.minUnitsPerBldg) !== undefined) params.min_units_per_bldg = num(filters.minUnitsPerBldg);
       if (num(filters.maxUnitsPerBldg) !== undefined) params.max_units_per_bldg = num(filters.maxUnitsPerBldg);
       if (filters.buildingTypes.length > 0) params.building_type_has = filters.buildingTypes.join(',');
+      const hasServerFilter = Object.keys(params).some(
+        (key) => !['limit', 'offset', 'sort_by', 'sort_dir'].includes(key),
+      );
+      if (hasServerFilter) params.count_mode = 'estimate';
       return params;
     },
     [filters],

@@ -14,7 +14,7 @@ async function apiGet<T>(path: string, timeoutMs = 30000): Promise<T> {
   });
   clearTimeout(tid);
   if (response.status === 401) { clearToken(); window.dispatchEvent(new Event('auth:logout')); throw new Error('Session expired'); }
-  if (!response.ok) throw new Error(`GET ${path} failed: ${response.statusText}`);
+  if (!response.ok) throw new Error(await extractApiErrorMessage(response, `GET ${path} failed: ${response.statusText}`));
   return response.json();
 }
 
@@ -25,8 +25,29 @@ async function apiPost<T>(path: string, body?: unknown): Promise<T> {
     body: body ? JSON.stringify(body) : undefined,
   });
   if (response.status === 401) { clearToken(); window.dispatchEvent(new Event('auth:logout')); throw new Error('Session expired'); }
-  if (!response.ok) throw new Error(`POST ${path} failed: ${response.statusText}`);
+  if (!response.ok) throw new Error(await extractApiErrorMessage(response, `POST ${path} failed: ${response.statusText}`));
   return response.json();
+}
+
+async function extractApiErrorMessage(response: Response, fallback: string): Promise<string> {
+  try {
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const body = await response.clone().json();
+      const detail = body?.detail ?? body;
+      if (typeof detail === 'string' && detail.trim()) return detail;
+      if (typeof detail?.message === 'string' && detail.message.trim()) return detail.message;
+      if (typeof body?.message === 'string' && body.message.trim()) return body.message;
+      if (detail?.status === 'schema_not_ready') {
+        return 'Schema not ready. Run the required migration or explicit repair before using this workflow.';
+      }
+    }
+    const text = await response.clone().text();
+    if (text.trim()) return text.trim();
+  } catch {
+    // Keep the original method/path fallback when the body cannot be parsed.
+  }
+  return fallback;
 }
 
 export interface BuildingRow {
@@ -218,7 +239,7 @@ export function fetchBuildingDetail(bbl: string): Promise<BuildingDetail> {
 
 export function requestBuildingDosContactsRefresh(
   bbl: string,
-): Promise<{ status: string; bbl?: string; corporate_owner?: string | null; reason?: string | null; refresh_requested_at?: string | null }> {
+): Promise<{ status: string; bbl?: string; job_id?: number | null; dry_run?: boolean; approval_required?: boolean; safe_to_run_automatically?: boolean; mutations_planned?: number; corporate_owner?: string | null; reason?: string | null; refresh_requested_at?: string | null }> {
   return apiPost(`/api/v1/buildings/${encodeURIComponent(String(bbl))}/dos-contacts/refresh`);
 }
 
@@ -269,7 +290,7 @@ export async function updateBuildingList(listId: string, name: string): Promise<
     body: JSON.stringify({ name }),
   });
   if (response.status === 401) { clearToken(); window.dispatchEvent(new Event('auth:logout')); throw new Error('Session expired'); }
-  if (!response.ok) throw new Error(`PATCH building list failed: ${response.statusText}`);
+  if (!response.ok) throw new Error(await extractApiErrorMessage(response, `PATCH building list failed: ${response.statusText}`));
   return response.json();
 }
 
@@ -283,7 +304,7 @@ export async function deleteBuildingList(listId: string): Promise<{ id: string; 
     headers: getAuthHeaders(),
   });
   if (response.status === 401) { clearToken(); window.dispatchEvent(new Event('auth:logout')); throw new Error('Session expired'); }
-  if (!response.ok) throw new Error(`DELETE building list failed: ${response.statusText}`);
+  if (!response.ok) throw new Error(await extractApiErrorMessage(response, `DELETE building list failed: ${response.statusText}`));
   return response.json();
 }
 
@@ -293,7 +314,7 @@ export async function removeBuildingFromList(listId: string, bbl: string): Promi
     headers: getAuthHeaders(),
   });
   if (response.status === 401) { clearToken(); window.dispatchEvent(new Event('auth:logout')); throw new Error('Session expired'); }
-  if (!response.ok) throw new Error(`DELETE building from list failed: ${response.statusText}`);
+  if (!response.ok) throw new Error(await extractApiErrorMessage(response, `DELETE building from list failed: ${response.statusText}`));
   return response.json();
 }
 

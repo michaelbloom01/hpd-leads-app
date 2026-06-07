@@ -105,6 +105,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
 
   const [leads, setLeads] = useState<ApiLead[]>([]);
   const [totalLeads, setTotalLeads] = useState(0);
+  const [totalEstimated, setTotalEstimated] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [backendStarting, setBackendStarting] = useState(false);
@@ -129,9 +130,14 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
   const [savingSmartList, setSavingSmartList] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>(() => parseViewMode(searchParams.get('view')));
 
-  const isMounted = useRef(true);
+  const leadRequestId = useRef(0);
+  const addressRequestId = useRef(0);
+  const hasHydratedAddressLookupUrl = useRef(false);
   useEffect(() => {
-    return () => { isMounted.current = false; };
+    return () => {
+      leadRequestId.current++;
+      addressRequestId.current++;
+    };
   }, []);
 
   useEffect(() => {
@@ -141,12 +147,12 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     const nextPageSize = parsePageSize(searchParams.get('limit'));
     const nextViewMode = parseViewMode(searchParams.get('view'));
 
-    if (sortField !== nextSortField) setSortField(nextSortField);
-    if (sortDir !== nextSortDir) setSortDir(nextSortDir);
-    if (page !== nextPage) setPage(nextPage);
-    if (pageSize !== nextPageSize) setPageSize(nextPageSize);
-    if (viewMode !== nextViewMode) setViewMode(nextViewMode);
-  }, [page, pageSize, searchParams, sortDir, sortField, viewMode]);
+    setSortField((current) => (current !== nextSortField ? nextSortField : current));
+    setSortDir((current) => (current !== nextSortDir ? nextSortDir : current));
+    setPage((current) => (current !== nextPage ? nextPage : current));
+    setPageSize((current) => (current !== nextPageSize ? nextPageSize : current));
+    setViewMode((current) => (current !== nextViewMode ? nextViewMode : current));
+  }, [searchParams]);
 
   const hasWrittenListState = useRef(false);
   useEffect(() => {
@@ -175,20 +181,22 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
   const loadLeadsRef = React.useRef<(currentPage?: number) => Promise<void>>();
   
   const loadLeads = useCallback(async (currentPage: number = 0) => {
+    const requestId = ++leadRequestId.current;
     setLoading(true);
     setError(null);
     try {
       const params = toApiParams(sortField, sortDir, pageSize, currentPage);
       const response = await fetchLeads(params);
-      if (isMounted.current) {
+      if (requestId === leadRequestId.current) {
         setLeads(response.leads);
         setTotalLeads(response.total);
+        setTotalEstimated(Boolean(response.total_estimated));
       }
     } catch (err) {
       console.error('Failed to fetch leads:', err);
-      if (isMounted.current) setError('Failed to load leads. Make sure the backend is running.');
+      if (requestId === leadRequestId.current) setError('Failed to load leads. Make sure the backend is running.');
     } finally {
-      if (isMounted.current) setLoading(false);
+      if (requestId === leadRequestId.current) setLoading(false);
     }
   }, [toApiParams, pageSize, sortField, sortDir]);
 
@@ -197,11 +205,13 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
 
   // R4: Health check on initial mount — show cold-start banner if backend is booting
   useEffect(() => {
+    let cancelled = false;
     let timerId: ReturnType<typeof setTimeout>;
     let startingRetries = 0;
     let errorRetries = 0;
 
     const finishWithHealthError = (message: string) => {
+      if (cancelled) return;
       setBackendStarting(false);
       setLoading(false);
       setError(message);
@@ -209,7 +219,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     
     const pollHealth = async () => {
       const health = await checkHealth();
-      if (!isMounted.current) return;
+      if (cancelled) return;
       if (health.status === 'starting' && startingRetries < MAX_HEALTH_STARTING_RETRIES) {
         setBackendStarting(true);
         setError(null);
@@ -238,7 +248,10 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     };
     
     pollHealth();
-    return () => { clearTimeout(timerId); };
+    return () => {
+      cancelled = true;
+      clearTimeout(timerId);
+    };
     // Only run once on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -291,24 +304,27 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
       const term = filters.searchTerm.trim();
       setLeads([]);
       setTotalLeads(0);
+      setTotalEstimated(false);
       if (!term) {
+        addressRequestId.current++;
         setAddressResults([]);
         setAddressSearching(false);
         return;
       }
+      const requestId = ++addressRequestId.current;
       setAddressSearching(true);
       searchBuildings(term)
         .then((res) => {
-          if (!isMounted.current) return;
+          if (requestId !== addressRequestId.current) return;
           setAddressResults(res.buildings || []);
         })
         .catch(() => {
-          if (!isMounted.current) return;
+          if (requestId !== addressRequestId.current) return;
           setAddressResults([]);
           setError('Failed to search buildings. Make sure the backend is running.');
         })
         .finally(() => {
-          if (isMounted.current) setAddressSearching(false);
+          if (requestId === addressRequestId.current) setAddressSearching(false);
         });
       return;
     }
@@ -320,6 +336,16 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
       loadLeads(0);
     }
   };
+
+  useEffect(() => {
+    if (hasHydratedAddressLookupUrl.current || backendStarting) return;
+    const term = filters.searchTerm.trim();
+    if (filters.searchMode !== 'address' || !term || searchParams.get('mode') !== 'address') return;
+    hasHydratedAddressLookupUrl.current = true;
+    applyFilters();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backendStarting, filters.searchMode, filters.searchTerm, searchParams]);
+
   useEffect(() => {
     if (!filterPreset) return;
     clearSelected();
@@ -431,7 +457,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     setEnriching(true);
     try {
       const result = await startSelectedLeadsEnrichment(Array.from(selectedIds));
-      if (result.missing_lead_ids.length > 0) {
+      if (result.status === 'approval_required') {
+        toast(result.message || `Selected enrichment preview ready for ${result.target_count} lead(s).`);
+      } else if (result.missing_lead_ids.length > 0) {
         toast.success(`Queued enrichment for ${result.target_count} lead(s). ${result.missing_lead_ids.length} selection(s) were skipped.`);
       } else if (result.dispatch_mode === 'in_process') {
         toast.success(`Queued enrichment for ${result.target_count} lead(s) in local fallback mode.`);
@@ -907,7 +935,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
         <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-200">
           <div className="text-sm text-gray-400">
             {showLeadWorkspace ? (
-              <>Showing <span className="text-gray-700 font-medium">{displayLeads.length}</span> of <span className="text-gray-700 font-medium">{totalLeads.toLocaleString()}</span> leads</>
+              <>Showing <span className="text-gray-700 font-medium">{displayLeads.length}</span> of <span className="text-gray-700 font-medium">{totalEstimated ? `${totalLeads.toLocaleString()}+` : totalLeads.toLocaleString()}</span> leads</>
             ) : (
               <>Address lookup returns buildings first, then linked PM leads when available.</>
             )}
@@ -972,7 +1000,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                 disabled={enriching}
                 className="px-4 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                {enriching ? 'Enriching...' : `Enrich ${selectedIds.size} Selected`}
+                {enriching ? 'Checking...' : `Preview ${selectedIds.size} Selected`}
               </button>
             </div>
           )}
@@ -981,36 +1009,41 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
       {filters.searchMode === 'address' && addressResults.length > 0 && (
         <div className="bg-white shadow-sm border border-blue-200 rounded-xl p-4 mb-3">
           <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3">
-            Building Address Results ({addressResults.length})
+            Address Results ({addressResults.length})
           </h3>
           <div className="space-y-2">
-            {addressResults.map((b, idx) => (
-              <div key={b.building_id || `${b.address}-${idx}`} className="flex items-center justify-between p-2 rounded-lg bg-blue-50/50 hover:bg-blue-50 transition-colors">
+            {addressResults.map((b, idx) => {
+              const isLeadAddress = b.status === 'lead_address';
+              return (
+                <div key={b.building_id || `${b.address}-${idx}`} className="flex items-center justify-between p-2 rounded-lg bg-blue-50/50 hover:bg-blue-50 transition-colors">
                 <div>
                   <div className="text-sm font-medium text-gray-900">{b.address}</div>
-                  <div className="text-xs text-gray-500">
+                  {isLeadAddress && (
+                    <div className="text-xs text-gray-500">{b.boro || 'Unknown borough'} - lead address record</div>
+                  )}
+                  <div className={isLeadAddress ? 'hidden' : 'text-xs text-gray-500'}>
                     {b.boro} · {b.units_res} units · {b.pm_company || b.building_type || 'building record'}
                   </div>
                 </div>
                 <div className="text-right">
-                  <button
-                    onClick={() => navigate(`/buildings/${encodeURIComponent(String(b.bbl || b.building_id))}`)}
-                    className="block text-xs text-gray-500 hover:text-gray-700 hover:underline mb-1"
+                  {!isLeadAddress && (
+                    <button
+                      onClick={() => navigate(`/buildings/${encodeURIComponent(String(b.bbl || b.building_id))}`)}
+                      className="block text-xs text-gray-500 hover:text-gray-700 hover:underline mb-1"
                   >
-                    Open building
-                  </button>
+                      Open building
+                    </button>
+                  )}
                   {b.lead_id ? (
                     <button
                       onClick={() => {
                         clearSelected();
-                        setField('searchMode', 'leads');
-                        setField('searchTerm', b.lead_name || b.agent_name || b.pm_company || '');
                         setAddressResults([]);
-                        setTimeout(() => applyFilters(), 0);
+                        navigate(buildLeadHref(b.lead_id));
                       }}
                       className="text-xs text-blue-600 hover:underline font-medium"
                     >
-                      {b.lead_name || b.agent_name} {b.score != null ? `(score: ${b.score.toFixed(1)})` : ''}
+                      {isLeadAddress ? 'Open lead' : (b.lead_name || b.agent_name)} {b.score != null ? `(score: ${b.score.toFixed(1)})` : ''}
                     </button>
                   ) : b.pm_company ? (
                     <div className="text-xs text-gray-600">
@@ -1021,8 +1054,9 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                     <span className="text-xs text-gray-400">No managing lead</span>
                   )}
                 </div>
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -1035,7 +1069,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
 
       {filters.searchMode === 'address' && !addressSearching && filters.searchTerm.trim() && addressResults.length === 0 && !error && (
         <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6 text-center">
-          <p className="text-sm font-medium text-gray-700">No buildings matched that address.</p>
+          <p className="text-sm font-medium text-gray-700">No address records matched that search.</p>
           <p className="text-xs text-gray-400 mt-1">Try a shorter street name or a nearby address variant.</p>
         </div>
       )}
@@ -1486,7 +1520,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                   )}
                 </div>
                 <div className="mt-3 text-xs text-gray-500">
-                  Current result set: <span className="font-medium text-gray-700">{totalLeads.toLocaleString()}</span> leads
+                  Current result set: <span className="font-medium text-gray-700">{totalEstimated ? `${totalLeads.toLocaleString()}+` : totalLeads.toLocaleString()}</span> leads
                 </div>
               </div>
             </div>

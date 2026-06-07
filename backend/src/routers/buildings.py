@@ -20,6 +20,7 @@ from src.db.session import get_session
 from src.auth.auth import AuthUser, get_current_user
 from src.score.revenue import estimate_building_revenue
 from src.services.contact_roster import get_building_contacts
+from src.services.outreach_feedback import load_outreach_feedback_truth_write_status, record_outreach_feedback_claims
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/buildings", tags=["buildings"])
@@ -425,9 +426,33 @@ async def get_building(
 async def refresh_building_dos_contacts(
     request: Request,
     bbl: str,
+    dry_run: bool = Query(True),
+    confirm_execute: bool = Query(False),
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
+    if dry_run:
+        return {
+            "status": "approval_required",
+            "bbl": bbl,
+            "job_id": None,
+            "dry_run": True,
+            "confirm_execute": confirm_execute,
+            "approval_required": True,
+            "safe_to_run_automatically": False,
+            "mutations_planned": 0,
+            "preview": {
+                "operation": "dos_contacts_refresh",
+                "would_mutate": ["dos_cache", "external DOS refresh task"],
+                "required_execute_query": (
+                    f"/api/v1/buildings/{bbl}/dos-contacts/refresh?dry_run=false&confirm_execute=true"
+                ),
+            },
+            "rollback_strategy": "No DOS refresh was queued. Execute only after reviewing the preview and passing confirm_execute=true.",
+        }
+    if not confirm_execute:
+        raise HTTPException(400, "DOS contact refresh execution requires confirm_execute=true")
+
     canonical_bbl = await _resolve_canonical_bbl(session, bbl)
     if not canonical_bbl:
         raise HTTPException(404, "Building not found")
@@ -758,10 +783,12 @@ async def log_building_outreach_event(
     if not exists:
         raise HTTPException(404, "Building not found")
 
-    await session.execute(
+    truth_claim_status = await load_outreach_feedback_truth_write_status(session)
+    insert_result = await session.execute(
         text("""
             INSERT INTO outreach_events (bbl, stage, method, outcome, notes, next_follow_up, event_timestamp, created_at, updated_at)
             VALUES (:bbl, :stage, :method, :outcome, :notes, :nfu, :ts, NOW(), NOW())
+            RETURNING id
         """),
         {
             "bbl": canonical_bbl, "stage": stage, "method": method,
@@ -769,6 +796,18 @@ async def log_building_outreach_event(
             "ts": datetime.now(timezone.utc),
         },
     )
+    event_id = insert_result.scalar_one()
+    truth_claim_ids = []
+    if truth_claim_status["ready"]:
+        truth_claim_ids = await record_outreach_feedback_claims(
+            session,
+            lead_id=None,
+            event_id=int(event_id),
+            method=method,
+            outcome=outcome,
+            notes=notes,
+            bbl=canonical_bbl,
+        )
 
     update_sql = "UPDATE buildings SET outreach_status = :os, updated_at = now()"
     update_params: dict = {"bbl": canonical_bbl, "os": stage}
@@ -779,7 +818,14 @@ async def log_building_outreach_event(
     await session.execute(text(update_sql), update_params)
     await session.commit()
 
-    return {"status": "success", "bbl": canonical_bbl, "stage": stage}
+    return {
+        "status": "success",
+        "bbl": canonical_bbl,
+        "stage": stage,
+        "event_id": event_id,
+        "truth_claim_ids": truth_claim_ids,
+        "truth_claim_status": truth_claim_status,
+    }
 
 
 @router.get("/{bbl}/outreach-events")

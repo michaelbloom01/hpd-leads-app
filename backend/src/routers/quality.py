@@ -12,53 +12,24 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.session import get_session
+from src.services.source_audit import (
+    RUNNABLE_JOB_TYPES,
+    SOURCE_REGISTRY,
+    _pick_latest_quality_row,
+    _source_row_status,
+    load_source_audit,
+)
+from src.services.truth_health import is_truth_schema_current, load_truth_schema_status
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/quality", tags=["data-quality"])
 
-RUNNABLE_JOB_TYPES = {
-    "buildings", "hpd_complaints", "acris", "hpd_violations",
-    "dob_permits", "hpd_litigation", "emergency_repairs", "aep",
-    "evictions", "energy", "facades", "pad", "scoring", "enrichment",
-    "building_coordinates",
-}
-
-SOURCE_REGISTRY = [
-    {"source_name": "hpd_registrations", "dataset_id": "tesw-yqqr", "table_name": "buildings", "job_type": "buildings", "ui_surface": "leads+buildings", "quality_sources": ["hpd_registrations", "hpd_buildings"]},
-    {"source_name": "hpd_contacts", "dataset_id": "feu5-w2e2", "table_name": "building_contacts", "job_type": "buildings", "ui_surface": "lead_detail_contacts", "quality_sources": ["hpd_contacts", "hpd_buildings"]},
-    {"source_name": "pluto", "dataset_id": "64uk-42ks", "table_name": "buildings", "job_type": "buildings", "ui_surface": "lead_detail+building_detail", "quality_sources": ["pluto", "hpd_buildings"]},
-    {"source_name": "building_coordinates", "dataset_id": "planninglabs|nominatim", "table_name": "buildings", "job_type": "building_coordinates", "ui_surface": "portfolio_map"},
-    {"source_name": "hpd_complaints", "dataset_id": "ygpa-z7cr", "table_name": "hpd_complaints", "job_type": "hpd_complaints", "ui_surface": "building_timeline+churn"},
-    {"source_name": "hpd_violations", "dataset_id": "wvxf-dwi5", "table_name": "hpd_violations", "job_type": "hpd_violations", "ui_surface": "lead_distress+timeline"},
-    {"source_name": "acris_transactions", "dataset_id": "bnx9-e6tj|8h5j-fqxa|636b-3b5g", "table_name": "acris_transactions", "job_type": "acris", "ui_surface": "building_timeline+churn", "quality_sources": ["acris_transactions", "acris"]},
-    {"source_name": "dob_permits", "dataset_id": "ipu4-2vj7|rbx6-tga4", "table_name": "dob_permits", "job_type": "dob_permits", "ui_surface": "building_timeline+churn"},
-    {"source_name": "hpd_litigation", "dataset_id": "59kj-x8nc", "table_name": "hpd_litigation", "job_type": "hpd_litigation", "ui_surface": "building_timeline+churn"},
-    {"source_name": "emergency_repairs", "dataset_id": "24cj-meh5", "table_name": "emergency_repairs", "job_type": "emergency_repairs", "ui_surface": "churn_only"},
-    {"source_name": "aep_designations", "dataset_id": "hcir-3275", "table_name": "aep_designations", "job_type": "aep", "ui_surface": "churn_only"},
-    {"source_name": "eviction_filings", "dataset_id": "6z8x-wfk4", "table_name": "eviction_filings", "job_type": "evictions", "ui_surface": "churn_only"},
-    {"source_name": "energy_grades", "dataset_id": "355w-xvp2", "table_name": "energy_grades", "job_type": "energy", "ui_surface": "churn_only"},
-    {"source_name": "facade_inspections", "dataset_id": "xubg-57si", "table_name": "facade_inspections", "job_type": "facades", "ui_surface": "churn_only"},
-    {"source_name": "pad", "dataset_id": "bc8t-ecyu", "table_name": "pad_addresses", "job_type": "pad", "ui_surface": "join_crosswalk"},
+__all__ = [
+    "RUNNABLE_JOB_TYPES",
+    "SOURCE_REGISTRY",
+    "_pick_latest_quality_row",
+    "_source_row_status",
 ]
-
-
-def _source_row_status(table_exists: bool, has_quality_log: bool, runnable_job: bool) -> str:
-    if not runnable_job:
-        return "not_wired"
-    if not table_exists:
-        return "schema_missing"
-    if not has_quality_log:
-        return "no_recent_ingest"
-    return "operational"
-
-
-def _pick_latest_quality_row(source: dict, latest_quality: dict[str, dict]) -> Optional[dict]:
-    quality_sources = source.get("quality_sources") or [source["source_name"]]
-    matches = [latest_quality.get(name) for name in quality_sources if latest_quality.get(name)]
-    if not matches:
-        return None
-    return max(matches, key=lambda row: row.get("run_timestamp") or datetime.min.replace(tzinfo=timezone.utc))
-
 
 def _parse_json_object(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
@@ -99,6 +70,47 @@ async def _load_canonical_materialization_stats(session: AsyncSession) -> dict[s
         "bucket_counts": {
             str(row.bucket): int(row.cnt or 0)
             for row in bucket_rows
+        },
+    }
+
+
+async def _load_truth_confidence_stats(session: AsyncSession) -> dict[str, Any]:
+    schema_status = await load_truth_schema_status(session)
+    if not is_truth_schema_current(schema_status):
+        return {
+            "claim_count": 0,
+            "verified_claim_count": 0,
+            "conflicting_claim_count": 0,
+            "open_review_count": 0,
+            "active_golden_case_count": 0,
+            "actionability_distribution": {},
+            "schema_status": schema_status,
+        }
+
+    counts_row = (await session.execute(text("""
+        SELECT
+            (SELECT COUNT(*) FROM truth_claims) AS claim_count,
+            (SELECT COUNT(*) FROM truth_claims WHERE belief_status = 'verified') AS verified_claim_count,
+            (SELECT COUNT(*) FROM truth_claims WHERE belief_status = 'conflicting') AS conflicting_claim_count,
+            (SELECT COUNT(*) FROM truth_review_items WHERE status = 'open') AS open_review_count,
+            (SELECT COUNT(*) FROM golden_verification_cases WHERE active = true) AS active_golden_case_count
+    """))).first()
+    counts = dict(counts_row._mapping) if counts_row else {}
+    actionability_rows = await session.execute(text("""
+        SELECT actionability_level, COUNT(*) AS cnt
+        FROM truth_claims
+        GROUP BY actionability_level
+        ORDER BY actionability_level
+    """))
+    return {
+        "claim_count": int(counts.get("claim_count") or 0),
+        "verified_claim_count": int(counts.get("verified_claim_count") or 0),
+        "conflicting_claim_count": int(counts.get("conflicting_claim_count") or 0),
+        "open_review_count": int(counts.get("open_review_count") or 0),
+        "active_golden_case_count": int(counts.get("active_golden_case_count") or 0),
+        "actionability_distribution": {
+            str(row.actionability_level or "none"): int(row.cnt or 0)
+            for row in actionability_rows
         },
     }
 
@@ -294,6 +306,7 @@ async def data_health(session: AsyncSession = Depends(get_session)):
             "guardrails": preview.get("guardrails"),
         }
     canonical_materialized = await _load_canonical_materialization_stats(session)
+    truth_confidence = await _load_truth_confidence_stats(session)
     if canonical_prep is None and canonical_materialized["proposal_count"] > 0:
         canonical_prep = {
             "job_id": None,
@@ -371,6 +384,10 @@ async def data_health(session: AsyncSession = Depends(get_session)):
         review_required = int(canonical_materialized["bucket_counts"].get("review_required") or 0)
         if review_required > 0:
             warnings.append(f"{review_required:,} materialized canonical proposals still require review")
+    if truth_confidence["conflicting_claim_count"] > 0:
+        warnings.append(f"{truth_confidence['conflicting_claim_count']:,} truth claims have conflicting evidence")
+    if truth_confidence["open_review_count"] > 0:
+        warnings.append(f"{truth_confidence['open_review_count']:,} truth review items are open")
 
     return {
         "total_leads": row["total_leads"],
@@ -403,6 +420,7 @@ async def data_health(session: AsyncSession = Depends(get_session)):
         ),
         "canonical_prep": canonical_prep,
         "canonical_materialized": canonical_materialized,
+        "truth_confidence": truth_confidence,
         "warnings": warnings,
     }
 
@@ -490,60 +508,4 @@ async def building_coverage(session: AsyncSession = Depends(get_session)):
 @router.get("/source-audit")
 async def source_audit(session: AsyncSession = Depends(get_session)):
     """Canonical source integrity matrix: configured vs runnable vs surfaced."""
-    tables_result = await session.execute(
-        text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
-    )
-    existing_tables = {str(r[0]) for r in tables_result}
-
-    latest_quality_result = await session.execute(text("""
-        SELECT DISTINCT ON (source_name)
-            source_name, records_fetched, records_inserted, run_timestamp
-        FROM data_quality_log
-        ORDER BY source_name, run_timestamp DESC
-    """))
-    latest_quality = {
-        str(r._mapping["source_name"]): dict(r._mapping)
-        for r in latest_quality_result
-    }
-
-    rows = []
-    for source in SOURCE_REGISTRY:
-        table_name = source["table_name"]
-        job_type = source["job_type"]
-        quality = _pick_latest_quality_row(source, latest_quality)
-        table_exists = table_name in existing_tables
-        has_quality_log = quality is not None
-        runnable_job = job_type in RUNNABLE_JOB_TYPES
-        status = _source_row_status(
-            table_exists=table_exists,
-            has_quality_log=has_quality_log,
-            runnable_job=runnable_job,
-        )
-        rows.append({
-            **source,
-            "table_exists": table_exists,
-            "runnable_job": runnable_job,
-            "has_quality_log": has_quality_log,
-            "last_run": quality.get("run_timestamp").isoformat() if quality and quality.get("run_timestamp") else None,
-            "last_records_fetched": int(quality.get("records_fetched") or 0) if quality else 0,
-            "last_records_inserted": int(quality.get("records_inserted") or 0) if quality else 0,
-            "status": status,
-        })
-
-    counts = {
-        "total_sources": len(rows),
-        "operational": sum(1 for r in rows if r["status"] == "operational"),
-        "not_wired": sum(1 for r in rows if r["status"] == "not_wired"),
-        "schema_missing": sum(1 for r in rows if r["status"] == "schema_missing"),
-        "no_recent_ingest": sum(1 for r in rows if r["status"] == "no_recent_ingest"),
-    }
-
-    critical_gaps = [
-        r for r in rows if r["status"] in {"not_wired", "schema_missing", "no_recent_ingest"}
-    ]
-
-    return {
-        "summary": counts,
-        "critical_gaps": critical_gaps,
-        "sources": rows,
-    }
+    return await load_source_audit(session)

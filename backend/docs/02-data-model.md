@@ -74,6 +74,32 @@ Key rule:
 
 - Canonicalization is additive-first. `lead_id` remains the workflow owner for pipeline stage, follow-up, notes, and outreach history until an explicitly safe migration path is chosen.
 
+## Data Truth & Confidence Layer (Additive)
+
+The canonical identity layer now feeds a claim/evidence/confidence program. The goal is to make every important relationship explainable before it becomes action-driving.
+
+Primary tables:
+
+| Table | Purpose |
+|-------|---------|
+| `truth_claims` | Beliefs such as "entity manages building", "person is a contact", or "entity owns building" with normalized value, belief status, confidence, freshness, and actionability |
+| `truth_evidence` | Source observations attached to claims, marked as supporting or contradicting, with source quality and observed date |
+| `confidence_snapshots` | Computed trust posture by lead/entity/building/contact scope |
+| `truth_review_items` | Human-review queue with proposed change, supporting evidence, contradicting evidence, and run ID |
+| `golden_verification_cases` | Benchmark cases for false merges, false splits, stale agents, co-op boards, shell LLCs, and suffix variants |
+| `truth_validation_runs` | Auditable dry-run/execute envelopes for validation and reconciliation jobs |
+
+Actionability rule:
+
+- `broad_discovery`: exploratory only; requires at least one supporting source and evidence item
+- `ranked_sourcing`: usable for ranking, still check before outreach; requires at least one supporting source and evidence item
+- `automated_enrichment`: safe for non-destructive enrichment/source refresh, not outreach; requires at least one supporting source and evidence item
+- `recommended_outreach`: safe for human-reviewed outreach; requires at least one supporting source and evidence item
+- `acquisition_quality_diligence`: strong enough for diligence judgment; requires at least two supporting sources and evidence items
+- `do_not_act`: weak, stale, or contradictory
+
+Detailed design: `backend/docs/10-data-truth-confidence-program.md`.
+
 ## Deduplication Rules
 
 ### Name Normalization
