@@ -6,7 +6,6 @@ endpoints to evaluate PM companies as acquisition targets.
 import asyncio
 import json
 import logging
-import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -717,7 +716,6 @@ async def get_lead(request: Request, lead_id: str, session: AsyncSession = Depen
 
     lead_data = dict(row._mapping)
 
-    hydrated_from_fallback = False
     portfolio_rows = await session.execute(
         text("""
             SELECT b.address, b.borough, b.unit_count, b.building_type
@@ -751,7 +749,6 @@ async def get_lead(request: Request, lead_id: str, session: AsyncSession = Depen
                 id_params,
             )
             portfolio = [dict(r._mapping) for r in fallback_rows]
-            hydrated_from_fallback = bool(portfolio)
     if not portfolio:
         normalized_name = str(lead_data.get("normalized_name") or "").strip()
         if normalized_name:
@@ -770,7 +767,6 @@ async def get_lead(request: Request, lead_id: str, session: AsyncSession = Depen
                 {"normalized_name": normalized_name},
             )
             portfolio = [dict(r._mapping) for r in grouped_rows]
-            hydrated_from_fallback = bool(portfolio)
     if not portfolio:
         name_hint = (
             str(lead_data.get("agent_name") or "").strip()
@@ -792,7 +788,6 @@ async def get_lead(request: Request, lead_id: str, session: AsyncSession = Depen
                 {"name_hint": f"%{name_hint}%"},
             )
             portfolio = [dict(r._mapping) for r in contact_rows]
-            hydrated_from_fallback = bool(portfolio)
     if portfolio:
         addresses = [p["address"] for p in portfolio if p.get("address")]
         linked_units = sum(int(p.get("unit_count") or 0) for p in portfolio)

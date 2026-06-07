@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from collections import Counter
 from statistics import mean
 from typing import Any, Optional
 from urllib.parse import urlparse

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { toast } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { ApiLead, fetchLead, fetchLeadLineage, type LeadLineageResponse, updateLead, addOutreachAttempt, enrichLeadAll, estimateLeadRevenue, OutreachAttempt, fetchLeadContacts } from '../services/api';
+import { ApiLead, fetchLead, fetchLeadLineage, type LeadLineageResponse, updateLead, addOutreachAttempt, enrichLeadAll, estimateLeadRevenue, OutreachAttempt, fetchLeadContacts, downloadPortfolioContactsWorkbook } from '../services/api';
 import { addBuildingToPipeline, fetchBuildings, type BuildingRow, type BuildingContactEntry } from '../services/buildings-api';
 import { PIPELINE_STAGES, OUTREACH_STATUSES, OUTREACH_METHODS, OUTREACH_OUTCOMES, formatCurrency } from '../utils/format';
 import { getLeadDisplayName } from '../utils/leads';
@@ -45,6 +45,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   const [isEnriching, setIsEnriching] = useState(false);
+  const [isExportingContacts, setIsExportingContacts] = useState(false);
   // isResearching and isGeneratingAI removed — unified into isEnriching via handleEnrichAll
   const [isSaving, setIsSaving] = useState(false);
   const [enrichedLead, setEnrichedLead] = useState(lead);
@@ -365,6 +366,31 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     }
   };
 
+  const handleExportPortfolioContacts = async () => {
+    const companyName = getLeadDisplayName(enrichedLead);
+    if (!companyName) {
+      toast.error('No company name available for export');
+      return;
+    }
+    setIsExportingContacts(true);
+    try {
+      const { blob, filename } = await downloadPortfolioContactsWorkbook(companyName, enrichedLead.lead_id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Portfolio workbook downloaded');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to export portfolio contacts');
+    } finally {
+      setIsExportingContacts(false);
+    }
+  };
+
   const handleAddOutreachAttempt = async () => {
     if (!newOutreach.method || !newOutreach.outcome) return;
     setIsSaving(true);
@@ -516,12 +542,12 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 {showEmailMenu && (
                 <div className="absolute top-full left-0 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-xl z-50 py-1">
                   <a href={`mailto:${enrichedLead.email}?subject=Property Management Services — ${getLeadDisplayName(enrichedLead) || 'Introduction'}&body=Hi ${enrichedLead.primary_contact || 'there'},%0D%0A%0D%0AI noticed your portfolio of ${enrichedLead.portfolio_size} buildings across ${(enrichedLead.boros || [enrichedLead.boro]).join(', ')} and wanted to introduce our property management services.%0D%0A%0D%0AWould you have time for a brief call this week?%0D%0A%0D%0ABest regards`}
-                    onClick={() => { setShowEmailMenu(false); addOutreachAttempt(lead.lead_id, { method: 'email', outcome: 'sent_email', notes: 'Intro template sent' }).catch(() => toast.error('Failed to log outreach')); }}
+                    onClick={() => setShowEmailMenu(false)}
                     className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors">
                     Intro Template
                   </a>
                   <a href={`mailto:${enrichedLead.email}?subject=Following up — ${getLeadDisplayName(enrichedLead)}&body=Hi ${enrichedLead.primary_contact || 'there'},%0D%0A%0D%0AI wanted to follow up on my previous message regarding your ${enrichedLead.portfolio_size}-building portfolio.%0D%0A%0D%0AWe specialize in portfolios like yours in ${(enrichedLead.boros || [enrichedLead.boro]).join(' and ')} and believe we can add value.%0D%0A%0D%0AWould you be open to a brief conversation?%0D%0A%0D%0ABest regards`}
-                    onClick={() => { setShowEmailMenu(false); addOutreachAttempt(lead.lead_id, { method: 'email', outcome: 'sent_email', notes: 'Follow-up template sent' }).catch(() => toast.error('Failed to log outreach')); }}
+                    onClick={() => setShowEmailMenu(false)}
                     className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors">
                     Follow-Up Template
                   </a>
@@ -536,6 +562,14 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
             )}
             <button onClick={openWebsite} className="px-3 py-2 sm:py-1.5 bg-purple-600 text-white text-xs font-bold rounded-lg hover:bg-purple-500 transition-colors">
               {enrichedLead.website ? 'Company Website' : 'Search'}
+            </button>
+            <button
+              onClick={handleExportPortfolioContacts}
+              disabled={isExportingContacts}
+              className="px-3 py-2 sm:py-1.5 bg-gray-900 text-white text-xs font-bold rounded-lg hover:bg-gray-800 disabled:opacity-50 transition-colors"
+              title="Download all buildings, contacts, roles, sources, and confidence hints for this portfolio"
+            >
+              {isExportingContacts ? 'Exporting...' : 'Export Contacts'}
             </button>
             <button onClick={handleEnrichAll} disabled={isEnriching} className="px-3 py-2 sm:py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors" title="Find contacts, scrape website, and generate AI summary — all in one step">
               {isEnriching ? `Enriching... ${enrichmentElapsedSec}s` : 'Enrich Lead'}

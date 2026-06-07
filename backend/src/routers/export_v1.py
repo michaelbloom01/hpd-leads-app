@@ -6,10 +6,11 @@ Complements the legacy export router (export.py) which works against SQLite.
 import csv
 import io
 import logging
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import text
@@ -17,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.session import get_session
 from src.auth.auth import AuthUser, get_current_user
+from src.services.portfolio_export import build_portfolio_export, build_portfolio_workbook
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/export", tags=["export-v1"])
@@ -165,4 +167,95 @@ async def export_leads_csv(
         generate(),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=double_edge_leads_export.csv"},
+    )
+
+
+@router.get("/portfolio-contacts/csv")
+@limiter.limit("10/minute")
+async def export_portfolio_contacts_csv(
+    request: Request,
+    company: str = Query(..., min_length=2, max_length=160),
+    lead_id: Optional[str] = Query(default=None, max_length=64),
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Export all buildings and contact/source rows for a manager portfolio."""
+    payload = await build_portfolio_export(
+        session=session,
+        company=company,
+        lead_id=lead_id,
+    )
+    rows = payload.get("contact_rows") or []
+    columns = list(rows[0].keys()) if rows else [
+        "bbl",
+        "address",
+        "borough",
+        "zip_code",
+        "unit_count",
+        "churn_score",
+        "churn_category",
+        "management_company",
+        "corporate_owner",
+        "dos_contacts_status",
+        "contact_name",
+        "contact_role",
+        "contact_source",
+        "contact_updated",
+        "contact_address",
+        "contact_confidence",
+        "contact_source_record_id",
+        "contact_source_url",
+        "board_role",
+        "is_decision_maker",
+    ]
+
+    def generate():
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=columns)
+        writer.writeheader()
+        yield output.getvalue()
+        output.seek(0)
+        output.truncate(0)
+        for row in rows:
+            writer.writerow(row)
+            yield output.getvalue()
+            output.seek(0)
+            output.truncate(0)
+
+    filename_company = re.sub(r"[^A-Za-z0-9]+", "_", company).strip("_").lower() or "portfolio"
+    return StreamingResponse(
+        generate(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=double_edge_{filename_company}_portfolio_contacts.csv"
+            )
+        },
+    )
+
+
+@router.get("/portfolio-contacts/xlsx")
+@limiter.limit("10/minute")
+async def export_portfolio_contacts_xlsx(
+    request: Request,
+    company: str = Query(..., min_length=2, max_length=160),
+    lead_id: Optional[str] = Query(default=None, max_length=64),
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Export a portfolio workbook with buildings, contacts, sourcing, and gaps."""
+    payload = await build_portfolio_export(
+        session=session,
+        company=company,
+        lead_id=lead_id,
+    )
+    filename_company = re.sub(r"[^A-Za-z0-9]+", "_", company).strip("_").lower() or "portfolio"
+    return Response(
+        content=build_portfolio_workbook(payload),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=double_edge_{filename_company}_portfolio_contacts.xlsx"
+            )
+        },
     )
