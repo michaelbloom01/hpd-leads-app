@@ -1,6 +1,37 @@
 # Codex Review Handoff
 
-Last updated: 2026-06-01
+Last updated: 2026-06-07
+
+## 2026-06-07 Draft PR Packaging
+
+Release-train package pushed to GitHub as draft PR #5:
+`https://github.com/michaelbloom01/hpd-leads-app/pull/5`.
+
+Branch: `codex/leads-stabilization`.
+Commit: `0c7429a Add confidence-aware property intelligence surfaces`.
+
+Scope: confidence-aware property intelligence surfaces, read-only truth health/adjudication/source-overlap previews, approval-gated mutation paths, truth ledger schema/services/API/UI, portfolio building/contact export tooling, and supporting tests/docs.
+
+Safety posture:
+
+- No production mutation, source refresh, enrichment job, materialization job, evidence execution, bulk delete, merge, or production deploy was manually run.
+- Pushing the branch triggered CI and a Vercel preview deployment only.
+- Local scratch files `CODEX_FINISH_PLAN.md` and `CODEX_RESTART_PROMPT.md` remain untracked and intentionally out of the draft PR.
+- Local generated outputs and runtime artifacts are ignored via `.gitignore`.
+
+Verification for this package:
+
+- Targeted backend ruff for release-relevant `src`, truth scripts, export script, and tests passed.
+- Focused backend pytest passed with `227` tests.
+- Focused frontend Vitest passed with `59` tests.
+- `npm run build` passed.
+- Read-only adjudication/health posture stayed at `2,078` fact groups, `2,063` single-source, `15` multi-source/source-ready, `0` verification candidates, and `0` verified claims.
+- `truth_completion_audit.py --artifacts-only --indent 2` passed with `25/25` artifact coverage.
+- GitHub CI on PR #5 passed for backend tests, frontend build, docker build, Vercel preview, and Vercel preview comments.
+
+Known caveat: broad `ruff check src scripts tests` still reports legacy utility-script lint debt in older non-release scripts such as `backfill.py`, `run_scoring.py`, and sync helpers. The release-relevant lint slice passed.
+
+Current product stance: this is a draft PR for read-only confidence-aware intelligence and safety gates. Business use remains blocked until runtime activation, source freshness, verified-claim, review-workflow, and production truth-surface gates pass.
 
 ## 2026-06-01 HPD Property Managers View Boundary
 
