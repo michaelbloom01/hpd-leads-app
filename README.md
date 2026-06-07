@@ -20,7 +20,7 @@ NYC property management intelligence platform with dual purpose: **PE acquisitio
 10. **Building Lists** — saved collections of buildings for outreach workflows
 11. **Full sourcing UI** with server-side filtering, pipeline tracking, follow-ups, and bookmarkable filter URLs
 
-## Current Status (May 2026)
+## Current Status (June 2026)
 
 | Metric | Value |
 |--------|-------|
@@ -33,7 +33,7 @@ NYC property management intelligence platform with dual purpose: **PE acquisitio
 | Production Contact Coverage | 0.0% phone / 0.0% email / 0.0% website |
 | Local Stabilization Branch Leads | 38,495 |
 | Local Stabilization Branch Buildings | 179,985 |
-| Local Truth-Confidence Posture | Schema applied at `010_truth_manifest`; pilot ledger materialization complete with 2,063 claims / 2,063 evidence rows / 1,088 confidence snapshots; not business-ready until verified claims, review, full materialization, and approved source refresh/manual evidence |
+| Local Truth-Confidence Posture | Draft PR #5 packages the read-only truth/confidence workbench; schema applied at `010_truth_manifest`; current local posture is 2,115 claims, 2,078 fact groups, 15 multi-source/source-ready groups, 0 verified claims, 40 open review items, and `trust_posture=not_ready`; business use remains blocked until verified-claim, review, source freshness, activation, and production truth-surface gates pass |
 | Entity Classification | Company / Individual Agent / Owner-Operator |
 | Building Type Coverage | 100% (PLUTO data) |
 | Scoring | V2: 8-dimension |

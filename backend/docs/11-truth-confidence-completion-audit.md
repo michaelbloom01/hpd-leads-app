@@ -2,7 +2,7 @@
 
 Generated as a no-mutation audit for the Double Edge truth-confidence upgrade.
 
-Latest audit refresh: 2026-06-01.
+Latest audit refresh: 2026-06-07.
 
 ## Completion Verdict
 
@@ -20,7 +20,12 @@ The system should therefore be treated as:
 Current-state evidence:
 
 - Branch: `codex/leads-stabilization`.
-- Git status: dirty tree preserved; no stage, commit, or revert performed.
+- Draft PR: `https://github.com/michaelbloom01/hpd-leads-app/pull/5`.
+- Current package commit: `0c7429a Add confidence-aware property intelligence surfaces`.
+- GitHub CI for PR #5 passed backend tests, frontend build, docker build, Vercel preview, and Vercel preview comments.
+- Local scratch files `CODEX_FINISH_PLAN.md` and `CODEX_RESTART_PROMPT.md` remain untracked and intentionally outside the draft PR.
+- June 7 release-packaging verification: targeted backend ruff for release-relevant `src`, truth scripts, export script, and tests passed; focused backend pytest passed with `227` tests; focused frontend Vitest passed with `59` tests; `npm run build` passed; `truth_completion_audit.py --artifacts-only --indent 2` passed with `25/25` artifact coverage.
+- June 7 read-only runtime posture: adjudication/health checks planned `0` mutations, reported `2,078` fact groups, `2,063` single-source, `15` multi-source/source-ready, `0` verification candidates, `2,115` claims, `0` verified claims, `40` open review items, and `trust_posture=not_ready`. Business use remains blocked.
 - June 1 live HPD role-overlap refresh: read-only local posture is `2,078` current fact groups, `2,063` single-source, `15` multi-source/source-ready, `0` verification candidates, and `0` verified claims. `truth_health_report.py --indent 2` remains `trust_posture=not_ready`; `truth_source_overlap_blocker_report.py --max-items 20 --indent 2` remains `blocked_evidence_acquisition_required` with `15` evidence requests, `0` recording-ready worklist requests, `85` reviewed source findings, and `2` threshold-sensitive relationships. Official NYC Open Data reads are now reachable from this runtime: `truth_live_hpd_role_audit.py --indent 2` matched `14/14` registrations across the built-in operator/HPM targets, found `13` current registrations, emitted `58` current role-specific HPD claim previews, and found `13` strict HPD `Agent` identity matches after legal-suffix stripping. It found `0` `ManagementCompany` rows and `0` source-evidence intake candidates, so the live official HPD slice proves role-specific Agent/SiteManager/owner/officer evidence but does not supply manager-proof support for `manages_building`. A targeted recheck of the two one-source-threshold facts, Daisy / `9 PROSPECT PARK WEST` and MD Squared / `4 WEST 16 STREET`, found current registrations ending `2026-09-01` and strict HPD Agent identity matches, but again found no `ManagementCompany` rows and no recording-ready HPD manager-proof candidates.
 - June 1 HPD `Property Managers-1st Step` boundary: live NYC Open Data inspection of view `v4vh-sni9` found registration/address/block/lot/date fields only and no manager, agent, contact-type, corporation-name, or role-specific management fields. The HPD role-audit query packet and source-acquisition worklist now include `v4vh-sni9` API/download URLs as registration lookup context only, with policy text requiring `feu5-w2e2` `ManagementCompany` evidence or another exact manager-proof source before any `manages_building` support can be recorded. The blocker report remains `blocked_evidence_acquisition_required`; reviewed-source findings increased to `88`, while recording-ready requests, verification candidates, and verified claims remain `0`.
 - June 1 live DOB NOW clue resolution: `truth_dob_now_clue_audit.py --live-query --preview-source-evidence-intake --indent 2` queried official DOB NOW dataset `w9ak-ipjd` for the prior `57 BOND STREET` / BBL `1005297507` Md2/PincusCo clue. The exact target-property query returned `11` DOB NOW rows, the MD2/MD Squared party query returned `9` rows on other properties, and the combined target-plus-party query returned `0` rows. The nested source-evidence-intake preview stayed clue-only with `0` evidence candidates, `0` recording-ready rows, and `allowed_execute=false`. This is now reviewed-source history as `live_dob_now_md2_57_bond_official_query_2026_06_01`; it creates no source-ready overlap and reinforces that DOB applicant/owner/filing context is not manager proof.
