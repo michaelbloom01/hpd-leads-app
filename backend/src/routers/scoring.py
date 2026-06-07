@@ -8,7 +8,7 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -165,9 +165,33 @@ async def activate_config(
 
 @router.post("/recalculate")
 async def trigger_recalculate(
+    dry_run: bool = Query(default=True),
+    confirm_execute: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
+    dry_run = dry_run if isinstance(dry_run, bool) else True
+    confirm_execute = confirm_execute if isinstance(confirm_execute, bool) else False
+    if dry_run:
+        return {
+            "status": "approval_required",
+            "job_id": None,
+            "dry_run": True,
+            "confirm_execute": confirm_execute,
+            "approval_required": True,
+            "safe_to_run_automatically": False,
+            "mutations_planned": 0,
+            "preview": {
+                "operation": "scoring_recalculate",
+                "would_enqueue_job_type": "scoring",
+                "would_mutate": ["ingestion_jobs", "lead/building score fields"],
+                "required_execute_query": "/api/v1/scoring/recalculate?dry_run=false&confirm_execute=true",
+            },
+            "rollback_strategy": "No scoring job was queued. Execute only after explicit approval.",
+        }
+    if not confirm_execute:
+        raise HTTPException(400, "scoring recalculation execution requires confirm_execute=true")
+
     result = await session.execute(
         text("""
             INSERT INTO ingestion_jobs (job_type, source, status, started_at, created_at, updated_at)

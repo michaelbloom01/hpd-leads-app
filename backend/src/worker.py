@@ -22,6 +22,8 @@ app = Celery(
         "src.tasks.lead_materialization",
         "src.tasks.generate_leads",
         "src.tasks.reconcile",
+        "src.tasks.truth_validation",
+        "src.tasks.truth_materialization",
     ],
 )
 

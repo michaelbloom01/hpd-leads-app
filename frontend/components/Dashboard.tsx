@@ -9,7 +9,6 @@ import type { LeadFilterPreset } from './LeadTable';
 import { 
   fetchLeads, 
   fetchStats,
-  fetchDataStatus,
   ApiLead, 
   PipelineStats,
   getEnrichmentProgress,
@@ -69,8 +68,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
   const [buildingDrawerRows, setBuildingDrawerRows] = useState<BuildingRow[]>([]);
   const [buildingDrawerLoading, setBuildingDrawerLoading] = useState(false);
 
-  const isMounted = useRef(true);
+  const isMounted = useRef(false);
   useEffect(() => {
+    isMounted.current = true;
     return () => { isMounted.current = false; };
   }, []);
 
@@ -83,12 +83,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
         ]);
       };
 
-      const [leadsResult, statsResult, enrichResult, followUpsResult, dataStatusResult, gapsResult, healthResult, bldgStatsResult, smartListsResult] = await Promise.allSettled([
+      const [leadsResult, statsResult, enrichResult, followUpsResult, gapsResult, healthResult, bldgStatsResult, smartListsResult] = await Promise.allSettled([
         withTimeout(fetchLeads({ limit: 100, min_portfolio: 10 }), 15000),
         withTimeout(fetchStats(), 15000),
         withTimeout(getEnrichmentProgress(), 10000),
         withTimeout(getFollowUpsDue(), 10000),
-        withTimeout(fetchDataStatus(), 10000),
         withTimeout(getEnrichmentGaps(), 10000),
         withTimeout(fetchDataHealth(), 10000),
         withTimeout(fetchBuildingStats(), 10000),
@@ -123,10 +122,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
 
       if (followUpsResult.status === 'fulfilled' && isMounted.current) {
         setFollowUpsDue(followUpsResult.value);
-      }
-
-      if (dataStatusResult.status !== 'fulfilled') {
-        console.error('Failed to load data status:', dataStatusResult.reason);
       }
 
       if (gapsResult.status === 'fulfilled' && isMounted.current) {
@@ -993,7 +988,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
                 disabled={startingEnrichment}
                 className="text-[10px] px-2 py-1 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors font-medium disabled:opacity-50"
               >
-                {startingEnrichment ? 'Starting...' : 'Enrich Top 500'}
+                {startingEnrichment ? 'Checking...' : 'Preview Top 500'}
               </button>
             )}
           </div>

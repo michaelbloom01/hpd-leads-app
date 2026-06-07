@@ -4,6 +4,11 @@ Covers: table creation, lead CRUD, enrichment cache, backups.
 """
 from pathlib import Path
 
+import pytest
+
+
+pytestmark = pytest.mark.skip(reason="Legacy SQLite database adapter was removed; PostgreSQL contract tests cover current storage.")
+
 
 class TestDatabaseInit:
     def test_tables_created(self, db):

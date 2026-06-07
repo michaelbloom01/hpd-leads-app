@@ -73,6 +73,11 @@ class Lead(TimestampMixin, Base):
     tags: Mapped[Optional[list]] = mapped_column(JSONB)
     opportunity_note: Mapped[Optional[str]] = mapped_column(Text)
 
+    # Lead lineage / reconciliation
+    superseded_by_lead_id: Mapped[Optional[str]] = mapped_column(String(12))
+    retired_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    retirement_reason: Mapped[Optional[str]] = mapped_column(Text)
+
     # Revenue estimation
     estimated_monthly_revenue: Mapped[Optional[float]] = mapped_column(Float)
     estimated_annual_revenue: Mapped[Optional[float]] = mapped_column(Float)

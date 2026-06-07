@@ -3,13 +3,15 @@ import { toast } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { ApiLead, fetchLead, fetchLeadLineage, type LeadLineageResponse, updateLead, addOutreachAttempt, enrichLeadAll, estimateLeadRevenue, OutreachAttempt, fetchLeadContacts } from '../services/api';
 import { addBuildingToPipeline, fetchBuildings, type BuildingRow, type BuildingContactEntry } from '../services/buildings-api';
+import { fetchLeadTruthSummary, type LeadTruthSummary } from '../services/truth-api';
 import { PIPELINE_STAGES, OUTREACH_STATUSES, OUTREACH_METHODS, OUTREACH_OUTCOMES, formatCurrency } from '../utils/format';
 import { getLeadDisplayName } from '../utils/leads';
+import { assessContactConfidence } from '../utils/contactConfidence';
 
 // Lazy-load map to avoid large initial bundle
 const PortfolioMap = lazy(() => import('./PortfolioMap'));
 
-type TabId = 'overview' | 'contacts' | 'pipeline' | 'buildings' | 'dd';
+type TabId = 'overview' | 'truth' | 'contacts' | 'pipeline' | 'buildings' | 'dd';
 
 const formatRelativeDate = (value: string | null | undefined): string => {
   if (!value) return '--';
@@ -33,6 +35,15 @@ const formatAbsoluteDate = (value: string | null | undefined): string => {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
   return d.toLocaleDateString();
+};
+
+const pct = (value: number | null | undefined): string => `${Math.round((value || 0) * 100)}%`;
+
+const confidenceClass = (value: number | null | undefined): string => {
+  const score = value || 0;
+  if (score >= 0.78) return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  if (score >= 0.55) return 'bg-amber-50 text-amber-700 border-amber-200';
+  return 'bg-rose-50 text-rose-700 border-rose-200';
 };
 
 interface Props {
@@ -64,6 +75,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   const [linkedBuildings, setLinkedBuildings] = useState<BuildingRow[]>([]);
   const [loadingLinkedBuildings, setLoadingLinkedBuildings] = useState(false);
   const [leadLineage, setLeadLineage] = useState<LeadLineageResponse | null>(null);
+  const [leadTruth, setLeadTruth] = useState<LeadTruthSummary | null>(null);
   const [pipelineAddBusy, setPipelineAddBusy] = useState<Record<string, boolean>>({});
   const [buildingContacts, setBuildingContacts] = useState<{ bbl: string; address: string; outreach_status?: string | null; contacts: BuildingContactEntry[] }[]>([]);
   const [loadingBuildingContacts, setLoadingBuildingContacts] = useState(false);
@@ -140,10 +152,19 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     let cancelled = false;
     const loadLeadLineage = async () => {
       try {
-        const lineage = await fetchLeadLineage(lead.lead_id);
-        if (!cancelled) setLeadLineage(lineage);
+        const [lineage, truth] = await Promise.all([
+          fetchLeadLineage(lead.lead_id),
+          fetchLeadTruthSummary(lead.lead_id).catch(() => null),
+        ]);
+        if (!cancelled) {
+          setLeadLineage(lineage);
+          setLeadTruth(truth);
+        }
       } catch (err) {
-        if (!cancelled) setLeadLineage(null);
+        if (!cancelled) {
+          setLeadLineage(null);
+          setLeadTruth(null);
+        }
       }
     };
     loadLeadLineage();
@@ -322,6 +343,10 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     setIsEnriching(true);
     try {
       const result = await enrichLeadAll(lead.lead_id);
+      if (result.status === 'approval_required') {
+        toast(result.message || 'Lead enrichment preview ready. Execution requires explicit approval.');
+        return;
+      }
       
       // Build summary toast
       const found: string[] = [];
@@ -416,16 +441,21 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     }
   };
 
+  const visibleBuildingCount = loadingLinkedBuildings
+    ? (enrichedLead.portfolio_size || 0)
+    : (linkedBuildings.length || (enrichedLead.buildings || []).length || 0);
+
   const TABS: { id: TabId; label: string }[] = [
     { id: 'overview', label: 'Overview' },
+    { id: 'truth', label: 'Truth' },
     { id: 'contacts', label: 'Contacts' },
     { id: 'pipeline', label: 'Pipeline' },
-    { id: 'buildings', label: `Buildings (${enrichedLead.portfolio_size || 0})` },
+    { id: 'buildings', label: `Buildings (${visibleBuildingCount})` },
     { id: 'dd', label: 'Due Diligence' },
   ];
   const hasDirectContact = Boolean(enrichedLead.phone || enrichedLead.email);
   const nextActionLabel = !hasDirectContact
-    ? 'Run Enrich Lead to gather contact coverage'
+    ? 'Preview enrichment to gather contact coverage'
     : pipelineStage === 'research'
       ? 'Move to First Contact once outreach copy is ready'
       : pipelineStage === 'first_contact'
@@ -516,12 +546,14 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 {showEmailMenu && (
                 <div className="absolute top-full left-0 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-xl z-50 py-1">
                   <a href={`mailto:${enrichedLead.email}?subject=Property Management Services — ${getLeadDisplayName(enrichedLead) || 'Introduction'}&body=Hi ${enrichedLead.primary_contact || 'there'},%0D%0A%0D%0AI noticed your portfolio of ${enrichedLead.portfolio_size} buildings across ${(enrichedLead.boros || [enrichedLead.boro]).join(', ')} and wanted to introduce our property management services.%0D%0A%0D%0AWould you have time for a brief call this week?%0D%0A%0D%0ABest regards`}
-                    onClick={() => { setShowEmailMenu(false); addOutreachAttempt(lead.lead_id, { method: 'email', outcome: 'sent_email', notes: 'Intro template sent' }).catch(() => toast.error('Failed to log outreach')); }}
+                    onClick={() => setShowEmailMenu(false)}
+                    title="Open an email draft. Log the outcome from the Outreach Log after sending or receiving feedback."
                     className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors">
                     Intro Template
                   </a>
                   <a href={`mailto:${enrichedLead.email}?subject=Following up — ${getLeadDisplayName(enrichedLead)}&body=Hi ${enrichedLead.primary_contact || 'there'},%0D%0A%0D%0AI wanted to follow up on my previous message regarding your ${enrichedLead.portfolio_size}-building portfolio.%0D%0A%0D%0AWe specialize in portfolios like yours in ${(enrichedLead.boros || [enrichedLead.boro]).join(' and ')} and believe we can add value.%0D%0A%0D%0AWould you be open to a brief conversation?%0D%0A%0D%0ABest regards`}
-                    onClick={() => { setShowEmailMenu(false); addOutreachAttempt(lead.lead_id, { method: 'email', outcome: 'sent_email', notes: 'Follow-up template sent' }).catch(() => toast.error('Failed to log outreach')); }}
+                    onClick={() => setShowEmailMenu(false)}
+                    title="Open an email draft. Log the outcome from the Outreach Log after sending or receiving feedback."
                     className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors">
                     Follow-Up Template
                   </a>
@@ -537,12 +569,12 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
             <button onClick={openWebsite} className="px-3 py-2 sm:py-1.5 bg-purple-600 text-white text-xs font-bold rounded-lg hover:bg-purple-500 transition-colors">
               {enrichedLead.website ? 'Company Website' : 'Search'}
             </button>
-            <button onClick={handleEnrichAll} disabled={isEnriching} className="px-3 py-2 sm:py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors" title="Find contacts, scrape website, and generate AI summary — all in one step">
-              {isEnriching ? `Enriching... ${enrichmentElapsedSec}s` : 'Enrich Lead'}
+            <button onClick={handleEnrichAll} disabled={isEnriching} className="px-3 py-2 sm:py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors" title="Preview contact search, website scrape, and AI summary enrichment">
+              {isEnriching ? `Checking... ${enrichmentElapsedSec}s` : 'Preview Enrichment'}
             </button>
             {isEnriching && (
               <span className="text-[10px] text-gray-500">
-                Searching public sources and generating summary. This can take 30-120 seconds.
+                Preparing an enrichment preview. Execution requires explicit approval.
               </span>
             )}
             <div className="hidden sm:block flex-1" />
@@ -560,13 +592,18 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
               </select>
             </div>
           </div>
-          <div className="mx-4 sm:mx-5 mb-3 grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="mx-4 sm:mx-5 mb-3 grid grid-cols-1 md:grid-cols-5 gap-3">
             <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 md:col-span-2">
               <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Next Best Action</div>
               <p className="mt-1 text-sm font-medium text-gray-900">{nextActionLabel}</p>
               <p className="mt-1 text-xs text-gray-500">
                 {hasDirectContact ? 'Contact coverage is ready for outreach work.' : 'Use enrichment before starting outreach.'}
               </p>
+            </div>
+            <div className={`rounded-xl border px-4 py-3 ${confidenceClass(leadTruth?.overall_confidence_score)}`}>
+              <div className="text-[10px] font-bold uppercase tracking-wider">Truth Confidence</div>
+              <p className="mt-1 text-sm font-semibold">{leadTruth ? pct(leadTruth.overall_confidence_score) : 'Pending'}</p>
+              <p className="mt-1 text-xs opacity-80">{leadTruth?.review_bucket?.replace(/_/g, ' ') || 'No ledger read yet'}</p>
             </div>
             <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
               <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Follow-Up</div>
@@ -750,7 +787,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                       .trim()
                   }</p>
                 ) : (
-                  <p className="text-sm text-gray-400 italic">Click "Enrich Lead" to generate contacts and an AI summary</p>
+                  <p className="text-sm text-gray-400 italic">Use "Preview Enrichment" to review the enrichment run before execution</p>
                 )}
               </div>
 
@@ -831,6 +868,108 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
             </>
           )}
 
+          {/* TAB: TRUTH & CONFIDENCE */}
+          {activeTab === 'truth' && (
+            <div className="space-y-4">
+              <div className={`rounded-xl border p-4 ${confidenceClass(leadTruth?.overall_confidence_score)}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold">Truth & Confidence</h3>
+                    <p className="mt-1 text-xs opacity-80">
+                      {leadTruth
+                        ? `${leadTruth.claims.length} claim${leadTruth.claims.length === 1 ? '' : 's'} evaluated, ${leadTruth.belief_summary.contradiction_count} contradiction${leadTruth.belief_summary.contradiction_count === 1 ? '' : 's'} surfaced`
+                        : 'Truth summary is not available yet.'}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-2xl font-mono font-bold">{leadTruth ? pct(leadTruth.overall_confidence_score) : '--'}</div>
+                    <div className="text-[10px] uppercase font-bold opacity-70">{leadTruth?.review_bucket?.replace(/_/g, ' ') || 'pending'}</div>
+                  </div>
+                </div>
+              </div>
+
+              {leadTruth?.belief_summary.what_we_believe?.length ? (
+                <div className="bg-white border border-gray-200 rounded-xl p-4">
+                  <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Current Beliefs</h4>
+                  <div className="space-y-2">
+                    {leadTruth.belief_summary.what_we_believe.map((belief) => (
+                      <div key={belief} className="flex gap-2 text-sm text-gray-700">
+                        <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-gray-400 flex-shrink-0" />
+                        <span>{belief}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {!!leadTruth.belief_summary.why_we_believe?.length && (
+                    <div className="mt-3 border-t border-gray-100 pt-3">
+                      <h5 className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Why</h5>
+                      <div className="mt-1 space-y-1">
+                        {leadTruth.belief_summary.why_we_believe.slice(0, 3).map((reason) => (
+                          <p key={reason} className="text-xs text-gray-600">{reason}</p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {(leadTruth.belief_summary.supporting_sources?.length || leadTruth.belief_summary.contradicting_sources?.length) ? (
+                    <p className="mt-3 text-xs text-gray-500">
+                      Supports: {(leadTruth.belief_summary.supporting_sources || []).join(', ') || 'none'}
+                      {leadTruth.belief_summary.contradicting_sources?.length
+                        ? `; Contradicts: ${leadTruth.belief_summary.contradicting_sources.join(', ')}`
+                        : ''}
+                    </p>
+                  ) : null}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {leadTruth.belief_summary.safe_actions.map((action) => (
+                      <span key={action} className="rounded-full bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-600">
+                        {action.replace(/_/g, ' ')}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-100">
+                  <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Claim Ledger</h4>
+                </div>
+                {!leadTruth?.claims?.length ? (
+                  <p className="p-4 text-sm text-gray-400">No claims have been materialized or inferred for this lead yet.</p>
+                ) : (
+                  <div className="divide-y divide-gray-100">
+                    {leadTruth.claims.slice(0, 12).map((claim) => (
+                      <div key={claim.claim_id} className="p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-gray-900">{claim.predicate.replace(/_/g, ' ')}</div>
+                            <div className="mt-1 text-xs text-gray-500 truncate">{claim.normalized_value || claim.object_id || claim.claim_type}</div>
+                          </div>
+                          <span className={`rounded border px-2 py-1 text-xs font-semibold ${confidenceClass(claim.confidence_score)}`}>
+                            {pct(claim.confidence_score)}
+                          </span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                          <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{claim.belief_status.replace(/_/g, ' ')}</span>
+                          <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{claim.actionability_level.replace(/_/g, ' ')}</span>
+                          <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">{claim.supporting_evidence_count} supporting</span>
+                          {claim.contradicting_evidence_count > 0 && (
+                            <span className="rounded-full bg-rose-50 px-2 py-1 text-rose-700">{claim.contradicting_evidence_count} contradicting</span>
+                          )}
+                          {claim.freshness_days != null && (
+                            <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">{claim.freshness_days}d old</span>
+                          )}
+                        </div>
+                        {(claim.supporting_sources.length > 0 || claim.contradicting_sources.length > 0) && (
+                          <div className="mt-2 text-xs text-gray-500">
+                            Sources: {[...claim.supporting_sources, ...claim.contradicting_sources.map((s) => `${s} (contradicts)`)].join(', ')}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* TAB: CONTACTS & RESEARCH */}
           {activeTab === 'contacts' && (
             <>
@@ -848,17 +987,17 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                    enrichedLead.enrichment_status === 'partial' ? '◐' :
                    enrichedLead.enrichment_status === 'failed' ? '●' : '○'}
                 </span>
-                {isEnriching ? `Enrichment in progress for ${enrichmentElapsedSec}s. Public web lookups and summary generation can take up to 1-2 minutes.` :
+                {isEnriching ? `Preparing enrichment preview for ${enrichmentElapsedSec}s.` :
                  enrichedLead.enrichment_status === 'complete' ? 'Enrichment returned strong coverage: direct contact info and a company profile are available.' :
                  enrichedLead.enrichment_status === 'partial' ? 'Enrichment returned some useful data, but not every source produced a result.' :
                  enrichedLead.enrichment_status === 'failed' ? 'Enrichment ran but did not find public contact matches yet.' :
-                 'Enrichment has not run yet. Use the single "Enrich Lead" action in the header to gather contacts and a profile.'}
+                 'Enrichment has not run yet. Use "Preview Enrichment" in the header to review contact/profile enrichment before execution.'}
               </div>
 
               {/* Single Enrich Action Guidance */}
               <div className={`${!enrichedLead.phone && !enrichedLead.email ? 'bg-emerald-50 border border-emerald-200 rounded-xl p-4' : 'bg-gray-50 rounded-xl p-4'}`}>
                 <p className="text-sm text-gray-600">
-                  Use the single `Enrich Lead` action in the header to search Google Places, NY DOS, the public web, and Hunter, then refresh the company overview from that same run.
+                  Use `Preview Enrichment` in the header to review the Google Places, NY DOS, public web, Hunter, and AI-summary run before execution.
                 </p>
                 <p className="text-[10px] text-gray-400 mt-1.5">
                   The result may be `partial` when only some sources match. That is expected and safer than implying full coverage.
@@ -940,7 +1079,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 )}
 
                 {!enrichedLead.phone && !enrichedLead.email && !enrichedLead.website && (
-                  <p className="text-gray-400 text-sm italic">No contact info yet. Click "Find Contacts" above.</p>
+                  <p className="text-gray-400 text-sm italic">No contact info yet. Use "Preview Enrichment" above before running contact, website, and profile enrichment.</p>
                 )}
               </div>
 
@@ -985,7 +1124,9 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                           </button>
                         </div>
                         <div className="space-y-1">
-                          {building.contacts.map((c, i) => (
+                          {building.contacts.map((c, i) => {
+                            const contactAssessment = assessContactConfidence(c);
+                            return (
                             <div key={i} className={`flex items-center gap-2 py-1 px-2 rounded text-xs ${c.is_decision_maker ? 'bg-green-50 border-l-2 border-green-400' : 'bg-white'}`}>
                               <span className="font-medium text-gray-800 min-w-[120px]">
                                 {c.is_decision_maker ? '★ ' : ''}{c.name}
@@ -1022,13 +1163,20 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                               >
                                 {formatRelativeDate(c.filing_date || c.snapshot_as_of || c.publication_date || c.as_of_date)}
                               </span>
+                              <span
+                                className={`border px-1.5 py-0.5 rounded text-[10px] ${contactAssessment.toneClass}`}
+                                title={`${contactAssessment.label}: ${contactAssessment.rationale}`}
+                              >
+                                {contactAssessment.safeAction}
+                              </span>
                               {c.confidence_hint && (
                                 <span className={`px-1.5 py-0.5 rounded text-[10px] ${c.confidence_hint === 'Likely board member (resident)' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'}`}>
                                   {c.confidence_hint}
                                 </span>
                               )}
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     ))}
@@ -1226,7 +1374,11 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                     ))
                 )}
                 {!loadingLinkedBuildings && linkedBuildings.length === 0 && (!enrichedLead.buildings || enrichedLead.buildings.length === 0) && (
-                  <p className="text-gray-400 text-sm italic">No buildings data available</p>
+                  <p className="text-gray-400 text-sm italic">
+                    {enrichedLead.portfolio_size
+                      ? `No linked building records are available yet. The ${enrichedLead.portfolio_size} building portfolio count is an aggregate, not a browsable building list.`
+                      : 'No buildings data available'}
+                  </p>
                 )}
               </div>
             </>
@@ -1257,9 +1409,10 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                   <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Data Confidence</h4>
                   <div className="space-y-1.5 text-sm text-gray-700">
                     <div>Lead score: <span className="font-medium">{(enrichedLead.score || 0).toFixed(1)}</span></div>
+                    <div>Truth confidence: <span className="font-medium">{leadTruth ? pct(leadTruth.overall_confidence_score) : '--'}</span></div>
                     <div>Enrichment status: <span className="font-medium capitalize">{enrichedLead.enrichment_status || 'none'}</span></div>
+                    <div>Evidence posture: <span className="font-medium capitalize">{leadTruth?.review_bucket?.replace(/_/g, ' ') || 'not evaluated'}</span></div>
                     <div>Contact coverage: <span className="font-medium">{enrichedLead.phone || enrichedLead.email ? 'Direct contact found' : 'No direct contact found'}</span></div>
-                    <div>Pipeline stage: <span className="font-medium capitalize">{(enrichedLead.pipeline_stage || 'research').replace(/_/g, ' ')}</span></div>
                   </div>
                 </div>
               </div>

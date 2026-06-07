@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master, main, "feature/*"]
+    branches: [master, main, "feature/*", "codex/*"]
   pull_request:
     branches: [master, main]
 
@@ -57,6 +57,9 @@ jobs:
         working-directory: backend
       - name: Run tests
         run: pytest tests/ -q --tb=short
+        working-directory: backend
+      - name: Truth artifact completion audit
+        run: python scripts/truth_completion_audit.py --artifacts-only --indent 2
         working-directory: backend
       - name: Check imports
         run: python -c "from src.models import Base; print(f'{len(Base.metadata.tables)} tables OK')"

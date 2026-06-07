@@ -126,6 +126,29 @@ def test_backfill_building_coordinates_updates_buildings_and_job_progress(monkey
 
 
 @pytest.mark.anyio
+async def test_start_building_coordinates_job_defaults_to_approval_preview():
+    session = FakeAsyncSession([])
+
+    response = await jobs_router.start_job(
+        job_type="building_coordinates",
+        limit=250,
+        session=session,
+        user=AuthUser(user_id="u1", email="test@example.com"),
+    )
+
+    assert response["status"] == "approval_required"
+    assert response["job_id"] is None
+    assert response["dry_run"] is True
+    assert response["confirm_execute"] is False
+    assert response["approval_required"] is True
+    assert response["safe_to_run_automatically"] is False
+    assert response["mutations_planned"] == 0
+    assert "confirm_execute=true" in response["preview"]["required_execute_query"]
+    assert session.calls == []
+    assert session.commit_count == 0
+
+
+@pytest.mark.anyio
 async def test_start_building_coordinates_job_falls_back_to_in_process(monkeypatch):
     session = FakeAsyncSession(
         [
@@ -157,6 +180,8 @@ async def test_start_building_coordinates_job_falls_back_to_in_process(monkeypat
     response = await jobs_router.start_job(
         job_type="building_coordinates",
         limit=250,
+        dry_run=False,
+        confirm_execute=True,
         session=session,
         user=AuthUser(user_id="u1", email="test@example.com"),
     )
@@ -217,8 +242,8 @@ async def test_start_building_coordinates_job_rejects_duplicate_inflight_job():
                                     "job_type": "building_coordinates",
                                     "requested_job_type": "building_coordinates",
                                     "limit": 250,
-                                    "dry_run": True,
-                                    "confirm_execute": False,
+                                    "dry_run": False,
+                                    "confirm_execute": True,
                                     "cohort_filter": None,
                                 }
                             }
@@ -233,6 +258,8 @@ async def test_start_building_coordinates_job_rejects_duplicate_inflight_job():
         await jobs_router.start_job(
             job_type="building_coordinates",
             limit=250,
+            dry_run=False,
+            confirm_execute=True,
             session=session,
             user=AuthUser(user_id="u1", email="test@example.com"),
         )

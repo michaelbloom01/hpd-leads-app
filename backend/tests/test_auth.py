@@ -53,6 +53,7 @@ class TestJWT:
             decode_token(token)
 
 
+@pytest.mark.skip(reason="Legacy SQLite user CRUD adapter was removed; auth router/bootstrap tests cover current user storage.")
 class TestUserCRUD:
     def test_create_user(self, db):
         uid = str(uuid.uuid4())

@@ -15,6 +15,8 @@ ENV/
 *.egg-info/
 dist/
 build/
+.pytest_cache/
+.ruff_cache/
 
 # Data files
 data/
@@ -45,3 +47,13 @@ Thumbs.db
 *.log
 logs/
 .vercel
+
+# Test scratch output
+_tmp_pytest/
+*_tmp_pytest/
+backend/_tmp_pytest_backend/
+
+# Local Codex/runtime artifacts
+.codex/
+outputs/
+backend/_tmp_*.json

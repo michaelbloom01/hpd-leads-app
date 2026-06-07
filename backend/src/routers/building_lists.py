@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/building-lists", tags=["building-lists"])
 limiter = Limiter(key_func=get_remote_address)
 
+REQUIRED_BUILDING_LIST_COLUMNS = {
+    "building_lists": {"id", "user_id", "name", "created_at", "updated_at"},
+    "building_list_members": {"list_id", "bbl", "added_at"},
+}
+
 
 def _auth_user_id(user: AuthUser) -> str:
     """Return the JWT subject id for ownership checks."""
@@ -23,7 +28,7 @@ def _auth_user_id(user: AuthUser) -> str:
 
 
 async def ensure_building_lists_tables(session: AsyncSession) -> None:
-    """Create building_lists tables if they don't exist (for dev without migrations)."""
+    """Create building-list tables if explicitly requested by an operator."""
     await session.execute(text("""
         CREATE TABLE IF NOT EXISTS building_lists (
             id TEXT PRIMARY KEY,
@@ -49,6 +54,58 @@ async def ensure_building_lists_tables(session: AsyncSession) -> None:
     """))
 
 
+async def load_building_lists_schema_status(session: AsyncSession) -> dict:
+    """Inspect building-list schema readiness without mutating the database."""
+    table_rows = await session.execute(
+        text("""
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name IN ('building_lists', 'building_list_members')
+        """)
+    )
+    existing_tables = {row[0] for row in table_rows}
+    missing_tables = sorted(set(REQUIRED_BUILDING_LIST_COLUMNS) - existing_tables)
+
+    column_rows = await session.execute(
+        text("""
+            SELECT table_name, column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name IN ('building_lists', 'building_list_members')
+        """)
+    )
+    observed_columns: dict[str, set[str]] = {table: set() for table in REQUIRED_BUILDING_LIST_COLUMNS}
+    for table_name, column_name in column_rows:
+        observed_columns.setdefault(table_name, set()).add(column_name)
+
+    missing_columns = {
+        table: sorted(required - observed_columns.get(table, set()))
+        for table, required in REQUIRED_BUILDING_LIST_COLUMNS.items()
+        if table not in missing_tables and required - observed_columns.get(table, set())
+    }
+
+    return {
+        "ready": not missing_tables and not missing_columns,
+        "missing_tables": missing_tables,
+        "missing_columns": missing_columns,
+    }
+
+
+async def require_building_lists_schema(session: AsyncSession) -> dict:
+    status = await load_building_lists_schema_status(session)
+    if not status["ready"]:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "schema_not_ready",
+                "message": "Building Lists schema is not ready; run Alembic migrations or explicit startup repair before using Building Lists.",
+                "schema_status": status,
+            },
+        )
+    return status
+
+
 class BuildingListCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
 
@@ -65,6 +122,7 @@ async def list_building_lists(
     user: AuthUser = Depends(get_current_user),
 ):
     """List all building lists for the current user."""
+    await require_building_lists_schema(session)
     result = await session.execute(
         text("""
             SELECT id, name, created_at, updated_at,
@@ -88,6 +146,7 @@ async def create_building_list(
     user: AuthUser = Depends(get_current_user),
 ):
     """Create a new building list."""
+    await require_building_lists_schema(session)
     list_id = str(uuid.uuid4())
     await session.execute(
         text("""
@@ -110,6 +169,7 @@ async def update_building_list(
     user: AuthUser = Depends(get_current_user),
 ):
     """Rename a building list."""
+    await require_building_lists_schema(session)
     result = await session.execute(
         text(
             """
@@ -137,6 +197,7 @@ async def delete_building_list(
     user: AuthUser = Depends(get_current_user),
 ):
     """Delete a building list."""
+    await require_building_lists_schema(session)
     r = await session.execute(
         text("DELETE FROM building_lists WHERE id = :id AND user_id = :uid RETURNING id"),
         {"id": list_id, "uid": _auth_user_id(user)},
@@ -158,6 +219,7 @@ async def add_building_to_list(
     user: AuthUser = Depends(get_current_user),
 ):
     """Add a building (by BBL) to a building list."""
+    await require_building_lists_schema(session)
     # Verify list ownership
     r = await session.execute(
         text("SELECT 1 FROM building_lists WHERE id = :id AND user_id = :uid"),
@@ -195,6 +257,7 @@ async def remove_building_from_list(
     user: AuthUser = Depends(get_current_user),
 ):
     """Remove a building from a building list."""
+    await require_building_lists_schema(session)
     r = await session.execute(
         text("""
             DELETE FROM building_list_members
@@ -220,6 +283,7 @@ async def list_buildings_in_list(
     user: AuthUser = Depends(get_current_user),
 ):
     """List buildings in a building list."""
+    await require_building_lists_schema(session)
     r = await session.execute(
         text("SELECT 1 FROM building_lists WHERE id = :id AND user_id = :uid"),
         {"id": list_id, "uid": _auth_user_id(user)},

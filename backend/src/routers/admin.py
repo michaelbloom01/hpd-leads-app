@@ -471,7 +471,7 @@ async def contacts_reconciliation(
 
 def _normalize_address_for_search(query: str) -> list[str]:
     q = query.strip().upper()
-    q = re.sub(r'\b(\d+)(?:ST|ND|RD|TH)\b', r'\1', q)
+    ordinal_stripped = re.sub(r'\b(\d+)(?:ST|ND|RD|TH)\b', r'\1', q)
     _dir_map = {"E": "EAST", "W": "WEST", "N": "NORTH", "S": "SOUTH"}
     _dir_reverse = {v: k for k, v in _dir_map.items()}
     _type_map = {
@@ -502,8 +502,9 @@ def _normalize_address_for_search(query: str) -> list[str]:
         return variants
 
     patterns = set()
-    for v in _expand(q):
-        patterns.add(f"%{v}%")
+    for base in {q, ordinal_stripped}:
+        if base:
+            patterns.update(f"%{v}%" for v in _expand(base))
     return list(patterns)
 
 
@@ -583,11 +584,15 @@ async def search_buildings(
     )
     rows = [dict(r._mapping) for r in result]
     buildings = []
+    seen_lead_ids = set()
     for r in rows:
         addr = r.get("address") or ""
         parts = addr.split(" ", 1)
+        if r.get("lead_id"):
+            seen_lead_ids.add(r["lead_id"])
         buildings.append({
             "building_id": r["bbl"],
+            "bbl": r["bbl"],
             "address": addr,
             "house_number": parts[0] if len(parts) > 1 else "",
             "street_name": parts[1] if len(parts) > 1 else addr,
@@ -608,4 +613,67 @@ async def search_buildings(
             "pm_company": r.get("pm_company"),
             "status": "linked" if r.get("lead_id") else ("discovered" if r.get("pm_company") else "unlinked"),
         })
+
+    if len(buildings) < limit:
+        lead_like_clauses = " OR ".join([f"l.address ILIKE :p{i}" for i in range(len(patterns))])
+        lead_result = await session.execute(
+            text(f"""
+                SELECT
+                    l.lead_id,
+                    l.address,
+                    l.primary_borough,
+                    COALESCE(
+                        NULLIF(l.company_name, ''),
+                        NULLIF(l.agent_name, ''),
+                        NULLIF(l.owner_name, ''),
+                        NULLIF(l.primary_contact, ''),
+                        NULLIF(l.normalized_name, ''),
+                        NULLIF(l.address, '')
+                    ) AS lead_name,
+                    l.entity_type,
+                    l.score,
+                    l.portfolio_size,
+                    l.total_units
+                FROM leads l
+                WHERE l.address IS NOT NULL
+                  AND TRIM(l.address) != ''
+                  AND ({lead_like_clauses})
+                ORDER BY l.score DESC NULLS LAST, l.updated_at DESC NULLS LAST
+                LIMIT :lead_limit
+            """),
+            {**params, "lead_limit": limit - len(buildings)},
+        )
+
+        for r in [dict(row._mapping) for row in lead_result]:
+            if r.get("lead_id") in seen_lead_ids:
+                continue
+            addr = r.get("address") or ""
+            parts = addr.split(" ", 1)
+            lead_name = r.get("lead_name") or addr
+            buildings.append({
+                "building_id": f"lead:{r['lead_id']}",
+                "bbl": None,
+                "address": addr,
+                "house_number": parts[0] if len(parts) > 1 else "",
+                "street_name": parts[1] if len(parts) > 1 else addr,
+                "boro": r.get("primary_borough") or "",
+                "units_res": r.get("total_units") or 0,
+                "building_class": "",
+                "building_type": None,
+                "year_built": None,
+                "churn_score": None,
+                "lead_id": r.get("lead_id"),
+                "lead_name": lead_name,
+                "lead_entity_type": r.get("entity_type"),
+                "score": r.get("score"),
+                "portfolio_size": r.get("portfolio_size"),
+                "total_units": r.get("total_units"),
+                "agent_name": lead_name,
+                "owner_name": "",
+                "pm_company": None,
+                "status": "lead_address",
+            })
+            seen_lead_ids.add(r["lead_id"])
+            if len(buildings) >= limit:
+                break
     return {"query": address, "buildings": buildings, "total": len(buildings)}

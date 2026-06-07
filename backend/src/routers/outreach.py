@@ -5,13 +5,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.auth import AuthUser, get_current_user
 from src.db.session import get_session
+from src.services.outreach_feedback import load_outreach_feedback_truth_write_status, record_outreach_feedback_claims
 
 router = APIRouter(prefix="/api/v1/outreach", tags=["outreach"])
 
@@ -77,6 +78,7 @@ async def create_outreach_event(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
+    truth_claim_status = await load_outreach_feedback_truth_write_status(session)
     event_id = (
         await session.execute(
             text(
@@ -107,7 +109,19 @@ async def create_outreach_event(
         )
     ).scalar_one()
 
-    if body.lead_id:
+    truth_claim_ids: list[str] = []
+    if truth_claim_status["ready"] and any([body.lead_id, body.bbl, body.canonical_entity_id, body.target_item_id]):
+        truth_claim_ids = await record_outreach_feedback_claims(
+            session,
+            lead_id=body.lead_id,
+            event_id=int(event_id),
+            method=body.method,
+            outcome=body.outcome,
+            notes=body.notes,
+            bbl=body.bbl,
+            canonical_entity_id=body.canonical_entity_id,
+            target_item_id=body.target_item_id,
+        )
         await session.execute(
             text(
                 """
@@ -155,7 +169,12 @@ async def create_outreach_event(
         )
 
     await session.commit()
-    return {"status": "success", "event_id": event_id}
+    return {
+        "status": "success",
+        "event_id": event_id,
+        "truth_claim_ids": truth_claim_ids,
+        "truth_claim_status": truth_claim_status,
+    }
 
 
 @router.get("/follow-ups")

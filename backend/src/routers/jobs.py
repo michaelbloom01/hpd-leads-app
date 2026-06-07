@@ -17,6 +17,29 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 STALE_RUNNING_THRESHOLD_MINUTES = 120
 STALE_QUEUED_THRESHOLD_MINUTES = 15
+SOURCE_REFRESH_JOB_TYPES = {
+    "buildings",
+    "hpd_complaints",
+    "acris",
+    "hpd_violations",
+    "dob_permits",
+    "hpd_litigation",
+    "emergency_repairs",
+    "aep",
+    "evictions",
+    "energy",
+    "facades",
+    "pad",
+    "building_coordinates",
+}
+APPROVAL_REQUIRED_JOB_TYPES = SOURCE_REFRESH_JOB_TYPES | {
+    "enrichment",
+    "scoring",
+    "smart_lists_evaluation",
+    "quality_checks",
+    "lead_generation",
+    "lead_reconciliation",
+}
 
 
 def _normalize_status(raw: str | None) -> str:
@@ -44,6 +67,7 @@ def _job_request_signature(
     dry_run: bool,
     confirm_execute: bool,
     cohort_filter: Optional[str],
+    sources: Optional[list[str]] = None,
 ) -> dict[str, object]:
     return {
         "job_type": job_type,
@@ -51,6 +75,7 @@ def _job_request_signature(
         "dry_run": bool(dry_run),
         "confirm_execute": bool(confirm_execute),
         "cohort_filter": cohort_filter,
+        "sources": sources or [],
     }
 
 
@@ -62,6 +87,7 @@ def _extract_signature_from_config(job_type: str, config: dict) -> dict[str, obj
         "dry_run": bool(request.get("dry_run", config.get("dry_run", True))),
         "confirm_execute": bool(request.get("confirm_execute", config.get("confirm_execute", False))),
         "cohort_filter": request.get("cohort_filter", config.get("cohort_filter")),
+        "sources": request.get("sources", config.get("sources", [])) or [],
     }
 
 
@@ -73,6 +99,7 @@ def _build_job_config(
     dry_run: bool,
     confirm_execute: bool,
     cohort_filter: Optional[str],
+    sources: Optional[list[str]] = None,
     existing_config: Optional[dict] = None,
 ) -> dict:
     config = dict(existing_config or {})
@@ -83,6 +110,7 @@ def _build_job_config(
         "dry_run": bool(dry_run),
         "confirm_execute": bool(confirm_execute),
         "cohort_filter": cohort_filter,
+        "sources": sources or [],
     }
     config["dispatch"] = {
         "state": "created",
@@ -93,6 +121,44 @@ def _build_job_config(
         "error": None,
     }
     return config
+
+
+def _approval_preview_response(
+    *,
+    job_type: str,
+    requested_job_type: str,
+    limit: int,
+    dry_run: bool,
+    confirm_execute: bool,
+    operation: str = "job_execution",
+    sources: Optional[list[str]] = None,
+) -> dict[str, object]:
+    source_query = "".join(f"&source={source}" for source in (sources or []))
+    return {
+        "status": "approval_required",
+        "job_type": job_type,
+        "requested_job_type": requested_job_type,
+        "job_id": None,
+        "limit": limit,
+        "dispatch_mode": None,
+        "dry_run": dry_run,
+        "confirm_execute": confirm_execute,
+        "approval_required": True,
+        "safe_to_run_automatically": False,
+        "mutations_planned": 0,
+        "preview": {
+            "operation": operation,
+            "would_enqueue_job_type": job_type,
+            "would_mutate": [
+                "application data",
+                "ingestion_jobs",
+                "job-specific output tables",
+            ],
+            "required_execute_query": f"/api/v1/jobs/{job_type}/start?dry_run=false&confirm_execute=true&limit={limit}{source_query}",
+            "sources": sources or [],
+        },
+        "rollback_strategy": "No job was queued. To execute, rerun with dry_run=false and confirm_execute=true after reviewing the preview.",
+    }
 
 
 async def _persist_job_record(
@@ -400,6 +466,7 @@ async def reconcile_stale_queued(
     return {"status": "updated", "stale_job_ids": queued_ids, "updated": len(queued_ids)}
 
 
+@router.get("", include_in_schema=False)
 @router.get("/")
 async def list_jobs(
     status: Optional[str] = None,
@@ -463,6 +530,7 @@ async def start_job(
     dry_run: bool = Query(default=True),
     confirm_execute: bool = Query(default=False),
     cohort_filter: Optional[str] = Query(default=None),
+    source: Optional[list[str]] = Query(default=None, description="Optional repeatable truth_materialization source filter."),
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
@@ -470,8 +538,19 @@ async def start_job(
     dry_run = dry_run if isinstance(dry_run, bool) else True
     confirm_execute = confirm_execute if isinstance(confirm_execute, bool) else False
     cohort_filter = cohort_filter.strip() if isinstance(cohort_filter, str) and cohort_filter.strip() else None
+    source_filters = source if isinstance(source, list) else None
+    selected_sources: list[str] = []
     original_job_type = job_type
     job_type = JOB_TYPE_ALIASES.get(job_type, job_type)
+    if source_filters and job_type != "truth_materialization":
+        raise HTTPException(400, "source filters are only supported for truth_materialization jobs")
+    if source_filters and job_type == "truth_materialization":
+        from src.services.truth_materialization import normalize_materialization_sources
+
+        try:
+            selected_sources = list(normalize_materialization_sources(source_filters) or [])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     valid_types = [
         "buildings", "hpd_complaints", "acris", "hpd_violations",
@@ -479,6 +558,7 @@ async def start_job(
         "evictions", "energy", "facades", "pad", "scoring", "enrichment",
         "smart_lists_evaluation", "entity_resolution", "quality_checks",
         "lead_generation", "lead_reconciliation", "building_coordinates",
+        "truth_validation", "truth_materialization",
     ]
     if job_type not in valid_types:
         raise HTTPException(400, f"Unknown job type: {job_type}. Valid: {valid_types}")
@@ -490,6 +570,7 @@ async def start_job(
         dry_run=dry_run,
         confirm_execute=confirm_execute,
         cohort_filter=cohort_filter,
+        sources=selected_sources,
     )
     if job_type == "entity_resolution":
         if not dry_run:
@@ -528,6 +609,55 @@ async def start_job(
             "cohort_filter": cohort_filter,
             "write_permitted": (not dry_run) and confirm_execute and cohort_filter == "safe_keep",
         })
+    if job_type in APPROVAL_REQUIRED_JOB_TYPES and job_type != "entity_resolution":
+        if dry_run:
+            return _approval_preview_response(
+                job_type=job_type,
+                requested_job_type=original_job_type,
+                limit=limit,
+                dry_run=dry_run,
+                confirm_execute=confirm_execute,
+                operation="source_refresh" if job_type in SOURCE_REFRESH_JOB_TYPES else "job_execution",
+                sources=selected_sources,
+            )
+        if not confirm_execute:
+            raise HTTPException(400, f"{job_type} execution requires confirm_execute=true")
+        config_payload.update({
+            "mode": "execute",
+            "dry_run": False,
+            "confirm_execute": True,
+            "write_permitted": True,
+        })
+    if job_type == "truth_materialization" and not dry_run and not confirm_execute:
+        raise HTTPException(400, "truth_materialization execution requires confirm_execute=true")
+    if job_type == "truth_validation" and not dry_run and not confirm_execute:
+        raise HTTPException(400, "truth_validation review-item execution requires confirm_execute=true")
+    if job_type in {"truth_validation", "truth_materialization"}:
+        from src.services.truth_health import is_truth_schema_current, load_truth_schema_status
+
+        schema_status = await load_truth_schema_status(session)
+        if not is_truth_schema_current(schema_status):
+            return {
+                "status": "schema_not_ready",
+                "job_type": job_type,
+                "requested_job_type": original_job_type,
+                "job_id": None,
+                "limit": limit,
+                "dispatch_mode": None,
+                "dry_run": dry_run,
+                "confirm_execute": confirm_execute,
+                "schema_status": schema_status,
+            }
+        if dry_run:
+            return _approval_preview_response(
+                job_type=job_type,
+                requested_job_type=original_job_type,
+                limit=limit,
+                dry_run=dry_run,
+                confirm_execute=confirm_execute,
+                operation="truth_claim_review" if job_type == "truth_validation" else "truth_claim_materialization",
+                sources=selected_sources,
+            )
 
     signature = _job_request_signature(
         job_type=job_type,
@@ -535,6 +665,7 @@ async def start_job(
         dry_run=dry_run,
         confirm_execute=confirm_execute,
         cohort_filter=cohort_filter,
+        sources=selected_sources,
     )
     duplicate_job = await _find_equivalent_inflight_job(
         session,
@@ -774,6 +905,75 @@ async def start_job(
                 "job_id": job_id,
                 "limit": limit,
                 "dispatch_mode": dispatch_mode,
+            }
+
+        if job_type == "truth_validation":
+            from src.tasks.truth_validation import run_truth_validation, run_truth_validation_task
+
+            dispatch_mode, fallback_used = await _dispatch_with_fallback(
+                job_type=job_type,
+                job_id=job_id,
+                primary_dispatch=lambda: run_truth_validation_task.delay(
+                    job_id=job_id,
+                    sample_limit=min(limit, 100),
+                    dry_run=dry_run,
+                    confirm_execute=confirm_execute,
+                ),
+                fallback_dispatch=lambda: asyncio.create_task(
+                    asyncio.to_thread(
+                        run_truth_validation,
+                        job_id=job_id,
+                        sample_limit=min(limit, 100),
+                        dry_run=dry_run,
+                        confirm_execute=confirm_execute,
+                    )
+                ),
+            )
+            await _record_dispatch_success(dispatch_mode, fallback_used)
+            return {
+                "status": "queued",
+                "job_type": job_type,
+                "requested_job_type": original_job_type,
+                "job_id": job_id,
+                "limit": limit,
+                "dispatch_mode": dispatch_mode,
+                "dry_run": dry_run,
+                "confirm_execute": confirm_execute,
+            }
+
+        if job_type == "truth_materialization":
+            from src.tasks.truth_materialization import run_truth_materialization, run_truth_materialization_task
+
+            dispatch_mode, fallback_used = await _dispatch_with_fallback(
+                job_type=job_type,
+                job_id=job_id,
+                primary_dispatch=lambda: run_truth_materialization_task.delay(
+                    job_id=job_id,
+                    limit=limit,
+                    dry_run=dry_run,
+                    confirm_execute=confirm_execute,
+                    sources=selected_sources,
+                ),
+                fallback_dispatch=lambda: asyncio.create_task(asyncio.to_thread(
+                    run_truth_materialization,
+                    job_id=job_id,
+                    limit=limit,
+                    dry_run=dry_run,
+                    confirm_execute=confirm_execute,
+                    sources=selected_sources,
+                )),
+            )
+            await _record_dispatch_success(dispatch_mode, fallback_used)
+            return {
+                "status": "queued",
+                "job_type": job_type,
+                "requested_job_type": original_job_type,
+                "job_id": job_id,
+                "limit": limit,
+                "dispatch_mode": dispatch_mode,
+                "dry_run": dry_run,
+                "confirm_execute": confirm_execute,
+                "sources": selected_sources,
             }
 
         if job_type == "lead_generation":

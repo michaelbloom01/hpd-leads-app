@@ -11,7 +11,6 @@ Each task follows the standard pattern from the plan:
 """
 import logging
 import os
-import threading
 import time
 from typing import Optional
 
@@ -227,8 +226,16 @@ def _compute_bbl(boro_id, block, lot) -> str | None:
 
 
 @celery_app.task(bind=True, name="src.tasks.ingest.backfill_building_coordinates")
-def backfill_building_coordinates(self, job_id: Optional[int] = None, limit: int = 1000):
+def backfill_building_coordinates(self, *args, job_id: Optional[int] = None, limit: int = 1000):
     """Persist coordinates/provenance for buildings missing map geometry."""
+    if args:
+        if len(args) > 2:
+            raise TypeError("backfill_building_coordinates accepts at most job_id and limit positional args")
+        if args[0] is not None and job_id is None:
+            job_id = args[0]
+        if len(args) > 1:
+            limit = args[1]
+
     session = _get_pg_session()
     job_id = _ensure_or_create_job(session, job_id, "building_coordinates", "building_coordinates")
     session.commit()
@@ -536,68 +543,11 @@ def ingest_buildings_from_hpd(self, job_id: Optional[int] = None):
                      matched, rejected, inserted)
         _finish_job(session, job_id, "completed", len(registrations), inserted, rejected)
         session.commit()
-        try:
-            scoring_job_id = _create_job(session, "scoring", "churn")
-            session.commit()
-            from src.tasks.score import run_scoring_job
-            try:
-                run_scoring_job.delay(job_id=scoring_job_id)
-                logger.info("Queued follow-up scoring job %s after buildings ingestion", scoring_job_id)
-            except Exception as dispatch_exc:
-                logger.warning(
-                    "Celery dispatch failed for follow-up scoring job %s, using in-process fallback: %s",
-                    scoring_job_id,
-                    dispatch_exc,
-                )
-                t = threading.Thread(
-                    target=run_scoring_job.run,
-                    kwargs={"job_id": scoring_job_id},
-                    daemon=True,
-                )
-                t.start()
-        except Exception as score_exc:
-            logger.warning("Failed to queue follow-up scoring job after buildings ingestion: %s", score_exc)
-        try:
-            lead_job_id = _create_job(session, "lead_generation", "lead_generation")
-            session.commit()
-            from src.tasks.lead_materialization import generate_leads_job
-            try:
-                generate_leads_job.delay(job_id=lead_job_id, min_portfolio=1)
-                logger.info("Queued follow-up lead generation job %s after buildings ingestion", lead_job_id)
-            except Exception as dispatch_exc:
-                logger.warning(
-                    "Celery dispatch failed for follow-up lead generation job %s, using in-process fallback: %s",
-                    lead_job_id,
-                    dispatch_exc,
-                )
-                t = threading.Thread(
-                    target=generate_leads_job.run,
-                    kwargs={"job_id": lead_job_id, "min_portfolio": 1},
-                    daemon=True,
-                )
-                t.start()
-        except Exception as lead_exc:
-            logger.warning("Failed to queue follow-up lead generation job after buildings ingestion: %s", lead_exc)
-        try:
-            geocode_job_id = _create_job(session, "building_coordinates", "building_coordinates")
-            session.commit()
-            try:
-                backfill_building_coordinates.delay(job_id=geocode_job_id, limit=5000)
-                logger.info("Queued follow-up building_coordinates job %s after buildings ingestion", geocode_job_id)
-            except Exception as dispatch_exc:
-                logger.warning(
-                    "Celery dispatch failed for follow-up building_coordinates job %s, using in-process fallback: %s",
-                    geocode_job_id,
-                    dispatch_exc,
-                )
-                t = threading.Thread(
-                    target=backfill_building_coordinates.run,
-                    kwargs={"job_id": geocode_job_id, "limit": 5000},
-                    daemon=True,
-                )
-                t.start()
-        except Exception as geocode_exc:
-            logger.warning("Failed to queue follow-up building_coordinates job after buildings ingestion: %s", geocode_exc)
+        logger.info(
+            "Buildings backfill follow-up jobs are approval-gated; scoring, lead_generation, and "
+            "building_coordinates were not auto-queued. Start each job explicitly with dry_run=false "
+            "and confirm_execute=true after reviewing the preview."
+        )
         logger.info(f"Buildings backfill complete: {inserted} inserted, {rejected} rejected")
         return {"inserted": inserted, "rejected": rejected}
 

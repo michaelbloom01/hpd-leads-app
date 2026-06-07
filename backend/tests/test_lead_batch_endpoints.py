@@ -14,6 +14,21 @@ def _make_request() -> Request:
     return Request({"type": "http", "method": "POST", "path": "/api/test", "headers": []})
 
 
+MINIMAL_LEAD_ROW = {
+    "lead_id": "lead-1",
+    "company_name": "Example Management",
+    "agent_name": "Example Management",
+    "owner_name": "",
+    "owner_type": "property_manager",
+    "portfolio_size": 3,
+    "total_units": 42,
+    "website": None,
+    "score": 0.0,
+    "enrichment_status": "none",
+    "pipeline_stage": "research",
+}
+
+
 class FakeExecuteResult:
     def __init__(self, *, rows=None, scalar=None):
         self._rows = rows or []
@@ -21,6 +36,9 @@ class FakeExecuteResult:
 
     def fetchall(self):
         return self._rows
+
+    def first(self):
+        return self._rows[0] if self._rows else None
 
     def scalar_one(self):
         return self._scalar
@@ -40,6 +58,11 @@ class FakeAsyncSession:
 
     async def commit(self):
         self.commit_count += 1
+
+
+class FakeMappingRow:
+    def __init__(self, mapping):
+        self._mapping = mapping
 
 
 @pytest.mark.anyio
@@ -121,6 +144,73 @@ async def test_update_leads_pipeline_stage_batch_rejects_all_missing_ids():
 
 
 @pytest.mark.anyio
+async def test_start_selected_leads_enrichment_defaults_to_approval_preview():
+    session = FakeAsyncSession([FakeExecuteResult(rows=[("lead-1",), ("lead-2",)])])
+
+    response = await leads_router.start_selected_leads_enrichment(
+        request=_make_request(),
+        body=EnrichmentRequest(lead_ids=["lead-1", "lead-2", "missing-lead"]),
+        session=session,
+        user=AuthUser(user_id="u1", email="test@example.com"),
+    )
+
+    assert response["status"] == "approval_required"
+    assert response["job_id"] is None
+    assert response["target_count"] == 2
+    assert response["missing_lead_ids"] == ["missing-lead"]
+    assert response["approval_required"] is True
+    assert response["safe_to_run_automatically"] is False
+    assert response["mutations_planned"] == 0
+    assert response["preview"]["operation"] == "selected_lead_enrichment"
+    assert session.commit_count == 0
+
+
+@pytest.mark.anyio
+async def test_enrich_lead_all_defaults_to_approval_preview_without_mutation():
+    session = FakeAsyncSession([FakeExecuteResult(rows=[FakeMappingRow(MINIMAL_LEAD_ROW)])])
+
+    response = await leads_router.enrich_lead_all(
+        request=_make_request(),
+        lead_id="lead-1",
+        dry_run=True,
+        confirm_execute=False,
+        session=session,
+        user=AuthUser(user_id="u1", email="test@example.com"),
+    )
+
+    assert response["status"] == "approval_required"
+    assert response["lead_id"] == "lead-1"
+    assert response["approval_required"] is True
+    assert response["safe_to_run_automatically"] is False
+    assert response["mutations_planned"] == 0
+    assert response["preview"]["operation"] == "lead_enrichment"
+    assert "confirm_execute=true" in response["preview"]["required_execute_query"]
+    assert response["lead"]["company_name"] == "Example Management"
+    assert session.commit_count == 0
+    assert len(session.calls) == 1
+
+
+@pytest.mark.anyio
+async def test_enrich_lead_all_rejects_execute_without_confirmation():
+    session = FakeAsyncSession([])
+
+    with pytest.raises(HTTPException) as exc:
+        await leads_router.enrich_lead_all(
+            request=_make_request(),
+            lead_id="lead-1",
+            dry_run=False,
+            confirm_execute=False,
+            session=session,
+            user=AuthUser(user_id="u1", email="test@example.com"),
+        )
+
+    assert exc.value.status_code == 400
+    assert "confirm_execute=true" in str(exc.value.detail)
+    assert session.commit_count == 0
+    assert session.calls == []
+
+
+@pytest.mark.anyio
 async def test_start_selected_leads_enrichment_falls_back_to_in_process(monkeypatch):
     session = FakeAsyncSession(
         [
@@ -153,7 +243,11 @@ async def test_start_selected_leads_enrichment_falls_back_to_in_process(monkeypa
 
     response = await leads_router.start_selected_leads_enrichment(
         request=_make_request(),
-        body=EnrichmentRequest(lead_ids=["lead-1", "lead-2", "lead-1", "missing-lead"]),
+        body=EnrichmentRequest(
+            lead_ids=["lead-1", "lead-2", "lead-1", "missing-lead"],
+            dry_run=False,
+            confirm_execute=True,
+        ),
         session=session,
         user=AuthUser(user_id="u1", email="test@example.com"),
     )
@@ -223,7 +317,7 @@ async def test_start_selected_leads_enrichment_prefers_celery_dispatch(monkeypat
 
     response = await leads_router.start_selected_leads_enrichment(
         request=_make_request(),
-        body=EnrichmentRequest(lead_ids=["lead-1"]),
+        body=EnrichmentRequest(lead_ids=["lead-1"], dry_run=False, confirm_execute=True),
         session=session,
         user=AuthUser(user_id="u1", email="test@example.com"),
     )
@@ -237,4 +331,3 @@ async def test_start_selected_leads_enrichment_prefers_celery_dispatch(monkeypat
     }
     assert session.commit_count == 1
     assert captured["delay_kwargs"] == {"job_id": 321, "limit": 1, "lead_ids": ["lead-1"]}
-

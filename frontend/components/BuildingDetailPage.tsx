@@ -10,6 +10,8 @@ import {
   addBuildingToPipeline, fetchBuildingOutreachEvents, logBuildingOutreachEvent, requestBuildingDosContactsRefresh,
   type BuildingContactEntry, type BuildingDetail,
 } from '../services/buildings-api';
+import { fetchSubjectTruthSummary, type SubjectTruthSummary, type TruthClaim } from '../services/truth-api';
+import { assessContactConfidence } from '../utils/contactConfidence';
 import { toast } from 'react-hot-toast';
 
 const PortfolioMap = lazy(() => import('./PortfolioMap'));
@@ -64,6 +66,18 @@ const getChurnCategoryLabel = (category: string | null | undefined): string => {
   return 'Not scored yet';
 };
 
+const pct = (value: number | null | undefined): string => {
+  if (value == null) return '--';
+  return `${Math.round(value * 100)}%`;
+};
+
+const confidenceClass = (value: number | null | undefined): string => {
+  if (value == null) return 'border-gray-200 bg-gray-50 text-gray-600';
+  if (value >= 0.8) return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  if (value >= 0.55) return 'border-amber-200 bg-amber-50 text-amber-700';
+  return 'border-rose-200 bg-rose-50 text-rose-700';
+};
+
 const eventIcons: Record<string, string> = {
   complaint: 'C',
   violation: 'V',
@@ -101,6 +115,13 @@ const BuildingDetailPage: React.FC = () => {
   });
 
   const activeBbl = building?.bbl || decodedBbl;
+
+  const { data: truthSummary } = useQuery({
+    queryKey: ['truth-subject', 'building', activeBbl],
+    queryFn: () => fetchSubjectTruthSummary('building', activeBbl!),
+    enabled: !!activeBbl && !!building,
+    retry: false,
+  });
 
   const { data: timeline } = useQuery({
     queryKey: ['building-timeline', activeBbl],
@@ -148,6 +169,8 @@ const BuildingDetailPage: React.FC = () => {
       const response = await requestBuildingDosContactsRefresh(activeBbl);
       if (response.status === 'skipped') {
         toast.error('No corporate owner found for DOS lookup');
+      } else if (response.status === 'approval_required') {
+        toast.success('DOS refresh preview ready; no refresh was queued');
       } else {
         toast.success(response.status === 'refreshing' ? 'DOS refresh requested' : 'DOS contacts updated');
       }
@@ -191,6 +214,14 @@ const BuildingDetailPage: React.FC = () => {
     Boolean(building.corporate_owner) ||
     contactCount > 0;
   const breakdownEntries = Object.entries(breakdown || {}).sort(([, a], [, b]) => b.contribution - a.contribution);
+  const truthClaims = (truthSummary?.claims || []).slice(0, 6);
+  const truthSourceNames = Array.from(new Set(
+    truthClaims.flatMap((claim: TruthClaim) => [
+      ...(claim.supporting_sources || []),
+      ...(claim.contradicting_sources || []).map((source) => `${source} (contradicts)`),
+    ]),
+  ));
+  const truthSchemaReady = (truthSummary as SubjectTruthSummary | undefined)?.schema_status?.ready;
   const dosBanner = (() => {
     if (dosStatus === 'refreshing') {
       return {
@@ -266,6 +297,109 @@ const BuildingDetailPage: React.FC = () => {
         </div>
       </div>
 
+      <div className={`rounded-lg border p-5 ${confidenceClass(truthSummary?.overall_confidence_score)}`}>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="font-semibold">Truth & Confidence</h2>
+              {truthSummary?.schema_status && (
+                <span className="rounded border border-current px-2 py-0.5 text-[11px] font-medium">
+                  {truthSchemaReady ? 'schema ready' : 'schema gated'}
+                </span>
+              )}
+            </div>
+            <p className="mt-1 text-sm opacity-80">
+              {truthSummary
+                ? `${truthSummary.claims.length} claim${truthSummary.claims.length === 1 ? '' : 's'} evaluated, ${truthSummary.belief_summary.contradiction_count} contradiction${truthSummary.belief_summary.contradiction_count === 1 ? '' : 's'} surfaced`
+                : 'Truth summary has not loaded yet.'}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {(truthSummary?.belief_summary.safe_actions || ['not_evaluated']).map((action) => (
+                <span key={action} className="rounded-full bg-white/70 px-2 py-1 text-[11px] font-medium">
+                  {action.replace(/_/g, ' ')}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="lg:text-right">
+            <div className="text-3xl font-bold">{pct(truthSummary?.overall_confidence_score)}</div>
+            <div className="text-[11px] uppercase font-bold opacity-70">
+              {(truthSummary?.review_bucket || 'not evaluated').replace(/_/g, ' ')}
+            </div>
+            <div className="mt-1 text-xs opacity-75">
+              {truthSummary?.belief_summary.freshness_days != null
+                ? `${truthSummary.belief_summary.freshness_days}d freshest claim`
+                : 'freshness pending'}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+          <div className="rounded border border-white/70 bg-white/70 p-3">
+            <h3 className="text-xs font-bold uppercase tracking-wider opacity-70">Current Beliefs</h3>
+            <div className="mt-2 space-y-2">
+              {(truthSummary?.belief_summary.what_we_believe || ['No truth summary is available for this building yet.']).slice(0, 4).map((belief, idx) => (
+                <div key={`${belief}-${idx}`} className="flex gap-2 text-sm">
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-60" />
+                  <span>{belief}</span>
+                </div>
+              ))}
+            </div>
+            {!!truthSummary?.belief_summary.why_we_believe?.length && (
+              <div className="mt-3 border-t border-white/80 pt-3">
+                <h4 className="text-[11px] font-bold uppercase tracking-wider opacity-70">Why</h4>
+                <div className="mt-1 space-y-1">
+                  {truthSummary.belief_summary.why_we_believe.slice(0, 3).map((reason, idx) => (
+                    <p key={`${reason}-${idx}`} className="text-xs opacity-80">{reason}</p>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(truthSummary?.belief_summary.supporting_sources?.length || truthSummary?.belief_summary.contradicting_sources?.length) ? (
+              <p className="mt-3 text-xs opacity-75">
+                Supports: {(truthSummary?.belief_summary.supporting_sources || []).join(', ') || 'none'}
+                {truthSummary?.belief_summary.contradicting_sources?.length
+                  ? `; Contradicts: ${truthSummary.belief_summary.contradicting_sources.join(', ')}`
+                  : ''}
+              </p>
+            ) : null}
+          </div>
+          <div className="rounded border border-white/70 bg-white/70 p-3">
+            <h3 className="text-xs font-bold uppercase tracking-wider opacity-70">Evidence Ledger</h3>
+            {!truthClaims.length ? (
+              <p className="mt-2 text-sm opacity-75">
+                No building-level claims are materialized yet. The schema/ledger gate is keeping this from looking more certain than it is.
+              </p>
+            ) : (
+              <div className="mt-2 space-y-2">
+                {truthClaims.map((claim) => (
+                  <div key={claim.claim_id} className="rounded border border-white bg-white/80 px-3 py-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold">{claim.predicate.replace(/_/g, ' ')}</div>
+                        <div className="truncate text-xs opacity-70">{claim.normalized_value || claim.object_id || claim.claim_type}</div>
+                      </div>
+                      <span className="shrink-0 rounded border border-current px-1.5 py-0.5 text-[11px] font-semibold">
+                        {pct(claim.confidence_score)}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1 text-[10px]">
+                      <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-emerald-700">{claim.supporting_evidence_count} supporting</span>
+                      {claim.contradicting_evidence_count > 0 && (
+                        <span className="rounded bg-rose-100 px-1.5 py-0.5 text-rose-700">{claim.contradicting_evidence_count} contradicting</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {truthSourceNames.length > 0 && (
+              <p className="mt-2 text-xs opacity-75">Sources: {truthSourceNames.join(', ')}</p>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* People & Companies — contacts from all sources */}
       {showContactsCard && (
         <div className="bg-white rounded-lg border border-gray-200 p-5">
@@ -315,7 +449,7 @@ const BuildingDetailPage: React.FC = () => {
                     disabled={isRefreshingDos}
                     className="shrink-0 rounded border border-current px-2 py-1 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {isRefreshingDos ? 'Requesting...' : dosStatus === 'not_loaded' ? 'Load DOS contacts' : 'Refresh DOS contacts'}
+                    {isRefreshingDos ? 'Requesting...' : dosStatus === 'not_loaded' ? 'Preview DOS contacts refresh' : 'Preview DOS contacts refresh'}
                   </button>
                 )}
               </div>
@@ -336,11 +470,13 @@ const BuildingDetailPage: React.FC = () => {
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Source</th>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Updated</th>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Address</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Confidence</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Safe Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {sortedContacts.map((contact: BuildingContactEntry, i: number) => (
+                {sortedContacts.map((contact: BuildingContactEntry, i: number) => {
+                  const contactAssessment = assessContactConfidence(contact);
+                  return (
                   <tr key={i} className={contact.is_decision_maker ? 'border-l-4 border-l-green-400 bg-green-50/40' : ''}>
                     <td className="px-3 py-2 font-medium text-gray-900 whitespace-nowrap">
                       <button
@@ -405,16 +541,25 @@ const BuildingDetailPage: React.FC = () => {
                       ) : '--'}
                     </td>
                     <td className="px-3 py-2 text-xs">
-                      {contact.confidence_hint ? (
-                        <span className={`px-1.5 py-0.5 rounded ${
-                          contact.confidence_hint === 'Likely board member (resident)' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'
-                        }`}>
-                          {contact.confidence_hint}
+                      <div className="flex flex-col gap-1">
+                        <span
+                          className={`w-fit border px-1.5 py-0.5 rounded ${contactAssessment.toneClass}`}
+                          title={`${contactAssessment.label}: ${contactAssessment.rationale}`}
+                        >
+                          {contactAssessment.safeAction}
                         </span>
-                      ) : '--'}
+                        {contact.confidence_hint && (
+                          <span className={`w-fit px-1.5 py-0.5 rounded ${
+                            contact.confidence_hint === 'Likely board member (resident)' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'
+                          }`}>
+                            {contact.confidence_hint}
+                          </span>
+                        )}
+                      </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
                 {sortedContacts.length === 0 && (
                   <tr>
                     <td colSpan={6} className="px-3 py-4 text-sm text-gray-400">
