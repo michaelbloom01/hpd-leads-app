@@ -3,7 +3,6 @@ Shared test fixtures for the Double Edge backend test suite.
 """
 import os
 import sys
-import pytest
 from pathlib import Path
 
 # Ensure backend root is on sys.path

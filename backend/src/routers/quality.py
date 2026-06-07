@@ -508,7 +508,6 @@ async def source_audit(session: AsyncSession = Depends(get_session)):
 
     rows = []
     for source in SOURCE_REGISTRY:
-        source_name = source["source_name"]
         table_name = source["table_name"]
         job_type = source["job_type"]
         quality = _pick_latest_quality_row(source, latest_quality)
