@@ -20,6 +20,7 @@ from src.services.portfolio_export import (  # noqa: E402
     build_portfolio_export,
     json_default,
     write_csv,
+    write_xlsx,
 )
 
 
@@ -29,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lead-id", default=None)
     parser.add_argument("--output-json", type=Path, default=None)
     parser.add_argument("--output-csv", type=Path, default=None)
+    parser.add_argument("--output-xlsx", type=Path, default=None)
     parser.add_argument("--indent", type=int, default=2)
     return parser.parse_args()
 
@@ -50,6 +52,8 @@ async def main() -> None:
         )
     if args.output_csv:
         write_csv(args.output_csv, payload["contact_rows"])
+    if args.output_xlsx:
+        write_xlsx(args.output_xlsx, payload)
     print(json.dumps(
         {key: value for key, value in payload.items() if key not in {"records", "contact_rows"}},
         indent=args.indent,

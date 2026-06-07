@@ -1,6 +1,10 @@
+from io import BytesIO
+
 import pytest
+from openpyxl import load_workbook
 
 from src.services.portfolio_export import (
+    build_portfolio_workbook,
     flatten_contact_rows,
     normalize_company_key,
 )
@@ -76,6 +80,66 @@ def test_flatten_contact_rows_preserves_building_and_source_context():
     ]
 
 
+def test_build_portfolio_workbook_includes_buildings_contacts_sources_and_gaps():
+    payload = {
+        "company": "VENTURE NY PROPERTY MANAGEMENT, LLC",
+        "generated_at": "2026-06-07T00:00:00+00:00",
+        "portfolio_definition": "Buildings whose HPD Registration Agent matches the company.",
+        "company_keys": ["VENTURENYPROPERTYMANAGEMENTLLC"],
+        "building_count": 1,
+        "unit_count": 24,
+        "contact_count": 1,
+        "dos_status_counts": {"not_loaded": 1},
+        "records": [
+            {
+                "bbl": "3023587501",
+                "bin": "892352",
+                "address": "100 NORTH 3 STREET",
+                "borough": "BROOKLYN",
+                "zip_code": "11249",
+                "unit_count": 24,
+                "year_built": 2007,
+                "building_class": "RM",
+                "building_type": "rental",
+                "churn_score": 3.5,
+                "churn_category": "stable",
+                "management_company": "VENTURE NY PROPERTY MANAGEMENT, LLC",
+                "corporate_owner": "100 N 3 CORP",
+                "dos_contacts_status": "not_loaded",
+                "dos_contacts_is_stale": False,
+                "contact_count": 1,
+                "contact_source_count": 1,
+                "contacts": [
+                    {
+                        "name": "VENTURE NY PROPERTY MANAGEMENT, LLC",
+                        "role": "Agent",
+                        "source": "HPD Registration",
+                    }
+                ],
+            }
+        ],
+        "contact_rows": [
+            {
+                "bbl": "3023587501",
+                "address": "100 NORTH 3 STREET",
+                "contact_name": "VENTURE NY PROPERTY MANAGEMENT, LLC",
+                "contact_role": "Agent",
+                "contact_source": "HPD Registration",
+            }
+        ],
+    }
+
+    workbook_bytes = build_portfolio_workbook(payload)
+    workbook = load_workbook(filename=BytesIO(workbook_bytes), data_only=True)
+
+    assert workbook.sheetnames == ["Summary", "Source Coverage", "Buildings", "Contacts", "Gaps"]
+    assert workbook["Summary"]["A1"].value == "Double Edge Portfolio Contacts Export"
+    assert workbook["Buildings"]["A2"].value == "3023587501"
+    assert workbook["Contacts"]["C2"].value == "VENTURE NY PROPERTY MANAGEMENT, LLC"
+    assert workbook["Source Coverage"]["A2"].value == "HPD Registration"
+    assert workbook["Gaps"]["C2"].value == "dos_not_loaded"
+
+
 async def _collect_streaming_body(response) -> str:
     chunks = []
     async for chunk in response.body_iterator:
@@ -132,3 +196,37 @@ async def test_portfolio_contacts_export_endpoint_streams_csv(monkeypatch):
     assert "bbl,address,borough" in body
     assert "3023587501,100 NORTH 3 STREET,BROOKLYN" in body
     assert "VENTURE NY PROPERTY MANAGEMENT, LLC" in body
+
+
+@pytest.mark.anyio
+async def test_portfolio_contacts_export_endpoint_returns_xlsx(monkeypatch):
+    async def fake_build_portfolio_export(*, session, company, lead_id=None):
+        return {
+            "company": company,
+            "generated_at": "2026-06-07T00:00:00+00:00",
+            "portfolio_definition": "Buildings whose HPD Registration Agent matches the company.",
+            "company_keys": ["VENTURENYPROPERTYMANAGEMENTLLC"],
+            "building_count": 0,
+            "unit_count": 0,
+            "contact_count": 0,
+            "dos_status_counts": {},
+            "records": [],
+            "contact_rows": [],
+        }
+
+    monkeypatch.setattr(export_router, "build_portfolio_export", fake_build_portfolio_export)
+
+    response = await export_router.export_portfolio_contacts_xlsx.__wrapped__(
+        request=_make_request(),
+        company="VENTURE NY PROPERTY MANAGEMENT, LLC",
+        lead_id=None,
+        session=object(),
+        user=AuthUser(user_id="u1", email="user@example.com"),
+    )
+
+    assert response.media_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert "double_edge_venture_ny_property_management_llc_portfolio_contacts.xlsx" in (
+        response.headers["Content-Disposition"]
+    )
+    workbook = load_workbook(filename=BytesIO(response.body), data_only=True)
+    assert workbook["Summary"]["B2"].value == "VENTURE NY PROPERTY MANAGEMENT, LLC"

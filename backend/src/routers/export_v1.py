@@ -10,7 +10,7 @@ import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import text
@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.session import get_session
 from src.auth.auth import AuthUser, get_current_user
-from src.services.portfolio_export import build_portfolio_export
+from src.services.portfolio_export import build_portfolio_export, build_portfolio_workbook
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/export", tags=["export-v1"])
@@ -229,6 +229,33 @@ async def export_portfolio_contacts_csv(
         headers={
             "Content-Disposition": (
                 f"attachment; filename=double_edge_{filename_company}_portfolio_contacts.csv"
+            )
+        },
+    )
+
+
+@router.get("/portfolio-contacts/xlsx")
+@limiter.limit("10/minute")
+async def export_portfolio_contacts_xlsx(
+    request: Request,
+    company: str = Query(..., min_length=2, max_length=160),
+    lead_id: Optional[str] = Query(default=None, max_length=64),
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Export a portfolio workbook with buildings, contacts, sourcing, and gaps."""
+    payload = await build_portfolio_export(
+        session=session,
+        company=company,
+        lead_id=lead_id,
+    )
+    filename_company = re.sub(r"[^A-Za-z0-9]+", "_", company).strip("_").lower() or "portfolio"
+    return Response(
+        content=build_portfolio_workbook(payload),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=double_edge_{filename_company}_portfolio_contacts.xlsx"
             )
         },
     )

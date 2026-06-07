@@ -33,6 +33,13 @@ Known caveat: broad `ruff check src scripts tests` still reports legacy utility-
 
 Current product stance: this is a draft PR for read-only confidence-aware intelligence and safety gates. Business use remains blocked until runtime activation, source freshness, verified-claim, review-workflow, and production truth-surface gates pass.
 
+Portfolio workbook follow-up:
+
+- Lead Detail's `Export Contacts` action now downloads a native `.xlsx` portfolio packet instead of only a flat CSV. The workbook uses the same read-only portfolio payload and separates `Summary`, `Source Coverage`, `Buildings`, `Contacts`, and `Gaps` sheets.
+- New authenticated API endpoint: `GET /api/v1/export/portfolio-contacts/xlsx?company=<name>&lead_id=<optional>`. Existing CSV endpoint remains available at `/api/v1/export/portfolio-contacts/csv`.
+- The workbook explicitly states that sourced contact rows are outreach/research context and do not mark single-source claims verified. Gap rows flag no-contact, DOS-not-loaded/stale, and single-source-contact cases with safe actions.
+- Verification after this follow-up: backend ruff passed for the touched export service/router/script/test files; `pytest tests\test_portfolio_building_contacts_export.py` passed with `5` tests; frontend `npm run test:run -- LeadDetail api` passed with `44` tests; `npm run build` passed.
+
 ## 2026-06-01 HPD Property Managers View Boundary
 
 No staging, commit, push, deploy, production call, source-refresh job, materialization job, enrichment job, evidence execution, data mutation, or bulk delete was run. The dirty worktree is still preserved.

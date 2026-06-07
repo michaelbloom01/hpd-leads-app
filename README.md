@@ -117,6 +117,7 @@ This is an architecture simplification effort and does not reduce product JTBD s
 - Quick Risk Snapshot on Due Diligence tab
 - AI-generated company summaries
 - Outreach event logging with email templates
+- Portfolio contacts workbook export with building, contact, source-coverage, and gap sheets
 - Keyboard accessible: ESC to close, Tab focus trapping, ARIA labels
 
 ### Smart Lists
@@ -191,6 +192,8 @@ hpd-leads-app/
 | `/api/rescore` | POST | Re-score all leads (V2) |
 | `/api/v1/export/leads/csv` | GET | Export leads to CSV |
 | `/api/v1/export/buildings/csv` | GET | Export buildings to CSV |
+| `/api/v1/export/portfolio-contacts/csv` | GET | Export portfolio building/contact/source rows to CSV |
+| `/api/v1/export/portfolio-contacts/xlsx` | GET | Export portfolio workbook with buildings, contacts, source coverage, and gaps |
 | `/api/v1/truth/schema-status` | GET | Read-only truth schema readiness and Alembic revision status |
 | `/api/v1/truth/leads/{lead_id}/summary` | GET | Evidence-backed lead belief, confidence, contradiction, freshness, and safe-action summary |
 | `/api/v1/truth/subjects/{subject_type}/{subject_id}/summary` | GET | Evidence-backed truth summary for lead, canonical entity, entity, building, contact, HPD contact, or person subjects |
