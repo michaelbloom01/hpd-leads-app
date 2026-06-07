@@ -11,6 +11,7 @@ const addOutreachAttemptMock = vi.fn();
 const enrichLeadAllMock = vi.fn();
 const estimateLeadRevenueMock = vi.fn();
 const fetchLeadContactsMock = vi.fn();
+const downloadPortfolioContactsCsvMock = vi.fn();
 const fetchBuildingsMock = vi.fn();
 const addBuildingToPipelineMock = vi.fn();
 const fetchLeadTruthSummaryMock = vi.fn();
@@ -31,6 +32,7 @@ vi.mock('../services/api', () => ({
   enrichLeadAll: (...args: unknown[]) => enrichLeadAllMock(...args),
   estimateLeadRevenue: (...args: unknown[]) => estimateLeadRevenueMock(...args),
   fetchLeadContacts: (...args: unknown[]) => fetchLeadContactsMock(...args),
+  downloadPortfolioContactsCsv: (...args: unknown[]) => downloadPortfolioContactsCsvMock(...args),
 }));
 
 vi.mock('../services/buildings-api', () => ({
@@ -97,6 +99,10 @@ describe('LeadDetail outreach evidence safety', () => {
     fetchLeadTruthSummaryMock.mockResolvedValue(null);
     fetchBuildingsMock.mockResolvedValue({ buildings: [] });
     fetchLeadContactsMock.mockResolvedValue({ buildings: [] });
+    downloadPortfolioContactsCsvMock.mockResolvedValue({
+      blob: new Blob(['bbl,address\n3023587501,100 NORTH 3 STREET\n'], { type: 'text/csv' }),
+      filename: 'double_edge_acme_contacts.csv',
+    });
     updateLeadMock.mockResolvedValue(lead);
     addOutreachAttemptMock.mockResolvedValue({ status: 'ok', attempt: {} });
     enrichLeadAllMock.mockResolvedValue({ status: 'approval_required', message: 'Preview only' });
@@ -124,5 +130,27 @@ describe('LeadDetail outreach evidence safety', () => {
       expect(screen.queryByRole('link', { name: 'Follow-Up Template' })).not.toBeInTheDocument();
     });
     expect(addOutreachAttemptMock).not.toHaveBeenCalled();
+  });
+
+  it('downloads portfolio contacts without recording outreach evidence', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:portfolio-contacts');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+
+    renderLeadDetail();
+
+    fireEvent.click(await screen.findByRole('button', { name: /export contacts/i }));
+
+    await waitFor(() => {
+      expect(downloadPortfolioContactsCsvMock).toHaveBeenCalledWith('Acme Management LLC', 'lead-1');
+    });
+    expect(createObjectURL).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:portfolio-contacts');
+    expect(click).toHaveBeenCalled();
+    expect(addOutreachAttemptMock).not.toHaveBeenCalled();
+
+    createObjectURL.mockRestore();
+    revokeObjectURL.mockRestore();
+    click.mockRestore();
   });
 });

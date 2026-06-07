@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { toast } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { ApiLead, fetchLead, fetchLeadLineage, type LeadLineageResponse, updateLead, addOutreachAttempt, enrichLeadAll, estimateLeadRevenue, OutreachAttempt, fetchLeadContacts } from '../services/api';
+import { ApiLead, fetchLead, fetchLeadLineage, type LeadLineageResponse, updateLead, addOutreachAttempt, enrichLeadAll, estimateLeadRevenue, OutreachAttempt, fetchLeadContacts, downloadPortfolioContactsCsv } from '../services/api';
 import { addBuildingToPipeline, fetchBuildings, type BuildingRow, type BuildingContactEntry } from '../services/buildings-api';
 import { fetchLeadTruthSummary, type LeadTruthSummary } from '../services/truth-api';
 import { PIPELINE_STAGES, OUTREACH_STATUSES, OUTREACH_METHODS, OUTREACH_OUTCOMES, formatCurrency } from '../utils/format';
@@ -56,6 +56,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   const [isEnriching, setIsEnriching] = useState(false);
+  const [isExportingContacts, setIsExportingContacts] = useState(false);
   // isResearching and isGeneratingAI removed — unified into isEnriching via handleEnrichAll
   const [isSaving, setIsSaving] = useState(false);
   const [enrichedLead, setEnrichedLead] = useState(lead);
@@ -390,6 +391,31 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     }
   };
 
+  const handleExportPortfolioContacts = async () => {
+    const companyName = getLeadDisplayName(enrichedLead);
+    if (!companyName) {
+      toast.error('No company name available for export');
+      return;
+    }
+    setIsExportingContacts(true);
+    try {
+      const { blob, filename } = await downloadPortfolioContactsCsv(companyName, enrichedLead.lead_id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Portfolio contacts export downloaded');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to export portfolio contacts');
+    } finally {
+      setIsExportingContacts(false);
+    }
+  };
+
   const handleAddOutreachAttempt = async () => {
     if (!newOutreach.method || !newOutreach.outcome) return;
     setIsSaving(true);
@@ -568,6 +594,14 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
             )}
             <button onClick={openWebsite} className="px-3 py-2 sm:py-1.5 bg-purple-600 text-white text-xs font-bold rounded-lg hover:bg-purple-500 transition-colors">
               {enrichedLead.website ? 'Company Website' : 'Search'}
+            </button>
+            <button
+              onClick={handleExportPortfolioContacts}
+              disabled={isExportingContacts}
+              className="px-3 py-2 sm:py-1.5 bg-gray-900 text-white text-xs font-bold rounded-lg hover:bg-gray-800 disabled:opacity-50 transition-colors"
+              title="Download all buildings, contacts, roles, sources, and confidence hints for this portfolio"
+            >
+              {isExportingContacts ? 'Exporting...' : 'Export Contacts'}
             </button>
             <button onClick={handleEnrichAll} disabled={isEnriching} className="px-3 py-2 sm:py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors" title="Preview contact search, website scrape, and AI summary enrichment">
               {isEnriching ? `Checking... ${enrichmentElapsedSec}s` : 'Preview Enrichment'}

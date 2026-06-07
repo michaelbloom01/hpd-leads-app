@@ -606,6 +606,29 @@ export async function fetchLeadContacts(leadId: string): Promise<LeadContactsRes
   return response.json();
 }
 
+export async function downloadPortfolioContactsCsv(
+  company: string,
+  leadId?: string | null,
+): Promise<{ blob: Blob; filename: string }> {
+  const params = new URLSearchParams({ company });
+  if (leadId) params.set('lead_id', leadId);
+  const response = await fetchWithRetry(
+    `${API_BASE_URL}/api/v1/export/portfolio-contacts/csv?${params.toString()}`,
+    {},
+    1,
+    60000,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiErrorMessage(response, `Portfolio contacts export failed: ${response.statusText}`));
+  }
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+  return {
+    blob: await response.blob(),
+    filename: filenameMatch?.[1] || `double_edge_portfolio_contacts_${new Date().toISOString().slice(0, 10)}.csv`,
+  };
+}
+
 /**
  * Refresh the pipeline - fetch fresh data from HPD
  */
