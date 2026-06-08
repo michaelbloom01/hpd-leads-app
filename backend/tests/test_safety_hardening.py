@@ -241,6 +241,61 @@ def test_building_lists_read_route_does_not_run_schema_ddl():
 
 
 @pytest.mark.anyio
+async def test_list_buildings_returns_stored_coordinates_for_portfolio_maps():
+    session = _ReadOnlyAsyncSession(
+        [
+            _FakeAsyncResult(scalar_value=1),
+            _FakeAsyncResult(
+                rows=[
+                    _FakeRow(
+                        {
+                            "bbl": "3023587501",
+                            "address": "100 NORTH 3 STREET",
+                            "borough": "BROOKLYN",
+                            "unit_count": 24,
+                            "building_type": "Condo",
+                            "churn_score": 3.5,
+                            "churn_category": "stable",
+                            "key_signal": "Building Scale",
+                            "coverage_ratio": 1.0,
+                            "outreach_status": "none",
+                            "last_scored_at": "2026-03-01",
+                            "latitude": 40.7169,
+                            "longitude": -73.9633,
+                            "coordinate_source": "planninglabs",
+                            "coordinate_precision": "parcel",
+                            "current_lead_id": "lead-1",
+                            "current_link_count": 1,
+                            "current_link_lead_ids": ["lead-1"],
+                            "current_link_conflict": False,
+                            "pm_company": "VENTURE NY PROPERTY MANAGEMENT, LLC",
+                        }
+                    )
+                ]
+            ),
+        ]
+    )
+
+    response = await buildings_router.list_buildings(
+        request=_request(),
+        lead_id="lead-1",
+        sort_by="address",
+        sort_dir="asc",
+        session=session,
+        user=AuthUser(user_id="u1", email="test@example.com"),
+    )
+
+    building = response["buildings"][0]
+    assert building["latitude"] == 40.7169
+    assert building["longitude"] == -73.9633
+    assert building["coordinate_source"] == "planninglabs"
+    assert building["coordinate_precision"] == "parcel"
+    executed_sql = "\n".join(sql for sql, _params in session.calls)
+    assert "b.latitude, b.longitude, b.coordinate_source, b.coordinate_precision" in executed_sql
+    assert "NULL::double precision AS latitude" not in executed_sql
+
+
+@pytest.mark.anyio
 async def test_get_building_does_not_queue_dos_refresh(monkeypatch):
     session = _ReadOnlyAsyncSession(
         [

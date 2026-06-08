@@ -11,12 +11,12 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-// Small blue circle marker for density
+// Compact blue marker with enough hit area for portfolio maps.
 const smallMarker = new L.Icon({
-  iconUrl: 'data:image/svg+xml;base64,' + btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12"><circle cx="6" cy="6" r="5" fill="#3b82f6" stroke="#1e3a5f" stroke-width="1.5"/></svg>`),
-  iconSize: [12, 12],
-  iconAnchor: [6, 6],
-  popupAnchor: [0, -6],
+  iconUrl: 'data:image/svg+xml;base64,' + btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"><circle cx="9" cy="9" r="7" fill="#2563eb" stroke="#ffffff" stroke-width="3"/><circle cx="9" cy="9" r="7" fill="none" stroke="#1e3a8a" stroke-width="1"/></svg>`),
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
+  popupAnchor: [0, -9],
 });
 
 type GeocodeResult = { coords: [number, number]; source: 'planninglabs' | 'nominatim' } | null;
