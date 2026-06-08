@@ -3251,11 +3251,11 @@ const DataHealthSection: React.FC = () => {
   );
 };
 
-class DataHealthErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
-  state = { hasError: false };
+class DataHealthErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; errorMessage: string | null }> {
+  state = { hasError: false, errorMessage: null };
 
-  static getDerivedStateFromError() {
-    return { hasError: true };
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, errorMessage: error.message };
   }
 
   render() {
@@ -3268,6 +3268,9 @@ class DataHealthErrorBoundary extends React.Component<{ children: React.ReactNod
             <p className="mt-1 text-sm text-amber-800">
               One truth-confidence preview returned an unexpected partial payload. Scoring settings remain available; refresh this tab after the data-health contract is updated.
             </p>
+            {this.state.errorMessage && (
+              <p className="mt-3 font-mono text-xs text-amber-900">{this.state.errorMessage}</p>
+            )}
           </div>
         </div>
       );
