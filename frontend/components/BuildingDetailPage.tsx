@@ -456,7 +456,10 @@ const BuildingDetailPage: React.FC = () => {
           </div>
         </div>
 
-        <details className="mt-3 rounded border border-white/70 bg-white/60">
+        <details
+          aria-label="Evidence Ledger audit trail"
+          className="mt-3 rounded border border-white/70 bg-white/60"
+        >
           <summary className="cursor-pointer px-3 py-2 text-xs font-bold uppercase tracking-wider opacity-75">
             Audit trail ({truthClaims.length} claims)
           </summary>
