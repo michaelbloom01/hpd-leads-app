@@ -553,9 +553,9 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
           </div>
 
           {/* Quick actions + pipeline in header */}
-          <div className="px-4 sm:px-5 pb-3 flex items-center gap-2 flex-wrap">
+          <div className="px-4 sm:px-5 pb-3 flex items-center gap-2 overflow-x-auto sm:flex-wrap">
             {enrichedLead.phone && (
-              <a href={`tel:${enrichedLead.phone}`} className="px-3 py-2 sm:py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 transition-colors flex items-center gap-1">
+              <a href={`tel:${enrichedLead.phone}`} className="flex-shrink-0 px-3 py-2 sm:py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 transition-colors flex items-center gap-1">
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
                 Call
               </a>
@@ -564,7 +564,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
               <div className="relative">
                 <button 
                   onClick={(e) => { e.preventDefault(); setShowEmailMenu(!showEmailMenu); }}
-                  className="px-3 py-2 sm:py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-500 transition-colors flex items-center gap-1">
+                  className="flex-shrink-0 px-3 py-2 sm:py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-500 transition-colors flex items-center gap-1">
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
                   Email
                   <svg className={`w-3 h-3 ml-0.5 transition-transform ${showEmailMenu ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"/></svg>
@@ -592,18 +592,18 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 )}
               </div>
             )}
-            <button onClick={openWebsite} className="px-3 py-2 sm:py-1.5 bg-purple-600 text-white text-xs font-bold rounded-lg hover:bg-purple-500 transition-colors">
+            <button onClick={openWebsite} className="flex-shrink-0 px-3 py-2 sm:py-1.5 bg-purple-600 text-white text-xs font-bold rounded-lg hover:bg-purple-500 transition-colors">
               {enrichedLead.website ? 'Company Website' : 'Search'}
             </button>
             <button
               onClick={handleExportPortfolioContacts}
               disabled={isExportingContacts}
-              className="px-3 py-2 sm:py-1.5 bg-gray-900 text-white text-xs font-bold rounded-lg hover:bg-gray-800 disabled:opacity-50 transition-colors"
+              className="flex-shrink-0 px-3 py-2 sm:py-1.5 bg-gray-900 text-white text-xs font-bold rounded-lg hover:bg-gray-800 disabled:opacity-50 transition-colors"
               title="Download all buildings, contacts, roles, sources, and confidence hints for this portfolio"
             >
               {isExportingContacts ? 'Exporting...' : 'Export Contacts'}
             </button>
-            <button onClick={handleEnrichAll} disabled={isEnriching} className="px-3 py-2 sm:py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors" title="Preview contact search, website scrape, and AI summary enrichment">
+            <button onClick={handleEnrichAll} disabled={isEnriching} className="flex-shrink-0 px-3 py-2 sm:py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors" title="Preview contact search, website scrape, and AI summary enrichment">
               {isEnriching ? `Checking... ${enrichmentElapsedSec}s` : 'Preview Enrichment'}
             </button>
             {isEnriching && (
@@ -613,7 +613,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
             )}
             <div className="hidden sm:block flex-1" />
             {/* Pipeline selector - dropdown for readability */}
-            <div className="flex items-center gap-2 w-full sm:w-auto mt-1 sm:mt-0">
+            <div className="flex flex-shrink-0 items-center gap-2 w-auto mt-1 sm:mt-0">
               <span className="text-[10px] text-gray-400 uppercase">Pipeline:</span>
               <select 
                 value={pipelineStage} 
@@ -626,25 +626,25 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
               </select>
             </div>
           </div>
-          <div className="mx-4 sm:mx-5 mb-3 grid grid-cols-1 md:grid-cols-5 gap-3">
-            <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 md:col-span-2">
+          <div className="mx-4 sm:mx-5 mb-3 grid grid-cols-2 md:grid-cols-5 gap-2 sm:gap-3">
+            <div className="col-span-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 sm:px-4 sm:py-3 md:col-span-2">
               <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Next Best Action</div>
               <p className="mt-1 text-sm font-medium text-gray-900">{nextActionLabel}</p>
               <p className="mt-1 text-xs text-gray-500">
                 {hasDirectContact ? 'Contact coverage is ready for outreach work.' : 'Use enrichment before starting outreach.'}
               </p>
             </div>
-            <div className={`rounded-xl border px-4 py-3 ${confidenceClass(leadTruth?.overall_confidence_score)}`}>
+            <div className={`rounded-xl border px-3 py-2 sm:px-4 sm:py-3 ${confidenceClass(leadTruth?.overall_confidence_score)}`}>
               <div className="text-[10px] font-bold uppercase tracking-wider">Truth Confidence</div>
               <p className="mt-1 text-sm font-semibold">{leadTruth ? pct(leadTruth.overall_confidence_score) : 'Pending'}</p>
               <p className="mt-1 text-xs opacity-80">{leadTruth?.review_bucket?.replace(/_/g, ' ') || 'No ledger read yet'}</p>
             </div>
-            <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+            <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 sm:px-4 sm:py-3">
               <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Follow-Up</div>
               <p className="mt-1 text-sm font-medium text-gray-900">{nextFollowUp ? formatAbsoluteDate(nextFollowUp) : 'Not scheduled'}</p>
               <p className="mt-1 text-xs text-gray-500">{nextFollowUp ? formatRelativeDate(nextFollowUp) : 'Set a date once outreach is logged.'}</p>
             </div>
-            <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+            <div className="col-span-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 sm:px-4 sm:py-3 md:col-span-1">
               <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Identity And Audit</div>
               <p className="mt-1 text-sm font-medium text-gray-900">
                 {leadLineage?.canonical_entity ? 'Canonical entity linked' : leadLineage?.sibling_count ? 'Review duplicate cohort' : 'Single workflow row'}
