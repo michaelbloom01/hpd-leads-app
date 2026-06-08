@@ -265,9 +265,9 @@ const DataHealthSection: React.FC = () => {
   const managerExternalBatchPreview = managerExternalSourcePreview?.manual_evidence_batch_preview;
   const sourceOverlapApprovalPacket = truthSourceOverlapApprovalPacket;
   const sourceOverlapRecordingGate = sourceOverlapApprovalPacket?.source_overlap_recording_gate;
-  const sourceOverlapApprovalSummary = sourceOverlapApprovalPacket?.recommended_first_packet.approval_decision_summary;
+  const sourceOverlapApprovalSummary = sourceOverlapApprovalPacket?.recommended_first_packet?.approval_decision_summary;
   const sourceOverlapOperatorApprovalSummary = sourceOverlapApprovalPacket?.operator_strict_packet?.approval_decision_summary;
-  const sourceOverlapMutationScope = sourceOverlapApprovalPacket?.recommended_first_packet.sample_manual_evidence_previews?.[0]?.mutation_scope;
+  const sourceOverlapMutationScope = sourceOverlapApprovalPacket?.recommended_first_packet?.sample_manual_evidence_previews?.[0]?.mutation_scope;
   const sourceOverlapOperatorMutationScope = sourceOverlapApprovalPacket?.operator_strict_packet?.sample_manual_evidence_previews?.[0]?.mutation_scope;
   const sourceOverlapNewRelationshipSummary = sourceOverlapApprovalPacket?.manager_new_relationship_candidate_summary;
   const sourceOverlapNewRelationshipFamilies = Object.entries(sourceOverlapNewRelationshipSummary?.source_family_counts ?? {});
@@ -292,15 +292,15 @@ const DataHealthSection: React.FC = () => {
   const verificationGapProposals = verificationGapPlan?.proposals?.slice(0, 3) ?? [];
   const verifiedConfidenceGapPlan = adjudication?.verified_confidence_gap_plan;
   const verifiedConfidenceGapProposals = verifiedConfidenceGapPlan?.proposals?.slice(0, 3) ?? [];
-  const verificationFrontierReadyGaps = truthVerificationFrontier?.source_ready_below_verified.proposals.slice(0, 2) ?? [];
-  const verificationFrontierManagerProposals = truthVerificationFrontier?.source_acquisition_frontier.manager_proposals.slice(0, 2) ?? [];
-  const verificationFrontierOperatorProposals = truthVerificationFrontier?.source_acquisition_frontier.operator_proposals.slice(0, 2) ?? [];
+  const verificationFrontierReadyGaps = truthVerificationFrontier?.source_ready_below_verified?.proposals?.slice(0, 2) ?? [];
+  const verificationFrontierManagerProposals = truthVerificationFrontier?.source_acquisition_frontier?.manager_proposals?.slice(0, 2) ?? [];
+  const verificationFrontierOperatorProposals = truthVerificationFrontier?.source_acquisition_frontier?.operator_proposals?.slice(0, 2) ?? [];
   const verificationEvidenceRequestPacket = truthVerificationFrontier?.evidence_request_packet;
-  const verificationEvidenceRequests = verificationEvidenceRequestPacket?.requests.slice(0, 3) ?? [];
-  const sourceAcquisitionWorkItems = truthSourceAcquisitionWorklist?.work_items.slice(0, 3) ?? [];
+  const verificationEvidenceRequests = verificationEvidenceRequestPacket?.requests?.slice(0, 3) ?? [];
+  const sourceAcquisitionWorkItems = truthSourceAcquisitionWorklist?.work_items?.slice(0, 3) ?? [];
   const sourceOverlapThresholdRelationships = truthSourceOverlapBlockerReport?.threshold_sensitive_relationships?.slice(0, 3) ?? [];
-  const sourceOverlapBlockerTopRelationships = truthSourceOverlapBlockerReport?.top_blocked_relationships.slice(0, 3) ?? [];
-  const sourceOverlapBlockerReasons = truthSourceOverlapBlockerReport?.source_bridge_assessment.blocking_reasons?.slice(0, 4) ?? [];
+  const sourceOverlapBlockerTopRelationships = truthSourceOverlapBlockerReport?.top_blocked_relationships?.slice(0, 3) ?? [];
+  const sourceOverlapBlockerReasons = truthSourceOverlapBlockerReport?.source_bridge_assessment?.blocking_reasons?.slice(0, 4) ?? [];
   const sourceEvidenceCandidateSummary = truthSourceOverlapBlockerReport?.source_evidence_candidate_summary;
   const sourceEvidenceCandidateRelationships = sourceEvidenceCandidateSummary?.recommended_relationships?.slice(0, 2) ?? [];
   const sourceEvidenceCandidatePayloadReview = sourceEvidenceCandidateSummary?.recording_approval_packet?.manual_evidence_payload_review?.slice(0, 2) ?? [];
@@ -317,7 +317,7 @@ const DataHealthSection: React.FC = () => {
   const noRecentSourceCount = truthSourceSummary?.no_recent_ingest ?? 0;
   const missingSourceSchemaCount = truthSourceSummary?.schema_missing ?? 0;
   const activationNextSteps = (truthActivationPacket?.next_safe_steps ?? []).slice(0, 3);
-  const activationRefreshJobs = (truthActivationPacket?.source_refresh.next_jobs ?? []).slice(0, 3);
+  const activationRefreshJobs = (truthActivationPacket?.source_refresh?.next_jobs ?? []).slice(0, 3);
   const activationClaimReadiness = truthActivationPacket?.claim_readiness;
   const activationVerificationFrontier = truthActivationPacket?.verification_frontier;
   const completionPromptChecklist = truthCompletionAudit?.prompt_to_artifact_checklist ?? [];
@@ -326,7 +326,7 @@ const DataHealthSection: React.FC = () => {
     return acc;
   }, {});
   const completionBlockedItems = completionPromptChecklist.filter((item) => item.status !== 'satisfied').slice(0, 3);
-  const completionSourceOverlapBlocker = truthCompletionAudit?.runtime_blockers.find((blocker) => blocker.gate === 'source_overlap_recording');
+  const completionSourceOverlapBlocker = truthCompletionAudit?.runtime_blockers?.find((blocker) => blocker.gate === 'source_overlap_recording');
   const completionOperatorEvidence = completionSourceOverlapBlocker?.evidence?.operator_confirmed as Record<string, unknown> | undefined;
   const completionOperatorGapSummary = completionOperatorEvidence?.strict_gap_summary as Record<string, unknown> | undefined;
   const completionOperatorGapCandidates = (
