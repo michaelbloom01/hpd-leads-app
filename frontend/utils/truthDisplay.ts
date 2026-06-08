@@ -7,6 +7,7 @@ const HUMAN_LABELS: Record<string, string> = {
   activation_gap_count: 'Activation gaps',
   acquisition_quality_diligence: 'Acquisition diligence',
   acquisition_required: 'Needs source acquisition',
+  automated_enrichment: 'Use as enrichment context',
   blocked_evidence_acquisition_required: 'Evidence acquisition required',
   broad_discovery: 'Research only',
   building_management: 'relationship ledger',
@@ -21,6 +22,7 @@ const HUMAN_LABELS: Record<string, string> = {
   hpd_registration: 'HPD registration',
   hpd_registrations: 'HPD registration',
   hpd_source_contacts: 'HPD source contacts',
+  manages_buildings: 'Management portfolio found',
   materialization_or_review_required: 'Needs review',
   no_action: 'Do not use yet',
   not_checked: 'Not checked',
@@ -97,6 +99,8 @@ export const formatClaimTitle = (claim: TruthClaim): string => {
   if (claim.predicate === 'has_owner_contact') return `Owner contact found${value ? `: ${value}` : ''}`;
   if (claim.predicate === 'maps_to_canonical_entity') return 'Canonical entity match';
   if (claim.predicate === 'has_direct_contact') return `Direct contact found${value ? `: ${value}` : ''}`;
+  if (claim.predicate === 'has_contact_path') return `Contact path found${value ? `: ${value}` : ''}`;
+  if (claim.predicate === 'manages_buildings') return `Management portfolio found${value ? `: ${value}` : ''}`;
   if (claim.predicate === 'has_management_relationship') return `Management relationship found${value ? `: ${value}` : ''}`;
   return humanizeTruthLabel(claim.predicate);
 };
@@ -117,6 +121,12 @@ export const formatClaimSubtitle = (claim: TruthClaim): string => {
   }
   if (claim.predicate === 'has_person_contact' || claim.predicate === 'has_direct_contact') {
     return 'Useful as a contact lead, not proof of property-management authority by itself.';
+  }
+  if (claim.predicate === 'has_contact_path') {
+    return 'There is at least one usable contact path, but contactability is separate from manager authority.';
+  }
+  if (claim.predicate === 'manages_buildings') {
+    return 'Portfolio evidence links this lead to buildings; review source support before treating it as verified.';
   }
   if (claim.predicate === 'has_registered_agent') {
     return 'Useful for verification and research; do not assume this is the property manager.';
@@ -148,4 +158,3 @@ export const truthSummaryHeadline = (summary: TruthSummary, subjectLabel = 'reco
   }
   return `No contradictions surfaced, but this ${subjectLabel} may still need another source before outreach.`;
 };
-

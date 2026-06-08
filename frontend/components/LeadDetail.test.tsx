@@ -191,6 +191,24 @@ describe('LeadDetail outreach evidence safety', () => {
           supporting_sources: ['building_management'],
           contradicting_sources: ['outreach_feedback'],
         },
+        {
+          claim_id: 'claim-2',
+          subject_type: 'lead',
+          subject_id: 'lead-1',
+          predicate: 'has_contact_path',
+          object_type: 'contact_path',
+          object_id: 'phone, website',
+          normalized_value: 'phone, website',
+          claim_type: 'contactability',
+          belief_status: 'ranked_sourcing',
+          confidence_score: 0.74,
+          freshness_days: 3,
+          actionability_level: 'automated_enrichment',
+          supporting_evidence_count: 2,
+          contradicting_evidence_count: 0,
+          supporting_sources: ['hpd_contacts'],
+          contradicting_sources: [],
+        },
       ],
     });
 
@@ -203,9 +221,11 @@ describe('LeadDetail outreach evidence safety', () => {
     expect(screen.getAllByText('Use with caution').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('What Matters')).toBeInTheDocument();
     expect(screen.getAllByText('Management relationship needs review').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('Audit trail (1 claims)')).toBeInTheDocument();
+    expect(screen.getAllByText('Contact path found: phone, website').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Audit trail (2 claims)')).toBeInTheDocument();
     expect(screen.queryByText('Current Beliefs')).not.toBeInTheDocument();
     expect(screen.queryByText(/has_current_management_link/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/has_contact_path/i)).not.toBeInTheDocument();
     expect(screen.getAllByText(/relationship ledger, outreach feedback \(conflicts\)/i).length).toBeGreaterThanOrEqual(1);
   });
 });
