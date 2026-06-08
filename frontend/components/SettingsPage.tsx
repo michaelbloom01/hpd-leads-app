@@ -734,7 +734,7 @@ const DataHealthSection: React.FC = () => {
                         {truthCompletionAudit.completion_status.replace(/_/g, ' ')}
                       </div>
                       <div className="mt-1 text-xs text-gray-500">
-                        {truthCompletionAudit.artifact_summary.satisfied.toLocaleString()} of {truthCompletionAudit.artifact_summary.total.toLocaleString()} artifacts; {truthCompletionAudit.runtime_blockers.length.toLocaleString()} runtime blocker{truthCompletionAudit.runtime_blockers.length === 1 ? '' : 's'}.
+                        {(truthCompletionAudit.artifact_summary?.satisfied ?? 0).toLocaleString()} of {(truthCompletionAudit.artifact_summary?.total ?? 0).toLocaleString()} artifacts; {(truthCompletionAudit.runtime_blockers ?? []).length.toLocaleString()} runtime blocker{(truthCompletionAudit.runtime_blockers ?? []).length === 1 ? '' : 's'}.
                       </div>
                     </div>
                     <div className={`shrink-0 rounded border px-2 py-0.5 text-[10px] font-medium ${truthCompletionAudit.completion_status === 'complete' ? severityClass('low') : severityClass('high')}`}>
@@ -822,7 +822,7 @@ const DataHealthSection: React.FC = () => {
                         {truthVerificationCandidateCount.toLocaleString()} verification candidate{truthVerificationCandidateCount === 1 ? '' : 's'}
                       </div>
                       <div className="mt-1 text-xs text-gray-500">
-                        {adjudication.fact_group_count.toLocaleString()} fact groups sampled; independent support, freshness, and no contradictions required.
+                        {(adjudication.fact_group_count ?? 0).toLocaleString()} fact groups sampled; independent support, freshness, and no contradictions required.
                       </div>
                     </div>
                     <div className={`shrink-0 rounded border px-2 py-0.5 text-[10px] font-medium ${adjudication.mutations_planned === 0 ? severityClass('low') : severityClass('high')}`}>
@@ -1055,7 +1055,7 @@ const DataHealthSection: React.FC = () => {
                         <span className="rounded border border-rose-100 bg-white px-1.5 py-0.5 text-[10px] text-rose-700">
                           site manager rows: {managerSourceBridgePreview.hpd_site_manager_row_count.toLocaleString()}
                         </span>
-                        {managerSourceBridgePreview.blocking_reasons.slice(0, 4).map((reason) => (
+                        {(managerSourceBridgePreview.blocking_reasons ?? []).slice(0, 4).map((reason) => (
                           <span key={reason} className="rounded border border-rose-100 bg-white px-1.5 py-0.5 text-[10px] text-rose-700">
                             {reason.replace(/_/g, ' ')}
                           </span>
@@ -1517,9 +1517,9 @@ const DataHealthSection: React.FC = () => {
                               </div>
                             </div>
                           </div>
-                          {Object.keys(managerExternalPostRecordingSimulation.blocker_counts).length > 0 && (
+                          {Object.keys(managerExternalPostRecordingSimulation.blocker_counts ?? {}).length > 0 && (
                             <div className="mt-2 flex flex-wrap gap-1">
-                              {Object.entries(managerExternalPostRecordingSimulation.blocker_counts).slice(0, 4).map(([blocker, count]) => (
+                              {Object.entries(managerExternalPostRecordingSimulation.blocker_counts ?? {}).slice(0, 4).map(([blocker, count]) => (
                                 <span key={blocker} className="rounded border border-emerald-100 bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">
                                   {blocker.replace(/_/g, ' ')}: {count.toLocaleString()}
                                 </span>
@@ -1545,16 +1545,16 @@ const DataHealthSection: React.FC = () => {
                             </div>
                           </div>
                           <div className="mt-2 flex flex-wrap gap-1">
-                            {Object.entries(managerExternalNextSourceBatches.suggested_source_family_counts).slice(0, 4).map(([family, count]) => (
+                            {Object.entries(managerExternalNextSourceBatches.suggested_source_family_counts ?? {}).slice(0, 4).map(([family, count]) => (
                               <span key={family} className="rounded border border-cyan-100 bg-cyan-50 px-1.5 py-0.5 text-[10px] text-cyan-700">
                                 {family.replace(/_/g, ' ')}: {Number(count).toLocaleString()}
                               </span>
                             ))}
                           </div>
-                          {managerExternalNextSourceBatches.proposals.slice(0, 3).map((proposal) => (
+                          {(managerExternalNextSourceBatches.proposals ?? []).slice(0, 3).map((proposal) => (
                             <div key={String(proposal.bbl || proposal.address)} className="mt-2 border-t border-cyan-50 pt-1.5 text-[10px] text-gray-600">
                               <span className="font-medium text-gray-800">{proposal.address || proposal.bbl}</span>
-                              {' '}needs {proposal.suggested_source_families.slice(0, 2).map((family) => family.replace(/_/g, ' ')).join(' or ')}
+                              {' '}needs {(proposal.suggested_source_families ?? []).slice(0, 2).map((family) => family.replace(/_/g, ' ')).join(' or ')}
                               {proposal.search_queries && proposal.search_queries.length > 0 && (
                                 <div className="mt-1 truncate text-gray-500">{proposal.search_queries[0]}</div>
                               )}

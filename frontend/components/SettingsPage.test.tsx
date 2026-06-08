@@ -1928,6 +1928,75 @@ describe('SettingsPage truth health', () => {
     expect(screen.getByText('blocked: 1')).toBeInTheDocument();
   });
 
+  it('keeps Data Health mounted when truth preview packets omit optional arrays', async () => {
+    fetchTruthCompletionAuditMock.mockResolvedValue({
+      dry_run: true,
+      mutations_planned: 0,
+      completion_status: 'not_complete',
+      prompt_to_artifact_checklist: [],
+    });
+    fetchTruthAdjudicationPreviewMock.mockResolvedValue({
+      manager_source_bridge_preview: {
+        dry_run: true,
+        mutations_planned: 0,
+        lead_id: '0ff794d3ba2d',
+        relationship_count: 1,
+        current_manager_role_relationship_count: 0,
+        hpd_management_company_strict_match_count: 0,
+        manager_source_ready_if_materialized_count: 0,
+        registered_agent_bridge_count: 1,
+        hpd_site_manager_row_count: 1,
+        samples: [],
+      },
+      manager_external_source_acquisition_preview: {
+        dry_run: true,
+        mutations_planned: 0,
+        lead_id: '0ff794d3ba2d',
+        candidate_source_count: 1,
+        matched_evidence_candidate_count: 1,
+        clean_exact_claim_count: 0,
+        claim_group_count: 0,
+        source_ready_if_recorded_count: 0,
+        independent_source_ready_if_recorded_count: 0,
+        strict_manager_source_ready_if_recorded_count: 0,
+        review_required_count: 0,
+        unmatched_candidate_count: 0,
+        new_relationship_candidate_count: 0,
+        post_recording_simulation: {
+          simulated_fact_group_count: 0,
+          multi_source_fact_group_count: 0,
+          source_ready_fact_group_count: 0,
+          safe_to_mark_verified_count: 0,
+        },
+        next_source_batches: {
+          candidate_count: 1,
+        },
+      },
+    });
+
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+
+    render(
+      <QueryClientProvider client={client}>
+        <SettingsPage />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Data Health' }));
+
+    expect(await screen.findByText('Data Health Dashboard')).toBeInTheDocument();
+    await waitFor(() => expect(fetchTruthCompletionAuditMock).toHaveBeenCalled());
+    await waitFor(() => expect(fetchTruthAdjudicationPreviewMock).toHaveBeenCalled());
+    await waitFor(() => {
+      expect(screen.queryByText('Something went wrong loading this page.')).not.toBeInTheDocument();
+    });
+  });
+
   it('shows review evidence and contradiction context for human decisions', async () => {
     fetchTruthReviewQueueMock.mockResolvedValue({
       limit: 5,
