@@ -75,6 +75,10 @@ const formatLabel = (value: string | number | null | undefined, fallback = 'unkn
   String(value ?? fallback).replace(/_/g, ' ')
 );
 
+const formatCount = (value: number | string | null | undefined): string => (
+  Number(value ?? 0).toLocaleString()
+);
+
 const ScoringSection: React.FC = () => {
   const queryClient = useQueryClient();
   const { data: configs } = useQuery({ queryKey: ['scoring-configs'], queryFn: fetchConfigs });
@@ -2746,7 +2750,7 @@ const DataHealthSection: React.FC = () => {
                     </div>
                     <div className="mt-2 flex flex-wrap gap-1 text-[10px]">
                       <span className="rounded border border-gray-100 bg-white px-1.5 py-0.5 text-gray-600">
-                        mutations planned: {manualEvidencePreview.data.mutations_planned.toLocaleString()}
+                        mutations planned: {formatCount(manualEvidencePreview.data.mutations_planned)}
                       </span>
                       <span className="rounded border border-gray-100 bg-white px-1.5 py-0.5 text-gray-600">
                         confidence {formatPercent(manualEvidencePreview.data.claim_spec?.confidence_score)}
@@ -2769,18 +2773,18 @@ const DataHealthSection: React.FC = () => {
                     <div>
                       <div className="text-[10px] uppercase text-gray-500">Ledger backfill preview</div>
                       <div className="text-xs font-semibold text-gray-800">
-                        {materializationPreview.planned_claims_total.toLocaleString()} claims pending
+                        {formatCount(materializationPreview.planned_claims_total)} claims pending
                       </div>
                       <div className="mt-1 text-xs text-gray-500">
-                        {materializationPreview.existing_claim_count.toLocaleString()} existing claims; {materializationPreview.existing_evidence_count.toLocaleString()} existing evidence rows.
+                        {formatCount(materializationPreview.existing_claim_count)} existing claims; {formatCount(materializationPreview.existing_evidence_count)} existing evidence rows.
                       </div>
                       <div className="mt-2 flex flex-wrap gap-1">
-                        {Object.entries(materializationPreview.planned_claims_by_source)
+                        {Object.entries(materializationPreview.planned_claims_by_source ?? {})
                           .sort(([, left], [, right]) => Number(right) - Number(left))
                           .slice(0, 5)
                           .map(([source, count]) => (
                             <span key={source} className="rounded border border-gray-100 bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium text-gray-600">
-                              {source.replace(/_/g, ' ')}: {Number(count).toLocaleString()}
+                              {formatLabel(source)}: {formatCount(count)}
                             </span>
                           ))}
                       </div>
@@ -2788,7 +2792,7 @@ const DataHealthSection: React.FC = () => {
                         <div className="mt-2 flex flex-wrap gap-1">
                           {Object.entries(materializationPreview.strict_materializable_claims_by_source).map(([source, count]) => (
                             <span key={source} className="rounded border border-emerald-100 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
-                              strict {source.replace(/_/g, ' ')}: {Number(count).toLocaleString()}
+                              strict {formatLabel(source)}: {formatCount(count)}
                             </span>
                           ))}
                         </div>
