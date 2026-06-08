@@ -71,6 +71,10 @@ const formatPercent = (value: number | null | undefined): string => (
   typeof value === 'number' ? `${Math.round(value * 100)}%` : 'n/a'
 );
 
+const formatLabel = (value: string | number | null | undefined, fallback = 'unknown'): string => (
+  String(value ?? fallback).replace(/_/g, ' ')
+);
+
 const ScoringSection: React.FC = () => {
   const queryClient = useQueryClient();
   const { data: configs } = useQuery({ queryKey: ['scoring-configs'], queryFn: fetchConfigs });
@@ -300,7 +304,9 @@ const DataHealthSection: React.FC = () => {
   const sourceAcquisitionWorkItems = truthSourceAcquisitionWorklist?.work_items?.slice(0, 3) ?? [];
   const sourceOverlapThresholdRelationships = truthSourceOverlapBlockerReport?.threshold_sensitive_relationships?.slice(0, 3) ?? [];
   const sourceOverlapBlockerTopRelationships = truthSourceOverlapBlockerReport?.top_blocked_relationships?.slice(0, 3) ?? [];
-  const sourceOverlapBlockerReasons = truthSourceOverlapBlockerReport?.source_bridge_assessment?.blocking_reasons?.slice(0, 4) ?? [];
+  const sourceOverlapBridgeAssessment = truthSourceOverlapBlockerReport?.source_bridge_assessment;
+  const sourceOverlapEvidenceRequestSummary = truthSourceOverlapBlockerReport?.evidence_request_summary;
+  const sourceOverlapBlockerReasons = sourceOverlapBridgeAssessment?.blocking_reasons?.slice(0, 4) ?? [];
   const sourceEvidenceCandidateSummary = truthSourceOverlapBlockerReport?.source_evidence_candidate_summary;
   const sourceEvidenceCandidateRelationships = sourceEvidenceCandidateSummary?.recommended_relationships?.slice(0, 2) ?? [];
   const sourceEvidenceCandidatePayloadReview = sourceEvidenceCandidateSummary?.recording_approval_packet?.manual_evidence_payload_review?.slice(0, 2) ?? [];
@@ -2163,7 +2169,7 @@ const DataHealthSection: React.FC = () => {
                               || [item.relationship.manager_name, item.relationship.address || item.relationship.bbl].filter(Boolean).join(' / ')
                               || item.work_item_id;
                             const firstReviewedFinding = item.reviewed_source_findings?.[0];
-                            const pasteBackFields = item.paste_back_fields.slice(0, 5).map((field) => field.replace(/_/g, ' ')).join(', ');
+                            const pasteBackFields = (item.paste_back_fields ?? []).slice(0, 5).map((field) => formatLabel(field)).join(', ');
                             return (
                               <div key={item.work_item_id} className="px-2 py-1.5 text-[10px] text-gray-600">
                                 <div className="flex flex-wrap items-center gap-1">
@@ -2183,11 +2189,11 @@ const DataHealthSection: React.FC = () => {
                                 {item.evidence_need && (
                                   <div className="mt-0.5 text-gray-500">{item.evidence_need}</div>
                                 )}
-                                {item.source_family_needs.length > 0 && (
+                                {(item.source_family_needs ?? []).length > 0 && (
                                   <div className="mt-1 flex flex-wrap gap-1">
-                                    {item.source_family_needs.slice(0, 5).map((source) => (
+                                    {(item.source_family_needs ?? []).slice(0, 5).map((source) => (
                                       <span key={source} className="rounded border border-gray-100 bg-gray-50 px-1.5 py-0.5 text-gray-600">
-                                        {source.replace(/_/g, ' ')}
+                                        {formatLabel(source)}
                                       </span>
                                     ))}
                                   </div>
@@ -2220,7 +2226,7 @@ const DataHealthSection: React.FC = () => {
                                   </div>
                                 )}
                                 <div className="mt-1 text-[10px] text-gray-500">
-                                  Paste-back fields: {pasteBackFields}{item.paste_back_fields.length > 5 ? ' ...' : ''}
+                                  Paste-back fields: {pasteBackFields || 'n/a'}{(item.paste_back_fields ?? []).length > 5 ? ' ...' : ''}
                                 </div>
                                 {firstReviewedFinding && (
                                   <div className="mt-1 rounded border border-amber-100 bg-amber-50 px-1.5 py-1 text-amber-800">
@@ -2241,13 +2247,13 @@ const DataHealthSection: React.FC = () => {
                         <div>
                           <div className="text-[10px] uppercase text-rose-700">Source-overlap blocker report</div>
                           <div className="text-xs font-semibold text-gray-800">
-                            {truthSourceOverlapBlockerReport.status.replace(/_/g, ' ')}
+                            {formatLabel(truthSourceOverlapBlockerReport.status, 'not_checked')}
                           </div>
                           <div className="mt-0.5 text-[10px] text-gray-600">
-                            Source-ready {Number(truthSourceOverlapBlockerReport.source_ready_fact_group_count ?? 0).toLocaleString()} / verification candidates {Number(truthSourceOverlapBlockerReport.verification_candidate_count ?? 0).toLocaleString()} / record-ready {Number(truthSourceOverlapBlockerReport.evidence_request_summary.recording_ready_count ?? 0).toLocaleString()}.
+                            Source-ready {Number(truthSourceOverlapBlockerReport.source_ready_fact_group_count ?? 0).toLocaleString()} / verification candidates {Number(truthSourceOverlapBlockerReport.verification_candidate_count ?? 0).toLocaleString()} / record-ready {Number(sourceOverlapEvidenceRequestSummary?.recording_ready_count ?? 0).toLocaleString()}.
                           </div>
                           <div className="mt-0.5 text-[10px] text-gray-600">
-                            Requests {Number(truthSourceOverlapBlockerReport.evidence_request_summary.request_count ?? 0).toLocaleString()} / reviewed source findings {Number(truthSourceOverlapBlockerReport.evidence_request_summary.reviewed_source_finding_count ?? 0).toLocaleString()}.
+                            Requests {Number(sourceOverlapEvidenceRequestSummary?.request_count ?? 0).toLocaleString()} / reviewed source findings {Number(sourceOverlapEvidenceRequestSummary?.reviewed_source_finding_count ?? 0).toLocaleString()}.
                           </div>
                           {sourceEvidenceCandidateSummary && (
                             <div className="mt-1 rounded border border-white bg-white px-1.5 py-1 text-[10px] text-gray-700">
@@ -2261,14 +2267,14 @@ const DataHealthSection: React.FC = () => {
                               {sourceEvidenceCandidateSummary.allowed_execute === false && (
                                 <span className="ml-1 text-rose-700">Execution still requires explicit approval.</span>
                               )}
-                              {truthSourceOverlapBlockerReport.source_bridge_assessment.can_request_recording_approval && (
+                              {sourceOverlapBridgeAssessment?.can_request_recording_approval && (
                                 <div className="mt-1 rounded border border-amber-100 bg-amber-50 px-1.5 py-1 text-amber-900">
-                                  Approval-ready preview: {Number(truthSourceOverlapBlockerReport.source_bridge_assessment.candidate_recommended_count ?? 0).toLocaleString()} recommended row(s), {Number(truthSourceOverlapBlockerReport.source_bridge_assessment.candidate_recording_ready_count ?? 0).toLocaleString()} record-ready preview row(s). No execution is allowed from this screen.
+                                  Approval-ready preview: {Number(sourceOverlapBridgeAssessment?.candidate_recommended_count ?? 0).toLocaleString()} recommended row(s), {Number(sourceOverlapBridgeAssessment?.candidate_recording_ready_count ?? 0).toLocaleString()} record-ready preview row(s). No execution is allowed from this screen.
                                 </div>
                               )}
-                              {truthSourceOverlapBlockerReport.source_bridge_assessment.approval_boundary && (
+                              {sourceOverlapBridgeAssessment?.approval_boundary && (
                                 <div className="mt-1 text-gray-600">
-                                  {truthSourceOverlapBlockerReport.source_bridge_assessment.approval_boundary}
+                                  {sourceOverlapBridgeAssessment.approval_boundary}
                                 </div>
                               )}
                               {sourceEvidenceCandidateClues.length > 0 && (
