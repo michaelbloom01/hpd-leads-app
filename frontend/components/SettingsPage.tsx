@@ -3251,6 +3251,32 @@ const DataHealthSection: React.FC = () => {
   );
 };
 
+class DataHealthErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="space-y-6">
+          <h2 className="text-lg font-semibold text-gray-900">Data Health Dashboard</h2>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-5">
+            <h3 className="text-sm font-semibold text-amber-900">Partial truth preview unavailable</h3>
+            <p className="mt-1 text-sm text-amber-800">
+              One truth-confidence preview returned an unexpected partial payload. Scoring settings remain available; refresh this tab after the data-health contract is updated.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 const SettingsPage: React.FC = () => {
   const [tab, setTab] = useState<'scoring' | 'data-health'>('scoring');
   return (
@@ -3271,7 +3297,13 @@ const SettingsPage: React.FC = () => {
           </button>
         ))}
       </div>
-      {tab === 'scoring' ? <ScoringSection /> : <DataHealthSection />}
+      {tab === 'scoring' ? (
+        <ScoringSection />
+      ) : (
+        <DataHealthErrorBoundary key="data-health">
+          <DataHealthSection />
+        </DataHealthErrorBoundary>
+      )}
     </div>
   );
 };
