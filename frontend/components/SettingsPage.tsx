@@ -37,6 +37,7 @@ import {
   type TruthReviewItem,
 } from '../services/truth-api';
 import { fetchJobs, fetchJobsSummary, startJob } from '../services/jobs-api';
+import { humanizeTruthLabel } from '../utils/truthDisplay';
 
 const SIGNAL_LABELS: Record<string, string> = {
   ownership_change: 'Ownership Change',
@@ -72,7 +73,7 @@ const formatPercent = (value: number | null | undefined): string => (
 );
 
 const formatLabel = (value: string | number | null | undefined, fallback = 'unknown'): string => (
-  String(value ?? fallback).replace(/_/g, ' ')
+  humanizeTruthLabel(value, fallback)
 );
 
 const formatCount = (value: number | string | null | undefined): string => (

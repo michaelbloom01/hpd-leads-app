@@ -7,6 +7,16 @@ import { fetchLeadTruthSummary, type LeadTruthSummary } from '../services/truth-
 import { PIPELINE_STAGES, OUTREACH_STATUSES, OUTREACH_METHODS, OUTREACH_OUTCOMES, formatCurrency } from '../utils/format';
 import { getLeadDisplayName } from '../utils/leads';
 import { assessContactConfidence } from '../utils/contactConfidence';
+import {
+  formatClaimSubtitle,
+  formatClaimTitle,
+  formatEvidenceAge,
+  formatReviewBucket,
+  formatSourceName,
+  formatTruthAction,
+  truthSummaryHeadline,
+  visibleTruthClaims,
+} from '../utils/truthDisplay';
 
 // Lazy-load map to avoid large initial bundle
 const PortfolioMap = lazy(() => import('./PortfolioMap'));
@@ -494,6 +504,16 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     : leadLineage?.sibling_count
       ? `${leadLineage.sibling_count} related workflow row${leadLineage.sibling_count === 1 ? '' : 's'} hidden in Leads`
       : 'No duplicate cohort surfaced for this lead';
+  const leadTruthClaims = leadTruth?.claims || [];
+  const leadTruthContradictionCount = leadTruth?.belief_summary.contradiction_count || 0;
+  const leadTruthHeadline = truthSummaryHeadline(leadTruth, 'lead');
+  const leadTruthVisibleClaims = visibleTruthClaims(leadTruthClaims, 4);
+  const leadTruthSourceNames = Array.from(new Set(
+    leadTruthClaims.flatMap((claim) => [
+      ...(claim.supporting_sources || []),
+      ...(claim.contradicting_sources || []).map((source) => `${source} (contradicts)`),
+    ]),
+  ));
 
   return (
     <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50 flex items-center justify-center p-0 md:p-4" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="lead-detail-title">
@@ -635,9 +655,9 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
               </p>
             </div>
             <div className={`rounded-xl border px-3 py-2 sm:px-4 sm:py-3 ${confidenceClass(leadTruth?.overall_confidence_score)}`}>
-              <div className="text-[10px] font-bold uppercase tracking-wider">Truth Confidence</div>
+              <div className="text-[10px] font-bold uppercase tracking-wider">Data Confidence</div>
               <p className="mt-1 text-sm font-semibold">{leadTruth ? pct(leadTruth.overall_confidence_score) : 'Pending'}</p>
-              <p className="mt-1 text-xs opacity-80">{leadTruth?.review_bucket?.replace(/_/g, ' ') || 'No ledger read yet'}</p>
+              <p className="mt-1 text-xs opacity-80">{leadTruth ? formatReviewBucket(leadTruth.review_bucket) : 'Not evaluated'}</p>
             </div>
             <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 sm:px-4 sm:py-3">
               <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Follow-Up</div>
@@ -909,81 +929,84 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
               <div className={`rounded-xl border p-4 ${confidenceClass(leadTruth?.overall_confidence_score)}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h3 className="text-sm font-bold">Truth & Confidence</h3>
-                    <p className="mt-1 text-xs opacity-80">
-                      {leadTruth
-                        ? `${leadTruth.claims.length} claim${leadTruth.claims.length === 1 ? '' : 's'} evaluated, ${leadTruth.belief_summary.contradiction_count} contradiction${leadTruth.belief_summary.contradiction_count === 1 ? '' : 's'} surfaced`
-                        : 'Truth summary is not available yet.'}
-                    </p>
+                    <h3 className="text-sm font-bold">Data Confidence</h3>
+                    <p className="mt-1 max-w-xl text-xs opacity-85">{leadTruthHeadline}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {(leadTruth?.belief_summary.safe_actions || ['not_evaluated']).map((action) => (
+                        <span key={action} className="rounded-full bg-white/70 px-2 py-1 text-[11px] font-medium">
+                          {formatTruthAction(action)}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                   <div className="text-right">
                     <div className="text-2xl font-mono font-bold">{leadTruth ? pct(leadTruth.overall_confidence_score) : '--'}</div>
-                    <div className="text-[10px] uppercase font-bold opacity-70">{leadTruth?.review_bucket?.replace(/_/g, ' ') || 'pending'}</div>
+                    <div className="text-[10px] uppercase font-bold opacity-70">{formatReviewBucket(leadTruth?.review_bucket)}</div>
+                    <div className="mt-1 text-[11px] opacity-75">
+                      {formatEvidenceAge(leadTruth?.belief_summary.freshness_days)}
+                    </div>
                   </div>
                 </div>
               </div>
 
-              {leadTruth?.belief_summary.what_we_believe?.length ? (
-                <div className="bg-white border border-gray-200 rounded-xl p-4">
-                  <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Current Beliefs</h4>
-                  <div className="space-y-2">
-                    {leadTruth.belief_summary.what_we_believe.map((belief) => (
-                      <div key={belief} className="flex gap-2 text-sm text-gray-700">
-                        <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-gray-400 flex-shrink-0" />
-                        <span>{belief}</span>
-                      </div>
-                    ))}
+              <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                {[
+                  ['Claims checked', leadTruth?.claims.length ?? '--'],
+                  ['Conflicts', leadTruthContradictionCount],
+                  ['Supporting sources', leadTruth?.belief_summary.supporting_sources?.length ?? '--'],
+                  ['Contradicting sources', leadTruth?.belief_summary.contradicting_sources?.length ?? 0],
+                ].map(([label, value]) => (
+                  <div key={label as string} className="rounded-xl border border-gray-200 bg-white px-3 py-2">
+                    <div className="text-lg font-semibold text-gray-900">{value}</div>
+                    <div className="text-[11px] uppercase font-bold text-gray-500">{label}</div>
                   </div>
-                  {!!leadTruth.belief_summary.why_we_believe?.length && (
-                    <div className="mt-3 border-t border-gray-100 pt-3">
-                      <h5 className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Why</h5>
-                      <div className="mt-1 space-y-1">
-                        {leadTruth.belief_summary.why_we_believe.slice(0, 3).map((reason) => (
-                          <p key={reason} className="text-xs text-gray-600">{reason}</p>
-                        ))}
+                ))}
+              </div>
+
+              <div className="bg-white border border-gray-200 rounded-xl p-4">
+                <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">What Matters</h4>
+                <div className="space-y-2">
+                  {leadTruthVisibleClaims.map((claim) => (
+                    <div key={claim.claim_id} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-gray-900">{formatClaimTitle(claim)}</div>
+                          <div className="mt-0.5 text-xs text-gray-600">{formatClaimSubtitle(claim)}</div>
+                        </div>
+                        <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[11px] font-semibold ${confidenceClass(claim.confidence_score)}`}>
+                          {pct(claim.confidence_score)}
+                        </span>
                       </div>
                     </div>
+                  ))}
+                  {!leadTruthVisibleClaims.length && (
+                    <p className="text-sm text-gray-500">No lead-level confidence claims are available yet.</p>
                   )}
-                  {(leadTruth.belief_summary.supporting_sources?.length || leadTruth.belief_summary.contradicting_sources?.length) ? (
-                    <p className="mt-3 text-xs text-gray-500">
-                      Supports: {(leadTruth.belief_summary.supporting_sources || []).join(', ') || 'none'}
-                      {leadTruth.belief_summary.contradicting_sources?.length
-                        ? `; Contradicts: ${leadTruth.belief_summary.contradicting_sources.join(', ')}`
-                        : ''}
-                    </p>
-                  ) : null}
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {leadTruth.belief_summary.safe_actions.map((action) => (
-                      <span key={action} className="rounded-full bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-600">
-                        {action.replace(/_/g, ' ')}
-                      </span>
-                    ))}
-                  </div>
                 </div>
-              ) : null}
+              </div>
 
-              <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100">
-                  <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Claim Ledger</h4>
-                </div>
-                {!leadTruth?.claims?.length ? (
+              <details aria-label="Evidence Ledger audit trail" className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                <summary className="cursor-pointer px-4 py-3 text-xs font-bold text-gray-700 uppercase tracking-wider">
+                  Audit trail ({leadTruthClaims.length} claims)
+                </summary>
+                {!leadTruthClaims.length ? (
                   <p className="p-4 text-sm text-gray-400">No claims have been materialized or inferred for this lead yet.</p>
                 ) : (
-                  <div className="divide-y divide-gray-100">
-                    {leadTruth.claims.slice(0, 12).map((claim) => (
+                  <div className="divide-y divide-gray-100 border-t border-gray-100">
+                    {leadTruthClaims.slice(0, 12).map((claim) => (
                       <div key={claim.claim_id} className="p-4">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="text-sm font-semibold text-gray-900">{claim.predicate.replace(/_/g, ' ')}</div>
-                            <div className="mt-1 text-xs text-gray-500 truncate">{claim.normalized_value || claim.object_id || claim.claim_type}</div>
+                            <div className="text-sm font-semibold text-gray-900">{formatClaimTitle(claim)}</div>
+                            <div className="mt-1 text-xs text-gray-500 truncate">{formatClaimSubtitle(claim)}</div>
                           </div>
                           <span className={`rounded border px-2 py-1 text-xs font-semibold ${confidenceClass(claim.confidence_score)}`}>
                             {pct(claim.confidence_score)}
                           </span>
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
-                          <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{claim.belief_status.replace(/_/g, ' ')}</span>
-                          <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{claim.actionability_level.replace(/_/g, ' ')}</span>
+                          <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{formatReviewBucket(claim.belief_status)}</span>
+                          <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{formatTruthAction(claim.actionability_level)}</span>
                           <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">{claim.supporting_evidence_count} supporting</span>
                           {claim.contradicting_evidence_count > 0 && (
                             <span className="rounded-full bg-rose-50 px-2 py-1 text-rose-700">{claim.contradicting_evidence_count} contradicting</span>
@@ -994,14 +1017,19 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                         </div>
                         {(claim.supporting_sources.length > 0 || claim.contradicting_sources.length > 0) && (
                           <div className="mt-2 text-xs text-gray-500">
-                            Sources: {[...claim.supporting_sources, ...claim.contradicting_sources.map((s) => `${s} (contradicts)`)].join(', ')}
+                            Sources: {[...claim.supporting_sources, ...claim.contradicting_sources.map((s) => `${s} (contradicts)`)].map(formatSourceName).join(', ')}
                           </div>
                         )}
                       </div>
                     ))}
+                    {leadTruthSourceNames.length > 0 && (
+                      <div className="px-4 py-3 text-xs text-gray-500">
+                        Sources represented: {leadTruthSourceNames.map(formatSourceName).join(', ')}
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
+              </details>
             </div>
           )}
 
@@ -1447,7 +1475,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                     <div>Lead score: <span className="font-medium">{(enrichedLead.score || 0).toFixed(1)}</span></div>
                     <div>Truth confidence: <span className="font-medium">{leadTruth ? pct(leadTruth.overall_confidence_score) : '--'}</span></div>
                     <div>Enrichment status: <span className="font-medium capitalize">{enrichedLead.enrichment_status || 'none'}</span></div>
-                    <div>Evidence posture: <span className="font-medium capitalize">{leadTruth?.review_bucket?.replace(/_/g, ' ') || 'not evaluated'}</span></div>
+                    <div>Evidence posture: <span className="font-medium">{formatReviewBucket(leadTruth?.review_bucket)}</span></div>
                     <div>Contact coverage: <span className="font-medium">{enrichedLead.phone || enrichedLead.email ? 'Direct contact found' : 'No direct contact found'}</span></div>
                   </div>
                 </div>

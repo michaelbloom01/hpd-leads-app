@@ -155,4 +155,57 @@ describe('LeadDetail outreach evidence safety', () => {
     revokeObjectURL.mockRestore();
     click.mockRestore();
   });
+
+  it('shows lead truth in product language with raw ledger details collapsed', async () => {
+    fetchLeadTruthSummaryMock.mockResolvedValue({
+      lead_id: 'lead-1',
+      entity_name: 'Acme Management LLC',
+      canonical_entity: null,
+      overall_confidence_score: 0.73,
+      review_bucket: 'conflicting_evidence',
+      belief_summary: {
+        what_we_believe: ['lead-1 has current management link to Acme Management LLC'],
+        why_we_believe: ['has_current_management_link: 1 support from building_management'],
+        supporting_sources: ['building_management'],
+        contradicting_sources: ['outreach_feedback'],
+        contradiction_count: 1,
+        freshness_days: 42,
+        safe_actions: ['ranked_sourcing'],
+      },
+      claims: [
+        {
+          claim_id: 'claim-1',
+          subject_type: 'lead',
+          subject_id: 'lead-1',
+          predicate: 'has_current_management_link',
+          object_type: 'company',
+          object_id: 'Acme Management LLC',
+          normalized_value: 'Acme Management LLC',
+          claim_type: 'relationship',
+          belief_status: 'conflicting_evidence',
+          confidence_score: 0.73,
+          freshness_days: 42,
+          actionability_level: 'ranked_sourcing',
+          supporting_evidence_count: 1,
+          contradicting_evidence_count: 1,
+          supporting_sources: ['building_management'],
+          contradicting_sources: ['outreach_feedback'],
+        },
+      ],
+    });
+
+    renderLeadDetail();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Truth' }));
+
+    expect((await screen.findAllByText('Data Confidence')).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Needs review').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Use with caution').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('What Matters')).toBeInTheDocument();
+    expect(screen.getAllByText('Management relationship needs review').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Audit trail (1 claims)')).toBeInTheDocument();
+    expect(screen.queryByText('Current Beliefs')).not.toBeInTheDocument();
+    expect(screen.queryByText(/has_current_management_link/i)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/relationship ledger, outreach feedback \(conflicts\)/i).length).toBeGreaterThanOrEqual(1);
+  });
 });

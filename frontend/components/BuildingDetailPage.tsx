@@ -10,8 +10,17 @@ import {
   addBuildingToPipeline, fetchBuildingOutreachEvents, logBuildingOutreachEvent, requestBuildingDosContactsRefresh,
   type BuildingContactEntry, type BuildingDetail,
 } from '../services/buildings-api';
-import { fetchSubjectTruthSummary, type SubjectTruthSummary, type TruthClaim } from '../services/truth-api';
+import { fetchSubjectTruthSummary, type SubjectTruthSummary } from '../services/truth-api';
 import { assessContactConfidence } from '../utils/contactConfidence';
+import {
+  formatClaimSubtitle,
+  formatClaimTitle,
+  formatSourceName,
+  formatTruthAction,
+  formatReviewBucket,
+  truthSummaryHeadline,
+  visibleTruthClaims,
+} from '../utils/truthDisplay';
 import { toast } from 'react-hot-toast';
 
 const PortfolioMap = lazy(() => import('./PortfolioMap'));
@@ -76,80 +85,6 @@ const confidenceClass = (value: number | null | undefined): string => {
   if (value >= 0.8) return 'border-emerald-200 bg-emerald-50 text-emerald-700';
   if (value >= 0.55) return 'border-amber-200 bg-amber-50 text-amber-700';
   return 'border-rose-200 bg-rose-50 text-rose-700';
-};
-
-const formatTruthAction = (action: string): string => {
-  const labels: Record<string, string> = {
-    broad_discovery: 'Research only',
-    ranked_sourcing: 'Use with caution',
-    recommended_outreach: 'Outreach-ready',
-    no_action: 'Do not use yet',
-    not_evaluated: 'Not evaluated',
-  };
-  return labels[action] || action.replace(/_/g, ' ');
-};
-
-const formatReviewBucket = (bucket: string | null | undefined): string => {
-  const labels: Record<string, string> = {
-    verified: 'Verified',
-    conflicting_evidence: 'Needs review',
-    materialization_or_review_required: 'Needs review',
-    source_gap: 'Needs more sources',
-    not_evaluated: 'Not evaluated',
-  };
-  return labels[bucket || ''] || (bucket || 'not evaluated').replace(/_/g, ' ');
-};
-
-const formatSourceName = (source: string): string => {
-  const labels: Record<string, string> = {
-    hpd_registrations: 'HPD registration',
-    hpd_contacts: 'HPD contacts',
-    building_management: 'relationship ledger',
-    acris: 'ACRIS',
-    outreach_feedback: 'outreach feedback',
-  };
-  const normalized = source.replace(' (contradicts)', '');
-  const label = labels[normalized] || normalized.replace(/_/g, ' ');
-  return source.endsWith(' (contradicts)') ? `${label} (conflicts)` : label;
-};
-
-const formatClaimTitle = (claim: TruthClaim): string => {
-  const value = claim.normalized_value || claim.object_id || '';
-  if (claim.predicate === 'exists_in_building_table') return 'Building record found';
-  if (claim.predicate === 'has_current_management_link') return claim.contradicting_evidence_count > 0
-    ? 'Management relationship needs review'
-    : 'Management relationship found';
-  if (claim.predicate === 'has_owner') return `Owner relationship found${value ? `: ${value}` : ''}`;
-  if (claim.predicate === 'has_person_contact') return `Contact found${value ? `: ${value}` : ''}`;
-  if (claim.predicate === 'has_registered_agent') return `Registered agent found${value ? `: ${value}` : ''}`;
-  if (claim.predicate === 'has_owner_contact') return `Owner contact found${value ? `: ${value}` : ''}`;
-  return claim.predicate.replace(/_/g, ' ');
-};
-
-const formatClaimSubtitle = (claim: TruthClaim): string => {
-  if (claim.predicate === 'exists_in_building_table') {
-    return 'The building itself is present in source data.';
-  }
-  if (claim.predicate === 'has_current_management_link') {
-    return claim.contradicting_evidence_count > 0
-      ? 'Multiple relationship records point to different entities. Treat the manager as unverified until reviewed.'
-      : 'Current relationship evidence points to this manager or entity.';
-  }
-  if (claim.predicate === 'has_owner') {
-    return claim.contradicting_evidence_count > 0
-      ? 'Ownership sources conflict. Use as diligence context until reviewed.'
-      : 'Ownership evidence is supported by the current source set.';
-  }
-  if (claim.predicate === 'has_person_contact') {
-    return 'Useful as a contact lead, not proof of property-management authority by itself.';
-  }
-  if (claim.predicate === 'has_registered_agent') {
-    return 'Useful for verification and research; do not assume this is the property manager.';
-  }
-  if (claim.predicate === 'has_owner_contact') {
-    return 'Ownership evidence is useful context, separate from manager authority.';
-  }
-  return claim.normalized_value || claim.claim_type.replace(/_/g, ' ');
 };
 
 const eventIcons: Record<string, string> = {
@@ -297,21 +232,15 @@ const BuildingDetailPage: React.FC = () => {
   const unavailableBreakdownEntries = breakdownEntries.filter(([, val]) => val.raw === null);
   const truthClaims = (truthSummary?.claims || []).slice(0, 6);
   const truthSourceNames = Array.from(new Set(
-    truthClaims.flatMap((claim: TruthClaim) => [
+    truthClaims.flatMap((claim) => [
       ...(claim.supporting_sources || []),
       ...(claim.contradicting_sources || []).map((source) => `${source} (contradicts)`),
     ]),
   ));
   const truthSchemaReady = (truthSummary as SubjectTruthSummary | undefined)?.schema_status?.ready;
   const contradictionCount = truthSummary?.belief_summary.contradiction_count || 0;
-  const truthHeadline = !truthSummary
-    ? 'Truth summary is still loading.'
-    : contradictionCount > 0
-      ? 'Conflicting relationship evidence. Use this as a research lead, not a verified manager record.'
-      : 'No contradictions surfaced in the current building evidence.';
-  const strongestTruthClaims = truthClaims
-    .filter((claim) => claim.predicate !== 'exists_in_building_table')
-    .slice(0, 4);
+  const truthHeadline = truthSummaryHeadline(truthSummary, 'building');
+  const strongestTruthClaims = visibleTruthClaims(truthClaims, 4);
   const dosBanner = (() => {
     if (dosStatus === 'refreshing') {
       return {
