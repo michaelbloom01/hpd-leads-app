@@ -882,6 +882,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                         : enrichedLead.buildings}
                       boro={enrichedLead.boro}
                       boros={enrichedLead.boros}
+                      allowClientGeocodingFallback
                     />
                   </Suspense>
                 </div>
@@ -1355,6 +1356,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                       : enrichedLead.buildings}
                     boro={enrichedLead.boro}
                     boros={enrichedLead.boros}
+                    allowClientGeocodingFallback
                   />
                 </Suspense>
               )}

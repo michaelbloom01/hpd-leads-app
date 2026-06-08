@@ -177,6 +177,11 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({
 
       const resolved: MapPosition[] = [];
       let skipped = 0;
+      const publishProgress = () => {
+        if (cancelled) return;
+        setPositions([...resolved]);
+        setSkippedCount(skipped);
+      };
       for (let i = 0; i < normalizedBuildings.length; i++) {
         const { addr, buildingBoro, latitude, longitude, coordinateSource, coordinatePrecision } = normalizedBuildings[i];
         if (latitude !== null && longitude !== null) {
@@ -187,6 +192,7 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({
             precision: coordinatePrecision,
             persisted: true,
           });
+          if (resolved.length === 1 || resolved.length % 10 === 0) publishProgress();
           continue;
         }
         if (!allowClientGeocodingFallback) {
@@ -202,6 +208,7 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({
             precision: null,
             persisted: false,
           });
+          if (resolved.length === 1 || resolved.length % 10 === 0) publishProgress();
         } else {
           skipped += 1;
         }
