@@ -163,8 +163,7 @@ def test_resolve_entities_dry_run_does_not_write(monkeypatch):
     monkeypatch.setattr("src.tasks.ingest._ensure_or_create_job", lambda *_args, **_kwargs: 77)
     monkeypatch.setattr("src.tasks.ingest._finish_job", lambda *args, **kwargs: captured.setdefault("finish", (args, kwargs)))
 
-    fn = entity_resolution.resolve_entities.run if hasattr(entity_resolution.resolve_entities, "run") else entity_resolution.resolve_entities
-    result = fn(job_id=77, dry_run=True, confirm_execute=False)
+    result = entity_resolution.resolve_entities(None, job_id=77, dry_run=True, confirm_execute=False)
 
     assert result["mode"] == "dry_run"
     assert result["updated"] == 0

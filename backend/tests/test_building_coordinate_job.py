@@ -101,8 +101,7 @@ def test_backfill_building_coordinates_updates_buildings_and_job_progress(monkey
 
     monkeypatch.setattr(ingest_tasks, "geocode_building", fake_geocode)
 
-    fn = ingest_tasks.backfill_building_coordinates.run if hasattr(ingest_tasks.backfill_building_coordinates, "run") else ingest_tasks.backfill_building_coordinates
-    result = fn(job_id=77, limit=10)
+    result = ingest_tasks.backfill_building_coordinates(None, job_id=77, limit=10)
 
     assert result == {"processed": 2, "succeeded": 1, "failed": 1}
     assert session.commit_count >= 2
