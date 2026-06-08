@@ -78,6 +78,80 @@ const confidenceClass = (value: number | null | undefined): string => {
   return 'border-rose-200 bg-rose-50 text-rose-700';
 };
 
+const formatTruthAction = (action: string): string => {
+  const labels: Record<string, string> = {
+    broad_discovery: 'Research only',
+    ranked_sourcing: 'Use with caution',
+    recommended_outreach: 'Outreach-ready',
+    no_action: 'Do not use yet',
+    not_evaluated: 'Not evaluated',
+  };
+  return labels[action] || action.replace(/_/g, ' ');
+};
+
+const formatReviewBucket = (bucket: string | null | undefined): string => {
+  const labels: Record<string, string> = {
+    verified: 'Verified',
+    conflicting_evidence: 'Needs review',
+    materialization_or_review_required: 'Needs review',
+    source_gap: 'Needs more sources',
+    not_evaluated: 'Not evaluated',
+  };
+  return labels[bucket || ''] || (bucket || 'not evaluated').replace(/_/g, ' ');
+};
+
+const formatSourceName = (source: string): string => {
+  const labels: Record<string, string> = {
+    hpd_registrations: 'HPD registration',
+    hpd_contacts: 'HPD contacts',
+    building_management: 'relationship ledger',
+    acris: 'ACRIS',
+    outreach_feedback: 'outreach feedback',
+  };
+  const normalized = source.replace(' (contradicts)', '');
+  const label = labels[normalized] || normalized.replace(/_/g, ' ');
+  return source.endsWith(' (contradicts)') ? `${label} (conflicts)` : label;
+};
+
+const formatClaimTitle = (claim: TruthClaim): string => {
+  const value = claim.normalized_value || claim.object_id || '';
+  if (claim.predicate === 'exists_in_building_table') return 'Building record found';
+  if (claim.predicate === 'has_current_management_link') return claim.contradicting_evidence_count > 0
+    ? 'Management relationship needs review'
+    : 'Management relationship found';
+  if (claim.predicate === 'has_owner') return `Owner relationship found${value ? `: ${value}` : ''}`;
+  if (claim.predicate === 'has_person_contact') return `Contact found${value ? `: ${value}` : ''}`;
+  if (claim.predicate === 'has_registered_agent') return `Registered agent found${value ? `: ${value}` : ''}`;
+  if (claim.predicate === 'has_owner_contact') return `Owner contact found${value ? `: ${value}` : ''}`;
+  return claim.predicate.replace(/_/g, ' ');
+};
+
+const formatClaimSubtitle = (claim: TruthClaim): string => {
+  if (claim.predicate === 'exists_in_building_table') {
+    return 'The building itself is present in source data.';
+  }
+  if (claim.predicate === 'has_current_management_link') {
+    return claim.contradicting_evidence_count > 0
+      ? 'Multiple relationship records point to different entities. Treat the manager as unverified until reviewed.'
+      : 'Current relationship evidence points to this manager or entity.';
+  }
+  if (claim.predicate === 'has_owner') {
+    return claim.contradicting_evidence_count > 0
+      ? 'Ownership sources conflict. Use as diligence context until reviewed.'
+      : 'Ownership evidence is supported by the current source set.';
+  }
+  if (claim.predicate === 'has_person_contact') {
+    return 'Useful as a contact lead, not proof of property-management authority by itself.';
+  }
+  if (claim.predicate === 'has_registered_agent') {
+    return 'Useful for verification and research; do not assume this is the property manager.';
+  }
+  if (claim.predicate === 'has_owner_contact') {
+    return 'Ownership evidence is useful context, separate from manager authority.';
+  }
+  return claim.normalized_value || claim.claim_type.replace(/_/g, ' ');
+};
+
 const eventIcons: Record<string, string> = {
   complaint: 'C',
   violation: 'V',
@@ -229,6 +303,15 @@ const BuildingDetailPage: React.FC = () => {
     ]),
   ));
   const truthSchemaReady = (truthSummary as SubjectTruthSummary | undefined)?.schema_status?.ready;
+  const contradictionCount = truthSummary?.belief_summary.contradiction_count || 0;
+  const truthHeadline = !truthSummary
+    ? 'Truth summary is still loading.'
+    : contradictionCount > 0
+      ? 'Conflicting relationship evidence. Use this as a research lead, not a verified manager record.'
+      : 'No contradictions surfaced in the current building evidence.';
+  const strongestTruthClaims = truthClaims
+    .filter((claim) => claim.predicate !== 'exists_in_building_table')
+    .slice(0, 4);
   const dosBanner = (() => {
     if (dosStatus === 'refreshing') {
       return {
@@ -308,22 +391,18 @@ const BuildingDetailPage: React.FC = () => {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="font-semibold">Truth & Confidence</h2>
+              <h2 className="font-semibold">Data Confidence</h2>
               {truthSummary?.schema_status && (
                 <span className="rounded border border-current px-2 py-0.5 text-[11px] font-medium">
-                  {truthSchemaReady ? 'schema ready' : 'schema gated'}
+                  {truthSchemaReady ? 'ledger online' : 'ledger setup incomplete'}
                 </span>
               )}
             </div>
-            <p className="mt-1 text-sm opacity-80">
-              {truthSummary
-                ? `${truthSummary.claims.length} claim${truthSummary.claims.length === 1 ? '' : 's'} evaluated, ${truthSummary.belief_summary.contradiction_count} contradiction${truthSummary.belief_summary.contradiction_count === 1 ? '' : 's'} surfaced`
-                : 'Truth summary has not loaded yet.'}
-            </p>
+            <p className="mt-1 max-w-2xl text-sm opacity-85">{truthHeadline}</p>
             <div className="mt-3 flex flex-wrap gap-2">
               {(truthSummary?.belief_summary.safe_actions || ['not_evaluated']).map((action) => (
                 <span key={action} className="rounded-full bg-white/70 px-2 py-1 text-[11px] font-medium">
-                  {action.replace(/_/g, ' ')}
+                  {formatTruthAction(action)}
                 </span>
               ))}
             </div>
@@ -331,7 +410,7 @@ const BuildingDetailPage: React.FC = () => {
           <div className="lg:text-right">
             <div className="text-3xl font-bold">{pct(truthSummary?.overall_confidence_score)}</div>
             <div className="text-[11px] uppercase font-bold opacity-70">
-              {(truthSummary?.review_bucket || 'not evaluated').replace(/_/g, ' ')}
+              {formatReviewBucket(truthSummary?.review_bucket)}
             </div>
             <div className="mt-1 text-xs opacity-75">
               {truthSummary?.belief_summary.freshness_days != null
@@ -341,38 +420,47 @@ const BuildingDetailPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
-          <div className="rounded border border-white/70 bg-white/70 p-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider opacity-70">Current Beliefs</h3>
-            <div className="mt-2 space-y-2">
-              {(truthSummary?.belief_summary.what_we_believe || ['No truth summary is available for this building yet.']).slice(0, 4).map((belief, idx) => (
-                <div key={`${belief}-${idx}`} className="flex gap-2 text-sm">
-                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-60" />
-                  <span>{belief}</span>
-                </div>
-              ))}
+        <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
+          {[
+            ['Claims checked', truthSummary?.claims.length ?? '--'],
+            ['Conflicts', contradictionCount],
+            ['Supporting sources', truthSummary?.belief_summary.supporting_sources?.length ?? '--'],
+            ['Contradicting sources', truthSummary?.belief_summary.contradicting_sources?.length ?? 0],
+          ].map(([label, value]) => (
+            <div key={label as string} className="rounded border border-white/70 bg-white/70 px-3 py-2">
+              <div className="text-lg font-semibold">{value}</div>
+              <div className="text-[11px] uppercase font-bold opacity-65">{label}</div>
             </div>
-            {!!truthSummary?.belief_summary.why_we_believe?.length && (
-              <div className="mt-3 border-t border-white/80 pt-3">
-                <h4 className="text-[11px] font-bold uppercase tracking-wider opacity-70">Why</h4>
-                <div className="mt-1 space-y-1">
-                  {truthSummary.belief_summary.why_we_believe.slice(0, 3).map((reason, idx) => (
-                    <p key={`${reason}-${idx}`} className="text-xs opacity-80">{reason}</p>
-                  ))}
+          ))}
+        </div>
+
+        <div className="mt-4 rounded border border-white/70 bg-white/70 p-3">
+          <h3 className="text-xs font-bold uppercase tracking-wider opacity-70">What Matters</h3>
+          <div className="mt-2 space-y-2">
+            {(strongestTruthClaims.length ? strongestTruthClaims : truthClaims).slice(0, 4).map((claim) => (
+              <div key={claim.claim_id} className="rounded border border-white bg-white/80 px-3 py-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold">{formatClaimTitle(claim)}</div>
+                    <div className="mt-0.5 text-xs opacity-75">{formatClaimSubtitle(claim)}</div>
+                  </div>
+                  <span className="shrink-0 rounded border border-current px-1.5 py-0.5 text-[11px] font-semibold">
+                    {pct(claim.confidence_score)}
+                  </span>
                 </div>
               </div>
+            ))}
+            {!truthClaims.length && (
+              <p className="text-sm opacity-75">No building-level truth claims are available yet.</p>
             )}
-            {(truthSummary?.belief_summary.supporting_sources?.length || truthSummary?.belief_summary.contradicting_sources?.length) ? (
-              <p className="mt-3 text-xs opacity-75">
-                Supports: {(truthSummary?.belief_summary.supporting_sources || []).join(', ') || 'none'}
-                {truthSummary?.belief_summary.contradicting_sources?.length
-                  ? `; Contradicts: ${truthSummary.belief_summary.contradicting_sources.join(', ')}`
-                  : ''}
-              </p>
-            ) : null}
           </div>
-          <div className="rounded border border-white/70 bg-white/70 p-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider opacity-70">Evidence Ledger</h3>
+        </div>
+
+        <details className="mt-3 rounded border border-white/70 bg-white/60">
+          <summary className="cursor-pointer px-3 py-2 text-xs font-bold uppercase tracking-wider opacity-75">
+            Audit trail ({truthClaims.length} claims)
+          </summary>
+          <div className="border-t border-white/70 p-3">
             {!truthClaims.length ? (
               <p className="mt-2 text-sm opacity-75">
                 No building-level claims are materialized yet. The schema/ledger gate is keeping this from looking more certain than it is.
@@ -383,8 +471,8 @@ const BuildingDetailPage: React.FC = () => {
                   <div key={claim.claim_id} className="rounded border border-white bg-white/80 px-3 py-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold">{claim.predicate.replace(/_/g, ' ')}</div>
-                        <div className="truncate text-xs opacity-70">{claim.normalized_value || claim.object_id || claim.claim_type}</div>
+                        <div className="truncate text-sm font-semibold">{formatClaimTitle(claim)}</div>
+                        <div className="truncate text-xs opacity-70">{formatClaimSubtitle(claim)}</div>
                       </div>
                       <span className="shrink-0 rounded border border-current px-1.5 py-0.5 text-[11px] font-semibold">
                         {pct(claim.confidence_score)}
@@ -401,10 +489,10 @@ const BuildingDetailPage: React.FC = () => {
               </div>
             )}
             {truthSourceNames.length > 0 && (
-              <p className="mt-2 text-xs opacity-75">Sources: {truthSourceNames.join(', ')}</p>
+              <p className="mt-2 text-xs opacity-75">Sources: {truthSourceNames.map(formatSourceName).join(', ')}</p>
             )}
           </div>
-        </div>
+        </details>
       </div>
 
       {/* People & Companies — contacts from all sources */}

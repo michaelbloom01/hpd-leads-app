@@ -103,7 +103,7 @@ describe('BuildingDetailPage truth confidence', () => {
     });
   });
 
-  it('shows building-level truth evidence and confidence from the subject summary', async () => {
+  it('summarizes building truth in user-facing language with the raw ledger collapsed', async () => {
     const client = new QueryClient({
       defaultOptions: {
         queries: { retry: false },
@@ -117,16 +117,18 @@ describe('BuildingDetailPage truth confidence', () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText('Truth & Confidence')).toBeInTheDocument();
+    expect(await screen.findByText('Data Confidence')).toBeInTheDocument();
     expect((await screen.findAllByText('82%')).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('conflicting evidence')).toBeInTheDocument();
-    expect(screen.getByText('recommended outreach')).toBeInTheDocument();
-    expect(screen.getAllByText(/has owner/i).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText(/2 support from acris, hpd_registration/i)).toBeInTheDocument();
-    expect(screen.getByText(/Supports: acris, hpd_registration; Contradicts: outreach_feedback/i)).toBeInTheDocument();
+    expect(screen.getByText('Needs review')).toBeInTheDocument();
+    expect(screen.getByText('Outreach-ready')).toBeInTheDocument();
+    expect(screen.getAllByText('Owner relationship found: Example Owner LLC').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Ownership sources conflict. Use as diligence context until reviewed.').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('What Matters')).toBeInTheDocument();
+    expect(screen.getByText('Audit trail (1 claims)')).toBeInTheDocument();
     expect(screen.getByText('2 supporting')).toBeInTheDocument();
     expect(screen.getByText('1 contradicting')).toBeInTheDocument();
-    expect(screen.getByText(/Sources: acris, hpd_registration, outreach_feedback \(contradicts\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/Sources: ACRIS, HPD registration, outreach feedback \(conflicts\)/i)).toBeInTheDocument();
+    expect(screen.queryByText(/exists in building table/i)).not.toBeInTheDocument();
 
     await waitFor(() => {
       expect(fetchSubjectTruthSummaryMock).toHaveBeenCalledWith('building', '1000000001');
