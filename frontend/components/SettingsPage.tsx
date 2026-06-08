@@ -3261,11 +3261,11 @@ const DataHealthSection: React.FC = () => {
   );
 };
 
-class DataHealthErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; errorMessage: string | null; errorStack: string | null }> {
-  state = { hasError: false, errorMessage: null, errorStack: null };
+class DataHealthErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; errorMessage: string | null }> {
+  state = { hasError: false, errorMessage: null };
 
   static getDerivedStateFromError(error: Error) {
-    return { hasError: true, errorMessage: error.message, errorStack: error.stack ?? null };
+    return { hasError: true, errorMessage: error.message };
   }
 
   render() {
@@ -3280,9 +3280,6 @@ class DataHealthErrorBoundary extends React.Component<{ children: React.ReactNod
             </p>
             {this.state.errorMessage && (
               <p className="mt-3 font-mono text-xs text-amber-900">{this.state.errorMessage}</p>
-            )}
-            {this.state.errorStack && (
-              <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[10px] text-amber-900">{this.state.errorStack}</pre>
             )}
           </div>
         </div>
