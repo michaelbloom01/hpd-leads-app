@@ -2082,10 +2082,10 @@ const DataHealthSection: React.FC = () => {
                         <div>
                           <div className="text-[10px] uppercase text-emerald-700">Source-acquisition worklist</div>
                           <div className="text-xs font-semibold text-gray-800">
-                            {truthSourceAcquisitionWorklist.work_item_count.toLocaleString()} work items / {truthSourceAcquisitionWorklist.hpd_work_item_count.toLocaleString()} HPD work items
+                            {Number(truthSourceAcquisitionWorklist.work_item_count ?? 0).toLocaleString()} work items / {Number(truthSourceAcquisitionWorklist.hpd_work_item_count ?? 0).toLocaleString()} HPD work items
                           </div>
                           <div className="mt-0.5 text-[10px] text-gray-600">
-                            Requests {truthSourceAcquisitionWorklist.request_count.toLocaleString()} / record-ready {truthSourceAcquisitionWorklist.recording_ready_count.toLocaleString()} / approval-required {truthSourceAcquisitionWorklist.approval_required_count.toLocaleString()}.
+                            Requests {Number(truthSourceAcquisitionWorklist.request_count ?? 0).toLocaleString()} / record-ready {Number(truthSourceAcquisitionWorklist.recording_ready_count ?? 0).toLocaleString()} / approval-required {Number(truthSourceAcquisitionWorklist.approval_required_count ?? 0).toLocaleString()}.
                           </div>
                           <div className="mt-0.5 text-[10px] text-emerald-800">
                             {truthSourceAcquisitionWorklist.safe_action || 'Use this as a human/source-acquisition checklist only.'}
