@@ -14,6 +14,7 @@ const fetchLeadContactsMock = vi.fn();
 const downloadPortfolioContactsWorkbookMock = vi.fn();
 const fetchBuildingsMock = vi.fn();
 const addBuildingToPipelineMock = vi.fn();
+const fetchLeadTruthSummaryMock = vi.fn();
 
 vi.mock('react-hot-toast', () => ({
   toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }),
@@ -37,6 +38,10 @@ vi.mock('../services/api', () => ({
 vi.mock('../services/buildings-api', () => ({
   addBuildingToPipeline: (...args: unknown[]) => addBuildingToPipelineMock(...args),
   fetchBuildings: (...args: unknown[]) => fetchBuildingsMock(...args),
+}));
+
+vi.mock('../services/truth-api', () => ({
+  fetchLeadTruthSummary: (...args: unknown[]) => fetchLeadTruthSummaryMock(...args),
 }));
 
 const lead = {
@@ -91,6 +96,7 @@ describe('LeadDetail outreach evidence safety', () => {
       sibling_count: 0,
       sibling_leads: [],
     });
+    fetchLeadTruthSummaryMock.mockResolvedValue(null);
     fetchBuildingsMock.mockResolvedValue({ buildings: [] });
     fetchLeadContactsMock.mockResolvedValue({ buildings: [] });
     downloadPortfolioContactsWorkbookMock.mockResolvedValue({

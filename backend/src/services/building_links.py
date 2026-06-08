@@ -121,7 +121,13 @@ def guarded_insert_current_links(
             text(
                 """
                 INSERT INTO building_management (bbl, lead_id, role, is_current, created_at, updated_at)
-                SELECT :bbl, :lead_id, :role, true, now(), now()
+                SELECT
+                    CAST(:bbl AS VARCHAR(10)),
+                    CAST(:lead_id AS VARCHAR(12)),
+                    CAST(:role AS VARCHAR(30)),
+                    true,
+                    now(),
+                    now()
                 WHERE NOT EXISTS (
                     SELECT 1
                     FROM building_management bm

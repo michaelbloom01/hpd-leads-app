@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from fastapi import HTTPException
 from starlette.requests import Request
 
 from src.auth.auth import AuthUser
 from src.routers import buildings as buildings_router
+from src.routers import building_lists as building_lists_router
+from src.routers import smart_lists as smart_lists_router
 from src.services import building_links, contact_roster
 
 
@@ -19,11 +23,22 @@ class _FakeRow:
 
 
 class _FakeAsyncResult:
-    def __init__(self, *, first=None):
+    def __init__(self, *, first=None, scalar_value=None, rows=None):
         self._first = first
+        self._scalar_value = scalar_value
+        self._rows = rows or []
 
     def first(self):
         return self._first
+
+    def fetchone(self):
+        return self._first
+
+    def scalar(self):
+        return self._scalar_value
+
+    def __iter__(self):
+        return iter(self._rows)
 
 
 class _ReadOnlyAsyncSession:
@@ -137,6 +152,94 @@ def test_contact_roster_marks_recent_stale_refresh_as_refreshing():
     assert status == "refreshing"
 
 
+def test_smart_lists_schema_requirement_reports_gap_without_ddl():
+    session = _ReadOnlyAsyncSession([
+        _FakeAsyncResult(scalar_value=False),
+    ])
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(smart_lists_router.require_smart_lists_schema(session))
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail["status"] == "schema_not_ready"
+    executed_sql = "\n".join(sql for sql, _params in session.calls)
+    assert "CREATE TABLE" not in executed_sql
+    assert "ALTER TABLE" not in executed_sql
+
+
+def test_smart_lists_read_route_does_not_run_schema_ddl():
+    session = _ReadOnlyAsyncSession([
+        _FakeAsyncResult(scalar_value=True),
+        _FakeAsyncResult(rows=[(column,) for column in smart_lists_router.REQUIRED_SMART_LIST_COLUMNS]),
+        _FakeAsyncResult(rows=[]),
+    ])
+
+    result = asyncio.run(
+        smart_lists_router.list_smart_lists(
+            _request(),
+            session=session,
+            user=AuthUser(user_id="user-1", email="user@example.com"),
+        )
+    )
+
+    assert result == {"smart_lists": []}
+    executed_sql = "\n".join(sql for sql, _params in session.calls)
+    assert "CREATE TABLE" not in executed_sql
+    assert "ALTER TABLE" not in executed_sql
+    assert "FROM smart_lists" in executed_sql
+
+
+def test_building_lists_schema_requirement_reports_gap_without_ddl():
+    session = _ReadOnlyAsyncSession([
+        _FakeAsyncResult(rows=[]),
+        _FakeAsyncResult(rows=[]),
+    ])
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(building_lists_router.require_building_lists_schema(session))
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail["status"] == "schema_not_ready"
+    assert exc.value.detail["schema_status"]["missing_tables"] == [
+        "building_list_members",
+        "building_lists",
+    ]
+    executed_sql = "\n".join(sql for sql, _params in session.calls)
+    assert "CREATE TABLE" not in executed_sql
+    assert "ALTER TABLE" not in executed_sql
+
+
+def test_building_lists_read_route_does_not_run_schema_ddl():
+    session = _ReadOnlyAsyncSession([
+        _FakeAsyncResult(rows=[("building_lists",), ("building_list_members",)]),
+        _FakeAsyncResult(rows=[
+            ("building_lists", "id"),
+            ("building_lists", "user_id"),
+            ("building_lists", "name"),
+            ("building_lists", "created_at"),
+            ("building_lists", "updated_at"),
+            ("building_list_members", "list_id"),
+            ("building_list_members", "bbl"),
+            ("building_list_members", "added_at"),
+        ]),
+        _FakeAsyncResult(rows=[]),
+    ])
+
+    result = asyncio.run(
+        building_lists_router.list_building_lists(
+            _request(),
+            session=session,
+            user=AuthUser(user_id="user-1", email="user@example.com"),
+        )
+    )
+
+    assert result == {"building_lists": []}
+    executed_sql = "\n".join(sql for sql, _params in session.calls)
+    assert "CREATE TABLE" not in executed_sql
+    assert "ALTER TABLE" not in executed_sql
+    assert "FROM building_lists" in executed_sql
+
+
 @pytest.mark.anyio
 async def test_get_building_does_not_queue_dos_refresh(monkeypatch):
     session = _ReadOnlyAsyncSession(
@@ -186,3 +289,30 @@ async def test_get_building_does_not_queue_dos_refresh(monkeypatch):
 
     assert response["dos_contacts_status"] == "stale"
     assert response["corporate_owner"] == "Acme Owner LLC"
+
+
+@pytest.mark.anyio
+async def test_building_dos_refresh_defaults_to_approval_preview_without_db_touch(monkeypatch):
+    session = _ReadOnlyAsyncSession([])
+
+    async def _unexpected_resolve(*args, **kwargs):
+        raise AssertionError("DOS refresh preview should not inspect or mutate building data")
+
+    monkeypatch.setattr(buildings_router, "_resolve_canonical_bbl", _unexpected_resolve)
+
+    response = await buildings_router.refresh_building_dos_contacts.__wrapped__(
+        request=_request(),
+        bbl="1000000001",
+        dry_run=True,
+        confirm_execute=False,
+        session=session,
+        user=AuthUser(user_id="u1", email="test@example.com"),
+    )
+
+    assert response["status"] == "approval_required"
+    assert response["job_id"] is None
+    assert response["approval_required"] is True
+    assert response["safe_to_run_automatically"] is False
+    assert response["mutations_planned"] == 0
+    assert "confirm_execute=true" in response["preview"]["required_execute_query"]
+    assert session.calls == []

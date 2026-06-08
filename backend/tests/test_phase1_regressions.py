@@ -30,3 +30,11 @@ def test_enrich_batch_queues_individual_jobs_when_available():
     source = _read("src/tasks/enrich.py")
     assert "hasattr(enrich_lead, \"delay\")" in source
     assert "enrich_lead.delay(lid)" in source
+
+
+def test_buildings_ingest_does_not_auto_queue_approval_gated_followups():
+    source = _read("src/tasks/ingest.py")
+    assert "Buildings backfill follow-up jobs are approval-gated" in source
+    assert "Queued follow-up scoring job" not in source
+    assert "Queued follow-up lead generation job" not in source
+    assert "Queued follow-up building_coordinates job" not in source

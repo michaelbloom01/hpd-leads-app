@@ -27,6 +27,7 @@ from src.schemas.requests import (
 )
 from src.services.contact_roster import get_lead_contacts
 from src.services.lead_generation import summarize_portfolio_building_types
+from src.services.outreach_feedback import load_outreach_feedback_truth_write_status, record_outreach_feedback_claims
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["leads"])
@@ -239,25 +240,32 @@ async def _run_simple_leads_query(
     params: dict,
     sort_sql: str,
     sort_direction: str,
+    where_sql: str = "1=1",
+    total_estimated: bool = False,
 ) -> dict[str, object]:
     simple_result = await session.execute(
         text(f"""
             SELECT {LEAD_LIST_SIMPLE_SELECT_SQL}
             FROM leads
+            WHERE {where_sql}
             ORDER BY {sort_sql} {sort_direction} NULLS LAST, updated_at DESC NULLS LAST, lead_id ASC
             LIMIT :limit OFFSET :offset
         """),
         params,
     )
     leads = [_row_to_response(dict(r._mapping)) for r in simple_result]
-    try:
-        total = (
-            await session.execute(text("SELECT COUNT(*) FROM leads"))
-        ).scalar() or 0
-    except DBAPIError as exc:
-        logger.warning("Simple lead count fell back to estimated total: %s", exc)
+    if total_estimated:
         total = _estimate_page_total(offset=params["offset"], returned_count=len(leads), limit=params["limit"])
-    return {"leads": leads, "total": total, "offset": params["offset"], "limit": params["limit"]}
+    else:
+        try:
+            total = (
+                await session.execute(text(f"SELECT COUNT(*) FROM leads WHERE {where_sql}"), params)
+            ).scalar() or 0
+        except DBAPIError as exc:
+            logger.warning("Simple lead count fell back to estimated total: %s", exc)
+            total = _estimate_page_total(offset=params["offset"], returned_count=len(leads), limit=params["limit"])
+            total_estimated = True
+    return {"leads": leads, "total": total, "offset": params["offset"], "limit": params["limit"], "total_estimated": total_estimated}
 
 
 def _row_to_response(r: dict) -> dict:
@@ -449,11 +457,13 @@ async def get_leads(
     building_type_has: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    count_mode: str = Query("exact", pattern="^(exact|estimate)$"),
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
-    wheres: list[str] = []
+    wheres: list[str] = ["retired_at IS NULL"]
     params: dict = {"limit": limit, "offset": offset}
+    requires_live_links = False
 
     if min_score is not None:
         wheres.append("score >= :min_score")
@@ -462,9 +472,11 @@ async def get_leads(
         wheres.append("score <= :max_score")
         params["max_score"] = max_score
     if min_portfolio is not None:
+        requires_live_links = True
         wheres.append(f"{LIVE_PORTFOLIO_COUNT_SQL} >= :min_portfolio")
         params["min_portfolio"] = min_portfolio
     if max_portfolio is not None:
+        requires_live_links = True
         wheres.append(f"{LIVE_PORTFOLIO_COUNT_SQL} <= :max_portfolio")
         params["max_portfolio"] = max_portfolio
     if boro:
@@ -477,17 +489,10 @@ async def get_leads(
                 boro_clauses.append(f"""
                     primary_borough = :{key}
                     OR COALESCE(boros, '[]'::jsonb) ? :{key}
-                    OR EXISTS (
-                        SELECT 1
-                        FROM building_management bm
-                        JOIN buildings b ON b.bbl = bm.bbl
-                        WHERE bm.lead_id = leads.lead_id
-                          AND bm.is_current = true
-                          AND UPPER(COALESCE(b.borough, '')) = :{key}
-                    )
                 """)
             wheres.append(f"({' OR '.join(f'({clause.strip()})' for clause in boro_clauses)})")
     if neighborhood:
+        requires_live_links = True
         wheres.append("""
             EXISTS (
                 SELECT 1
@@ -533,18 +538,23 @@ async def get_leads(
         for i, value in enumerate(pipeline_stages):
             params[f"pipeline_stage_{i}"] = value
     if min_units is not None:
+        requires_live_links = True
         wheres.append(f"{LIVE_TOTAL_UNITS_SQL} >= :min_units")
         params["min_units"] = min_units
     if max_units is not None:
+        requires_live_links = True
         wheres.append(f"{LIVE_TOTAL_UNITS_SQL} <= :max_units")
         params["max_units"] = max_units
     if min_units_per_bldg is not None:
+        requires_live_links = True
         wheres.append(f"{LIVE_PORTFOLIO_COUNT_SQL} > 0 AND ({LIVE_UNITS_PER_BUILDING_SQL}) >= :min_upb")
         params["min_upb"] = min_units_per_bldg
     if max_units_per_bldg is not None:
+        requires_live_links = True
         wheres.append(f"{LIVE_PORTFOLIO_COUNT_SQL} > 0 AND ({LIVE_UNITS_PER_BUILDING_SQL}) <= :max_upb")
         params["max_upb"] = max_units_per_bldg
     if building_type_has:
+        requires_live_links = True
         for i, btype in enumerate(building_type_has.split(",")):
             btype = btype.strip().lower()
             if btype:
@@ -564,6 +574,7 @@ async def get_leads(
                 """)
                 params[key] = btype
     if search:
+        requires_live_links = True
         wheres.append("""
             (
                 owner_name ILIKE :search
@@ -571,6 +582,7 @@ async def get_leads(
                 OR agent_name ILIKE :search
                 OR primary_contact ILIKE :search
                 OR normalized_name ILIKE :search
+                OR address ILIKE :search
                 OR phone ILIKE :search
                 OR email ILIKE :search
                 OR website ILIKE :search
@@ -606,12 +618,14 @@ async def get_leads(
     sort_direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
     simple_sort_col = SIMPLE_SORT_COLS.get(sort_by)
 
-    if where_sql == "1=1" and simple_sort_col:
+    if simple_sort_col and not requires_live_links:
         return await _run_simple_leads_query(
             session,
             params=params,
             sort_sql=simple_sort_col,
             sort_direction=sort_direction,
+            where_sql=where_sql,
+            total_estimated=count_mode == "estimate",
         )
 
     dedupe_cte_sql = f"""
@@ -690,18 +704,23 @@ async def get_leads(
             )
         raise
     leads = [_row_to_response(dict(r._mapping)) for r in result]
-    try:
-        count_result = await session.execute(
-            text(f"{dedupe_cte_sql} SELECT COUNT(*) FROM ranked_leads WHERE dedupe_rank = 1"),
-            params,
-        )
-        total = count_result.scalar() or 0
-    except DBAPIError as exc:
-        # Production can temporarily exhaust Postgres temp space on the exact count.
-        # Return the current page with a conservative total estimate instead of failing.
-        logger.warning("Lead count query fell back to estimated total: %s", exc)
+    total_estimated = count_mode == "estimate"
+    if total_estimated:
         total = _estimate_page_total(offset=offset, returned_count=len(leads), limit=limit)
-    return {"leads": leads, "total": total, "offset": offset, "limit": limit}
+    else:
+        try:
+            count_result = await session.execute(
+                text(f"{dedupe_cte_sql} SELECT COUNT(*) FROM ranked_leads WHERE dedupe_rank = 1"),
+                params,
+            )
+            total = count_result.scalar() or 0
+        except DBAPIError as exc:
+            # Production can temporarily exhaust Postgres temp space on the exact count.
+            # Return the current page with a conservative total estimate instead of failing.
+            logger.warning("Lead count query fell back to estimated total: %s", exc)
+            total = _estimate_page_total(offset=offset, returned_count=len(leads), limit=limit)
+            total_estimated = True
+    return {"leads": leads, "total": total, "offset": offset, "limit": limit, "total_estimated": total_estimated}
 
 
 @router.get("/leads/{lead_id}")
@@ -1347,6 +1366,30 @@ async def start_selected_leads_enrichment(
     if not selected_lead_ids:
         raise HTTPException(404, "No matching leads found")
 
+    if body.dry_run:
+        return {
+            "status": "approval_required",
+            "job_id": None,
+            "target_count": len(selected_lead_ids),
+            "missing_lead_ids": missing_ids,
+            "dispatch_mode": None,
+            "dry_run": True,
+            "confirm_execute": body.confirm_execute,
+            "approval_required": True,
+            "safe_to_run_automatically": False,
+            "mutations_planned": 0,
+            "preview": {
+                "operation": "selected_lead_enrichment",
+                "would_enqueue_job_type": "enrichment",
+                "would_mutate": ["ingestion_jobs", "lead enrichment fields", "enrichment evidence sources"],
+                "lead_ids": selected_lead_ids[:25],
+                "lead_count": len(selected_lead_ids),
+            },
+            "rollback_strategy": "No enrichment job was queued. Execute only with dry_run=false and confirm_execute=true after reviewing the selected leads.",
+        }
+    if not body.confirm_execute:
+        raise HTTPException(400, "selected lead enrichment execution requires confirm_execute=true")
+
     job_result = await session.execute(
         text("""INSERT INTO ingestion_jobs (job_type, source, status, started_at, created_at, updated_at)
                 VALUES ('enrichment', 'enrichment_selected', 'queued', now(), now(), now()) RETURNING id""")
@@ -1394,6 +1437,7 @@ async def log_outreach_event(
     if not exists:
         raise HTTPException(404, "Lead not found")
 
+    truth_claim_status = await load_outreach_feedback_truth_write_status(session)
     result_insert = await session.execute(
         text("""
             INSERT INTO outreach_events (lead_id, stage, method, outcome, notes, next_follow_up, event_timestamp, created_at, updated_at)
@@ -1408,6 +1452,16 @@ async def log_outreach_event(
         },
     )
     eid = result_insert.scalar_one()
+    truth_claim_ids = []
+    if truth_claim_status["ready"]:
+        truth_claim_ids = await record_outreach_feedback_claims(
+            session,
+            lead_id=lead_id,
+            event_id=int(eid),
+            method=body.method,
+            outcome=body.outcome,
+            notes=body.notes,
+        )
 
     update_params: dict = {"lid": lead_id, "ps": body.stage}
     update_sql = "UPDATE leads SET pipeline_stage = :ps, updated_at = NOW()"
@@ -1418,7 +1472,12 @@ async def log_outreach_event(
     await session.execute(text(update_sql), update_params)
     await session.commit()
 
-    return {"status": "success", "event_id": eid}
+    return {
+        "status": "success",
+        "event_id": eid,
+        "truth_claim_ids": truth_claim_ids,
+        "truth_claim_status": truth_claim_status,
+    }
 
 
 @router.get("/leads/{lead_id}/outreach-events")
@@ -1462,6 +1521,7 @@ async def add_outreach_attempt(
     if not exists:
         raise HTTPException(404, "Lead not found")
 
+    truth_claim_status = await load_outreach_feedback_truth_write_status(session)
     result_insert = await session.execute(
         text("""
             INSERT INTO outreach_events (lead_id, stage, method, outcome, notes, event_timestamp, created_at, updated_at)
@@ -1475,9 +1535,21 @@ async def add_outreach_attempt(
         },
     )
     eid = result_insert.scalar_one()
+    truth_claim_ids = []
+    if truth_claim_status["ready"]:
+        truth_claim_ids = await record_outreach_feedback_claims(
+            session,
+            lead_id=lead_id,
+            event_id=int(eid),
+            method=body.method,
+            outcome=body.outcome,
+            notes=body.notes,
+        )
     await session.commit()
     return {
         "status": "success",
+        "truth_claim_ids": truth_claim_ids,
+        "truth_claim_status": truth_claim_status,
         "attempt": {
             "id": eid, "method": body.method,
             "outcome": body.outcome, "notes": body.notes,
@@ -1521,10 +1593,46 @@ async def get_outreach_attempts(
 async def enrich_lead_all(
     request: Request,
     lead_id: str,
+    dry_run: bool = Query(default=True),
+    confirm_execute: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
     """PostgreSQL-native lead enrichment: multi-source contacts, web scrape, AI summary."""
+    dry_run = dry_run if isinstance(dry_run, bool) else True
+    confirm_execute = confirm_execute if isinstance(confirm_execute, bool) else False
+    if dry_run:
+        row_result = await session.execute(
+            text("SELECT * FROM leads WHERE lead_id = :lid"), {"lid": lead_id}
+        )
+        row = row_result.first()
+        if not row:
+            raise HTTPException(404, "Lead not found")
+        lead_data = dict(row._mapping)
+        return {
+            "status": "approval_required",
+            "lead_id": lead_id,
+            "contacts": {"phones_found": 0, "emails_found": 0, "website_found": bool(lead_data.get("website"))},
+            "research": {"owner_names": [], "year_established": None, "website_scraped": False},
+            "ai_summary": {"generated": False, "description": None},
+            "errors": [],
+            "enrichment_status": lead_data.get("enrichment_status") or "none",
+            "pipeline_stage": lead_data.get("pipeline_stage") or "research",
+            "lead": _row_to_response(lead_data),
+            "dry_run": True,
+            "confirm_execute": confirm_execute,
+            "approval_required": True,
+            "safe_to_run_automatically": False,
+            "mutations_planned": 0,
+            "preview": {
+                "operation": "lead_enrichment",
+                "would_mutate": ["lead enrichment fields", "enrichment evidence sources"],
+                "required_execute_query": f"/api/leads/{lead_id}/enrich-all?dry_run=false&confirm_execute=true",
+            },
+            "rollback_strategy": "No lead enrichment was run. Execute only with dry_run=false and confirm_execute=true after reviewing the preview.",
+        }
+    if not confirm_execute:
+        raise HTTPException(400, "lead enrichment execution requires confirm_execute=true")
     return await enrich_lead_all_core(lead_id=lead_id, session=session)
 
 
@@ -1756,13 +1864,14 @@ async def get_stats(request: Request, session: AsyncSession = Depends(get_sessio
             COALESCE(SUM(CASE WHEN email IS NOT NULL AND email != '' THEN 1 ELSE 0 END), 0) AS with_email,
             COALESCE(SUM(CASE WHEN website IS NOT NULL AND website != '' THEN 1 ELSE 0 END), 0) AS with_website
         FROM leads
+        WHERE retired_at IS NULL
     """))).first()._mapping)
 
     # Borough distribution
     by_borough = {
         r[0] or "Unknown": r[1]
         for r in (await session.execute(text(
-            "SELECT primary_borough, COUNT(*) FROM leads GROUP BY primary_borough"
+            "SELECT primary_borough, COUNT(*) FROM leads WHERE retired_at IS NULL GROUP BY primary_borough"
         ))).fetchall()
     }
 
@@ -1770,7 +1879,7 @@ async def get_stats(request: Request, session: AsyncSession = Depends(get_sessio
     by_enrichment = {
         r[0] or "none": r[1]
         for r in (await session.execute(text(
-            "SELECT enrichment_status, COUNT(*) FROM leads GROUP BY enrichment_status"
+            "SELECT enrichment_status, COUNT(*) FROM leads WHERE retired_at IS NULL GROUP BY enrichment_status"
         ))).fetchall()
     }
 
@@ -1778,7 +1887,7 @@ async def get_stats(request: Request, session: AsyncSession = Depends(get_sessio
     by_outreach = {
         r[0] or "new": r[1]
         for r in (await session.execute(text(
-            "SELECT outreach_status, COUNT(*) FROM leads GROUP BY outreach_status"
+            "SELECT outreach_status, COUNT(*) FROM leads WHERE retired_at IS NULL GROUP BY outreach_status"
         ))).fetchall()
     }
 
@@ -1786,7 +1895,7 @@ async def get_stats(request: Request, session: AsyncSession = Depends(get_sessio
     by_entity = {
         r[0] or "unknown": r[1]
         for r in (await session.execute(text(
-            "SELECT entity_type, COUNT(*) FROM leads GROUP BY entity_type"
+            "SELECT entity_type, COUNT(*) FROM leads WHERE retired_at IS NULL GROUP BY entity_type"
         ))).fetchall()
     }
 
@@ -1794,7 +1903,7 @@ async def get_stats(request: Request, session: AsyncSession = Depends(get_sessio
     by_pipeline = {
         r[0] or "research": r[1]
         for r in (await session.execute(text(
-            "SELECT pipeline_stage, COUNT(*) FROM leads GROUP BY pipeline_stage"
+            "SELECT pipeline_stage, COUNT(*) FROM leads WHERE retired_at IS NULL GROUP BY pipeline_stage"
         ))).fetchall()
     }
 
@@ -1811,7 +1920,7 @@ async def get_stats(request: Request, session: AsyncSession = Depends(get_sessio
                     ELSE '80-100'
                 END AS bucket,
                 COUNT(*) AS cnt
-            FROM leads GROUP BY bucket
+            FROM leads WHERE retired_at IS NULL GROUP BY bucket
         """))).fetchall()
     }
 
@@ -1829,7 +1938,7 @@ async def get_stats(request: Request, session: AsyncSession = Depends(get_sessio
                     ELSE '100+'
                 END AS bucket,
                 COUNT(*) AS cnt
-            FROM leads GROUP BY bucket
+            FROM leads WHERE retired_at IS NULL GROUP BY bucket
         """))).fetchall()
     }
 

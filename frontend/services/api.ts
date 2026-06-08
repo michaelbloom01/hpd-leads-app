@@ -60,7 +60,9 @@ export async function checkHealth(): Promise<HealthStatus> {
  */
 async function apiGet<T>(path: string, timeoutMs = 30000): Promise<T> {
   const response = await fetchWithRetry(`${API_BASE_URL}${path}`, {}, 1, timeoutMs);
-  if (!response.ok) throw new Error(`GET ${path} failed: ${response.statusText}`);
+  if (!response.ok) {
+    throw new Error(await extractApiErrorMessage(response, `GET ${path} failed: ${response.statusText}`));
+  }
   return response.json();
 }
 
@@ -79,23 +81,29 @@ async function apiMutate<T>(
     opts.body = JSON.stringify(body);
   }
   const response = await fetchWithRetry(`${API_BASE_URL}${path}`, opts, 1, timeoutMs);
-  if (!response.ok) throw new Error(`${method} ${path} failed: ${response.statusText}`);
+  if (!response.ok) {
+    throw new Error(await extractApiErrorMessage(response, `${method} ${path} failed: ${response.statusText}`));
+  }
   return response.json();
 }
 
-async function getApiErrorMessage(response: Response, fallback: string): Promise<string> {
+async function extractApiErrorMessage(response: Response, fallback: string): Promise<string> {
   try {
     const contentType = response.headers.get('content-type') || '';
     if (contentType.includes('application/json')) {
       const body = await response.clone().json();
-      const detail = body?.detail ?? body?.message ?? body;
+      const detail = body?.detail ?? body;
       if (typeof detail === 'string' && detail.trim()) return detail;
       if (typeof detail?.message === 'string' && detail.message.trim()) return detail.message;
+      if (typeof body?.message === 'string' && body.message.trim()) return body.message;
+      if (detail?.status === 'schema_not_ready') {
+        return 'Schema not ready. Run the required migration or explicit repair before using this workflow.';
+      }
     }
     const text = await response.clone().text();
     if (text.trim()) return text.trim();
   } catch {
-    // Keep the transport fallback when the response body cannot be parsed.
+    // Fall back to the transport-level message if the error body is not parseable.
   }
   return fallback;
 }
@@ -302,6 +310,7 @@ export interface LeadsListResponse {
   total: number;
   offset: number;
   limit: number;
+  total_estimated?: boolean;
 }
 
 export interface PipelineStatus {
@@ -317,7 +326,7 @@ export interface EnrichmentResult {
   website: string | null;
   phone: string | null;
   email: string | null;
-  status: string;
+  status: 'linked' | 'discovered' | 'unlinked' | 'lead_address' | string;
 }
 
 export interface CompanyResearch {
@@ -419,6 +428,7 @@ export async function fetchLeads(params?: {
   building_type_has?: string;
   limit?: number;
   offset?: number;
+  count_mode?: 'exact' | 'estimate';
 }): Promise<LeadsListResponse> {
   const searchParams = new URLSearchParams();
   
@@ -445,6 +455,7 @@ export async function fetchLeads(params?: {
     if (params.building_type_has) searchParams.set('building_type_has', params.building_type_has);
     if (params.limit !== undefined) searchParams.set('limit', params.limit.toString());
     if (params.offset !== undefined) searchParams.set('offset', params.offset.toString());
+    if (params.count_mode) searchParams.set('count_mode', params.count_mode);
   }
   
   const url = `${API_BASE_URL}/api/leads${searchParams.toString() ? '?' + searchParams.toString() : ''}`;
@@ -608,7 +619,7 @@ export async function downloadPortfolioContactsCsv(
     60000,
   );
   if (!response.ok) {
-    throw new Error(await getApiErrorMessage(response, `Portfolio contacts export failed: ${response.statusText}`));
+    throw new Error(await extractApiErrorMessage(response, `Portfolio contacts export failed: ${response.statusText}`));
   }
   const disposition = response.headers.get('Content-Disposition') || '';
   const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
@@ -631,7 +642,7 @@ export async function downloadPortfolioContactsWorkbook(
     90000,
   );
   if (!response.ok) {
-    throw new Error(await getApiErrorMessage(response, `Portfolio workbook export failed: ${response.statusText}`));
+    throw new Error(await extractApiErrorMessage(response, `Portfolio workbook export failed: ${response.statusText}`));
   }
   const disposition = response.headers.get('Content-Disposition') || '';
   const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
@@ -650,6 +661,8 @@ export async function refreshPipeline(full: boolean = false): Promise<{
   leads_created: number;
   timestamp: string;
   dispatch_mode?: string;
+  approval_required?: boolean;
+  message?: string;
 }> {
   void full;
   // Runtime convergence: use PostgreSQL-backed jobs API instead of legacy /api/refresh.
@@ -662,6 +675,10 @@ export async function refreshPipeline(full: boolean = false): Promise<{
     leads_created: 0,
     timestamp: new Date().toISOString(),
     dispatch_mode: data.dispatch_mode,
+    approval_required: Boolean(data.approval_required),
+    message: data.status === 'approval_required'
+      ? 'Refresh preview ready. Execution requires explicit approval and confirm_execute=true.'
+      : undefined,
   };
 }
 
@@ -717,10 +734,12 @@ export async function startSelectedLeadsEnrichment(
   leadIds: string[],
 ): Promise<{
   status: string;
-  job_id: number;
+  job_id: number | null;
   target_count: number;
   missing_lead_ids: string[];
   dispatch_mode?: string;
+  approval_required?: boolean;
+  message?: string;
 }> {
   const response = await fetchWithRetry(`${API_BASE_URL}/api/lead-batches/enrichment`, {
     method: 'POST',
@@ -728,7 +747,14 @@ export async function startSelectedLeadsEnrichment(
     body: JSON.stringify({ lead_ids: leadIds }),
   });
   if (!response.ok) throw new Error(`Failed to queue selected enrichment: ${response.statusText}`);
-  return response.json();
+  const data = await response.json();
+  if (data.status === 'approval_required') {
+    return {
+      ...data,
+      message: `Selected enrichment preview ready for ${data.target_count || 0} lead(s). Execution requires explicit approval and confirm_execute=true.`,
+    };
+  }
+  return data;
 }
 
 /**
@@ -815,6 +841,7 @@ export interface ContactEnrichmentResult {
  * This is the single "Enrich Lead" action for the simplified UX.
  */
 export async function enrichLeadAll(leadId: string): Promise<{
+  status?: string;
   lead_id: string;
   contacts: { phones_found: number; emails_found: number; website_found: boolean };
   research: { owner_names: string[]; year_established: string | null; website_scraped: boolean };
@@ -822,11 +849,27 @@ export async function enrichLeadAll(leadId: string): Promise<{
   errors: string[];
   enrichment_status: string;
   pipeline_stage: string;
+  message?: string;
+  approval_required?: boolean;
+  dry_run?: boolean;
+  mutations_planned?: number;
+  preview?: {
+    operation?: string;
+    required_execute_query?: string;
+    would_mutate?: string[];
+  };
   lead: ApiLead;  // Full updated lead — use this directly, no second API call needed
 }> {
   const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/enrich-all`, { method: 'POST' }, 1, 120000);
   if (!response.ok) throw new Error(`Failed to enrich lead: ${response.statusText}`);
-  return response.json();
+  const data = await response.json();
+  if (data.status === 'approval_required') {
+    return {
+      ...data,
+      message: 'Lead enrichment preview ready. Execution requires explicit approval and confirm_execute=true.',
+    };
+  }
+  return data;
 }
 
 /**
@@ -835,7 +878,7 @@ export async function enrichLeadAll(leadId: string): Promise<{
 export async function addOutreachAttempt(
   leadId: string,
   attempt: { method: string; outcome: string; notes?: string }
-): Promise<{ status: string; attempt: OutreachAttempt }> {
+): Promise<{ status: string; attempt: OutreachAttempt; truth_claim_ids?: string[] }> {
   const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/outreach`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -851,7 +894,7 @@ export async function addOutreachAttempt(
 export async function logOutreachEvent(
   leadId: string,
   event: { stage: string; method?: string; outcome?: string; notes?: string; next_follow_up?: string }
-): Promise<{ status: string; event_id: number }> {
+): Promise<{ status: string; event_id: number; truth_claim_ids?: string[] }> {
   const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/outreach-event`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -965,7 +1008,7 @@ function idleEnrichmentProgress(): EnrichmentProgress {
 export async function getEnrichmentProgress(): Promise<EnrichmentProgress> {
   try {
     const response = await fetchWithRetry(
-      `${API_BASE_URL}/api/v1/jobs?job_type=enrichment&limit=1`,
+      `${API_BASE_URL}/api/v1/jobs/?job_type=enrichment&limit=1`,
       {},
       1,
       15000,
@@ -1021,6 +1064,7 @@ export async function startBatchEnrichment(limit: number = 100): Promise<{
   message: string;
   target_count: number;
   dispatch_mode?: string;
+  approval_required?: boolean;
 }> {
   const safeLimit = Math.max(0, limit);
   const requestedLimit = Math.max(1, safeLimit || 1);
@@ -1033,6 +1077,15 @@ export async function startBatchEnrichment(limit: number = 100): Promise<{
   if (!response.ok) throw new Error(`Failed to queue enrichment job: ${response.statusText}`);
   const data = await response.json();
   const dispatchMode = data.dispatch_mode as string | undefined;
+  if (data.status === 'approval_required') {
+    return {
+      status: 'approval_required',
+      message: `Enrichment preview ready for top ${safeLimit || requestedLimit} lead(s). Execution requires explicit approval and confirm_execute=true.`,
+      target_count: safeLimit || requestedLimit,
+      dispatch_mode: dispatchMode,
+      approval_required: true,
+    };
+  }
   const modeSuffix = dispatchMode === 'in_process'
     ? ' Running in local fallback mode.'
     : '';
@@ -1441,6 +1494,20 @@ export interface DataHealthResponse {
     preview_counts?: Record<string, number> | null;
     guardrails?: Record<string, unknown> | null;
   } | null;
+  truth_confidence?: {
+    claim_count: number;
+    verified_claim_count: number;
+    conflicting_claim_count: number;
+    open_review_count: number;
+    active_golden_case_count: number;
+    actionability_distribution: Record<string, number>;
+    schema_status?: {
+      ready: boolean;
+      current_revision?: string | null;
+      expected_revision?: string | null;
+      missing_tables?: string[];
+    };
+  };
   warnings: string[];
 }
 

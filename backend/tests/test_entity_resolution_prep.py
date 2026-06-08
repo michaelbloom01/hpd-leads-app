@@ -163,13 +163,19 @@ def test_resolve_entities_dry_run_does_not_write(monkeypatch):
     monkeypatch.setattr("src.tasks.ingest._ensure_or_create_job", lambda *_args, **_kwargs: 77)
     monkeypatch.setattr("src.tasks.ingest._finish_job", lambda *args, **kwargs: captured.setdefault("finish", (args, kwargs)))
 
-    fn = entity_resolution.resolve_entities.run if hasattr(entity_resolution.resolve_entities, "run") else entity_resolution.resolve_entities
-    result = fn(job_id=77, dry_run=True, confirm_execute=False)
+    result = entity_resolution.resolve_entities(None, job_id=77, dry_run=True, confirm_execute=False)
 
     assert result["mode"] == "dry_run"
     assert result["updated"] == 0
+    assert str(result["run_id"]).startswith("entity-resolution-77-")
     assert result["preview_counts"]["safe_keep"] == 1
+    assert result["guardrails"]["requires_confirm_execute"] is True
+    assert result["samples"]["safe_keep"][0]["canonical_name"] == "ACME MANAGEMENT"
+    assert result["rollback_strategy"] == "Dry-run mode made no changes."
+    assert str(captured["config"]["run_id"]).startswith("entity-resolution-77-")
     assert captured["config"]["write_permitted"] is False
+    assert captured["config"]["preview"]["samples"]["safe_keep"][0]["keeper_lead_id"] == "lead-1"
+    assert "review_required" in captured["config"]["rollback_strategy"]
     finish_args, finish_kwargs = captured["finish"]
     assert finish_args[1:] == (77, "completed", 1, 0, 0)
     assert finish_kwargs == {}

@@ -61,6 +61,23 @@ ON smart_lists (next_evaluation_at)
 WHERE auto_evaluate = true;
 """
 
+REQUIRED_SMART_LIST_COLUMNS = {
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "filters",
+    "pinned",
+    "auto_evaluate",
+    "evaluation_interval_hours",
+    "next_evaluation_at",
+    "last_evaluated_at",
+    "last_lead_ids",
+    "last_count",
+    "created_at",
+    "updated_at",
+}
+
 
 class SmartListCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
@@ -277,7 +294,7 @@ def _build_where(filters: dict) -> tuple[str, dict]:
 
 
 async def ensure_smart_lists_table(session: AsyncSession):
-    """Create the smart_lists table if it doesn't exist."""
+    """Create the smart_lists table if explicitly requested by an operator."""
     # Prevent concurrent worker startup races on CREATE TABLE IF NOT EXISTS.
     await session.execute(text("SELECT pg_advisory_xact_lock(987654321012345678)"))
     await session.execute(text(ENSURE_TABLE_SQL))
@@ -288,6 +305,53 @@ async def ensure_smart_lists_table(session: AsyncSession):
     await session.execute(text(ENSURE_AUTO_EVAL_INDEX_SQL))
 
 
+async def load_smart_lists_schema_status(session: AsyncSession) -> dict:
+    """Inspect smart-list schema readiness without mutating the database."""
+    table_exists = bool(
+        (
+            await session.execute(
+                text("SELECT to_regclass('public.smart_lists') IS NOT NULL")
+            )
+        ).scalar()
+    )
+    if not table_exists:
+        return {
+            "ready": False,
+            "table_exists": False,
+            "missing_columns": sorted(REQUIRED_SMART_LIST_COLUMNS),
+        }
+
+    result = await session.execute(
+        text("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'smart_lists'
+        """)
+    )
+    columns = {row[0] for row in result}
+    missing_columns = sorted(REQUIRED_SMART_LIST_COLUMNS - columns)
+    return {
+        "ready": not missing_columns,
+        "table_exists": True,
+        "missing_columns": missing_columns,
+    }
+
+
+async def require_smart_lists_schema(session: AsyncSession) -> dict:
+    status = await load_smart_lists_schema_status(session)
+    if not status["ready"]:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "schema_not_ready",
+                "message": "Smart Lists schema is not ready; run Alembic migrations or explicit startup repair before using Smart Lists.",
+                "schema_status": status,
+            },
+        )
+    return status
+
+
 @router.get("")
 @limiter.limit("60/minute")
 async def list_smart_lists(
@@ -295,7 +359,7 @@ async def list_smart_lists(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
-    await ensure_smart_lists_table(session)
+    await require_smart_lists_schema(session)
     result = await session.execute(
         text("""
             SELECT id, name, description, filters, pinned,
@@ -322,7 +386,7 @@ async def create_smart_list(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
-    await ensure_smart_lists_table(session)
+    await require_smart_lists_schema(session)
     list_id = str(uuid.uuid4())[:12]
     await session.execute(
         text("""
@@ -361,7 +425,7 @@ async def get_smart_list(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
-    await ensure_smart_lists_table(session)
+    await require_smart_lists_schema(session)
     result = await session.execute(
         text("SELECT * FROM smart_lists WHERE id = :id AND user_id = :uid"),
         {"id": list_id, "uid": user.user_id},
@@ -384,7 +448,7 @@ async def update_smart_list(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
-    await ensure_smart_lists_table(session)
+    await require_smart_lists_schema(session)
     exists = (await session.execute(
         text("SELECT 1 FROM smart_lists WHERE id = :id AND user_id = :uid"),
         {"id": list_id, "uid": user.user_id},
@@ -442,7 +506,7 @@ async def delete_smart_list(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
-    await ensure_smart_lists_table(session)
+    await require_smart_lists_schema(session)
     result = await session.execute(
         text("DELETE FROM smart_lists WHERE id = :id AND user_id = :uid"),
         {"id": list_id, "uid": user.user_id},
@@ -461,7 +525,7 @@ async def evaluate_smart_list(
     user: AuthUser = Depends(get_current_user),
 ):
     """Re-run the saved filters and detect changes since last evaluation."""
-    await ensure_smart_lists_table(session)
+    await require_smart_lists_schema(session)
     row = (await session.execute(
         text("SELECT * FROM smart_lists WHERE id = :id AND user_id = :uid"),
         {"id": list_id, "uid": user.user_id},
@@ -482,7 +546,7 @@ async def run_due_auto_evaluations(
     user: AuthUser = Depends(get_current_user),
 ):
     """Evaluate due auto-enabled Smart Lists for current user."""
-    await ensure_smart_lists_table(session)
+    await require_smart_lists_schema(session)
     results = await evaluate_due_auto_lists(session, user_id=user.user_id, limit=limit)
 
     return {

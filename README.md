@@ -20,15 +20,20 @@ NYC property management intelligence platform with dual purpose: **PE acquisitio
 10. **Building Lists** — saved collections of buildings for outreach workflows
 11. **Full sourcing UI** with server-side filtering, pipeline tracking, follow-ups, and bookmarkable filter URLs
 
-## Current Status (Mar 2026)
+## Current Status (June 2026)
 
 | Metric | Value |
 |--------|-------|
-| Total Leads | 314,723 |
-| Total Buildings | 179,985 |
-| Entity Coverage Ratio | 98.3% |
-| Zero-Link Leads | 55,804 |
-| Blank Display-Name Leads | 54,507 |
+| Production Leads | 314,723 |
+| Production Buildings | 181,307 |
+| Production Entity Coverage Ratio | 96.9% |
+| Production Zero-Link Leads | 55,804 |
+| Production Buildings With Multiple Current PM Links | 106,759 |
+| Production Stale Leads | 314,719 |
+| Production Contact Coverage | 0.0% phone / 0.0% email / 0.0% website |
+| Local Stabilization Branch Leads | 38,495 |
+| Local Stabilization Branch Buildings | 179,985 |
+| Local Truth-Confidence Posture | Draft PR #5 packages the read-only truth/confidence workbench; schema applied at `010_truth_manifest`; current local posture is 2,115 claims, 2,078 fact groups, 15 multi-source/source-ready groups, 0 verified claims, 40 open review items, and `trust_posture=not_ready`; business use remains blocked until verified-claim, review, source freshness, activation, and production truth-surface gates pass |
 | Entity Classification | Company / Individual Agent / Owner-Operator |
 | Building Type Coverage | 100% (PLUTO data) |
 | Scoring | V2: 8-dimension |
@@ -38,7 +43,43 @@ NYC property management intelligence platform with dual purpose: **PE acquisitio
 | Pipeline Stages | Research -> First Contact -> Follow-Up -> Meeting -> LOI -> DD -> Closed |
 | Smart Lists | Saved filter segments with change detection |
 
-Production note: the normal Railway worker path for `lead_generation`, `lead_reconciliation`, and `quality_checks` is now working again. The remaining orphan/blank lead tail is still under conservative cleanup review and has not been bulk-deleted.
+Production note: the normal Railway worker path for `lead_generation`, `lead_reconciliation`, and `quality_checks` is working, but the Data Truth & Confidence API surface from the active stabilization branch is not deployed to production yet. Production currently returns `404` for `/api/v1/truth/schema-status` and `/api/v1/truth/activation-packet`; local truth schema is applied, but activation remains approval-gated and should not be used for business decisions until materialization, review, and source-refresh gates clear.
+
+## Data Truth & Confidence Program
+
+The active stabilization branch adds a Data Truth & Confidence foundation so Double Edge can move from lead rows as raw truth to evidence-backed beliefs over canonical entities, buildings, contacts, relationships, and outreach feedback.
+
+Core additions:
+
+- Canonical truth tables for claims, evidence, confidence snapshots, review items, validation runs, golden verification cases, and materialization rollback manifests.
+- Claim/evidence summaries for leads, buildings, canonical entities, entities, contacts, HPD contacts, and people.
+- Confidence scoring that accounts for source quality, agreement, contradiction, freshness, and claim risk.
+- Actionability thresholds for broad discovery, ranked sourcing, automated enrichment, recommended outreach, acquisition-quality diligence, and do-not-act states.
+- Source audit and activation packet APIs that expose schema readiness, stale/missing evidence, refreshable/blocked jobs, rollback guidance, and business-use gates.
+- Human review queues and dry-run review decisions that show support, contradiction, rationale, and proposed database changes before execution.
+- Outreach feedback conversion so bounces, wrong numbers, bad emails, "does not manage," confirmations, and referrals become support or contradiction evidence.
+- Golden benchmark seeds for co-op boards, owner LLC shells, stale agents, legal suffix variants, shared addresses, false splits, and outreach contradictions.
+
+Activation is intentionally conservative:
+
+```bash
+cd backend
+python scripts/truth_migration_preflight.py
+python scripts/truth_activation_packet.py
+python scripts/truth_health_report.py --materialization-limit 50 --validation-sample-limit 10
+python scripts/truth_adjudication_preview.py --limit 20 --indent 2
+python scripts/truth_production_probe.py
+python scripts/truth_completion_audit.py --include-runtime --include-production
+python scripts/truth_completion_audit.py --artifacts-only
+```
+
+Applying migrations through `010_truth_manifest` in any new database or environment, refreshing stale sources, and executing truth materialization are mutating operations and require explicit approval with the documented dry-run/confirm gates. In the active local database, `009` and `010` were applied with approval on 2026-05-14; the schema rollback protocol is `python -m alembic downgrade 010_truth_manifest:008_lead_lineage --sql` for review, then the matching Alembic downgrade if activation must be abandoned before business use.
+
+The active local DB was then advanced to `010_truth_manifest` to add `truth_materialization_manifest`, a per-run rollback manifest for claim/evidence/snapshot upserts. Pilot run `truth-materialization-manual-20260514142022` wrote 2,063 claims, 2,063 evidence rows, and 1,088 confidence snapshots; rollback dry-run is `python scripts/truth_materialization_rollback.py --run-id truth-materialization-manual-20260514142022`.
+
+Truth validation dry-runs are no-mutation previews. To seed human review queues from adversarial validation, first run `python scripts/truth_validation_run.py --sample-limit 20 --indent 2`, then execute only after review with `--execute --confirm-execute`. Validation review-queue rollback is run-scoped: `python scripts/truth_validation_rollback.py --run-id <run_id>` previews deletion of still-open review items and preserves reviewed decisions by default.
+
+Approved local validation run `truth-preview-manual-20260514144735` seeded 40 open review items: 20 `insufficient_evidence` zero-link lead cases and 20 `needs_human_review` legal/mailbox-style address cases. Its rollback dry-run is `python scripts/truth_validation_rollback.py --run-id truth-preview-manual-20260514144735`; current preview would delete 40 open review items and the validation-run envelope, with 0 reviewed items at risk.
 
 ## Architecture Execution Readiness (Feb 24, 2026)
 
@@ -153,6 +194,17 @@ hpd-leads-app/
 | `/api/v1/export/buildings/csv` | GET | Export buildings to CSV |
 | `/api/v1/export/portfolio-contacts/csv` | GET | Export portfolio building/contact/source rows to CSV |
 | `/api/v1/export/portfolio-contacts/xlsx` | GET | Export portfolio workbook with buildings, contacts, source coverage, and gaps |
+| `/api/v1/truth/schema-status` | GET | Read-only truth schema readiness and Alembic revision status |
+| `/api/v1/truth/leads/{lead_id}/summary` | GET | Evidence-backed lead belief, confidence, contradiction, freshness, and safe-action summary |
+| `/api/v1/truth/subjects/{subject_type}/{subject_id}/summary` | GET | Evidence-backed truth summary for lead, canonical entity, entity, building, contact, HPD contact, or person subjects |
+| `/api/v1/truth/dashboard` | GET | Claim, confidence, review, actionability, and threshold dashboard |
+| `/api/v1/truth/health-report` | GET | Read-only truth-health report with activation checklist and trust gaps |
+| `/api/v1/truth/activation-packet` | GET | Compact no-mutation approval packet for schema/materialization/source-refresh activation |
+| `/api/v1/truth/adjudication-preview` | GET | Read-only claim-fact adjudication preview showing verification candidates and blockers |
+| `/api/v1/truth/materialize/preview` | POST | Dry-run claim/evidence materialization preview |
+| `/api/v1/truth/validate/preview` | POST | Dry-run adversarial validation preview |
+| `/api/v1/truth/review-queue` | GET | Human review queue for suggested merges, conflicts, insufficient evidence, and do-not-merge cases |
+| `/api/v1/truth/golden-benchmark` | GET | Golden-set precision/recall/false-merge/false-split/link/contact/freshness benchmark |
 
 ## Local Development
 

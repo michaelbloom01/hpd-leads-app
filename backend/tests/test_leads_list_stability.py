@@ -111,6 +111,7 @@ async def test_get_leads_uses_simple_query_for_unfiltered_supported_sorts():
         min_units_per_bldg=None,
         max_units_per_bldg=None,
         building_type_has=None,
+        count_mode="exact",
         limit=50,
         offset=0,
         session=session,
@@ -122,6 +123,7 @@ async def test_get_leads_uses_simple_query_for_unfiltered_supported_sorts():
     assert len(response["leads"]) == 1
     first_sql = session.calls[0][0]
     assert "FROM leads" in first_sql
+    assert "retired_at IS NULL" in first_sql
     assert "WITH live_link_stats" not in first_sql
     assert "ORDER BY portfolio_size DESC" in first_sql
 
@@ -160,9 +162,95 @@ async def test_get_leads_estimates_total_when_simple_count_fails():
         min_units_per_bldg=None,
         max_units_per_bldg=None,
         building_type_has=None,
+        count_mode="exact",
         session=session,
         user=AuthUser(user_id="u1", email="test@example.com"),
     )
 
     assert len(response["leads"]) == 2
     assert response["total"] == 3
+
+
+@pytest.mark.anyio
+async def test_get_leads_uses_fast_estimated_total_for_stored_borough_filter():
+    session = FakeAsyncSession([
+        FakeExecuteResult(rows=[_lead_row(lead_id=f"lead-{i}") for i in range(50)])
+    ])
+
+    response = await leads_router.get_leads(
+        request=_make_request(),
+        min_score=None,
+        max_score=None,
+        min_portfolio=None,
+        max_portfolio=None,
+        boro="MANHATTAN",
+        neighborhood=None,
+        has_phone=None,
+        has_email=None,
+        has_website=None,
+        entity_type=None,
+        enrichment_status=None,
+        outreach_status=None,
+        pipeline_stage=None,
+        search=None,
+        limit=50,
+        offset=0,
+        sort_by="score",
+        sort_dir="desc",
+        min_units=None,
+        max_units=None,
+        min_units_per_bldg=None,
+        max_units_per_bldg=None,
+        building_type_has=None,
+        count_mode="estimate",
+        session=session,
+        user=AuthUser(user_id="u1", email="test@example.com"),
+    )
+
+    first_sql = session.calls[0][0]
+    assert "FROM leads" in first_sql
+    assert "WITH live_link_stats" not in first_sql
+    assert "primary_borough = :boro_0" in first_sql
+    assert response["total_estimated"] is True
+    assert response["total"] == 51
+
+
+@pytest.mark.anyio
+async def test_get_leads_search_matches_stored_lead_address():
+    session = FakeAsyncSession([
+        FakeExecuteResult(rows=[_lead_row(address="110 EAST 55TH ST")])
+    ])
+
+    response = await leads_router.get_leads(
+        request=_make_request(),
+        min_score=None,
+        max_score=None,
+        min_portfolio=None,
+        max_portfolio=None,
+        boro=None,
+        neighborhood=None,
+        has_phone=None,
+        has_email=None,
+        has_website=None,
+        entity_type=None,
+        enrichment_status=None,
+        outreach_status=None,
+        pipeline_stage=None,
+        search="110 EAST 55TH ST",
+        limit=50,
+        offset=0,
+        sort_by="score",
+        sort_dir="desc",
+        min_units=None,
+        max_units=None,
+        min_units_per_bldg=None,
+        max_units_per_bldg=None,
+        building_type_has=None,
+        count_mode="estimate",
+        session=session,
+        user=AuthUser(user_id="u1", email="test@example.com"),
+    )
+
+    first_sql = session.calls[0][0]
+    assert "address ILIKE :search" in first_sql
+    assert response["leads"][0]["address"] == "110 EAST 55TH ST"

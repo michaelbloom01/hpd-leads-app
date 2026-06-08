@@ -10,15 +10,29 @@ describe('jobs-api', () => {
     setToken('test-token');
   });
 
-  it('calls startJob with auth header', async () => {
+  it('calls startJob with auth header in approval-preview mode by default', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ status: 'queued', job_type: 'energy' }), { status: 200 }),
+      new Response(JSON.stringify({ status: 'approval_required', job_type: 'energy' }), { status: 200 }),
     );
 
     const result = await startJob('energy');
 
-    expect(result.status).toBe('queued');
+    expect(result.status).toBe('approval_required');
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/jobs/energy/start', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer test-token' },
+    });
+  });
+
+  it('adds explicit execute parameters when approval has been granted', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ status: 'queued', job_type: 'energy', dry_run: false, confirm_execute: true }), { status: 200 }),
+    );
+
+    const result = await startJob('energy', { limit: 250, dryRun: false, confirmExecute: true });
+
+    expect(result.confirm_execute).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/jobs/energy/start?limit=250&dry_run=false&confirm_execute=true', {
       method: 'POST',
       headers: { Authorization: 'Bearer test-token' },
     });

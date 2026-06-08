@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy import bindparam, create_engine, text
@@ -34,6 +35,12 @@ DEFAULT_SAMPLE_LIMIT = 10
 EXECUTABLE_COHORTS = {"safe_keep"}
 EXPANDING_BBLS = bindparam("bbls", expanding=True)
 EXPANDING_NAMES = bindparam("names", expanding=True)
+ENTITY_RESOLUTION_ROLLBACK_STRATEGY = (
+    "Entity-resolution execute mode only writes approved safe_keep clusters. "
+    "Use the run/job config rollback samples to restore prior portfolio_size values and remove newly inserted "
+    "current building links if the run must be backed out; review_required, unresolved, and safe_retire buckets "
+    "are never auto-written."
+)
 
 
 def _get_pg_session() -> Session:
@@ -661,6 +668,7 @@ def _count_keeper_links(session: Session, lead_id: str) -> int:
 @celery_app.task(bind=True, name="src.tasks.entity_resolution.resolve_entities")
 def resolve_entities(
     self,
+    *args,
     job_id: Optional[int] = None,
     dry_run: bool = True,
     confirm_execute: bool = False,
@@ -668,6 +676,28 @@ def resolve_entities(
     sample_limit: int = DEFAULT_SAMPLE_LIMIT,
 ):
     """Run entity resolution in dry-run mode by default with cohort-limited execution."""
+    if args:
+        if len(args) > 5:
+            raise TypeError("resolve_entities accepts at most job_id, dry_run, confirm_execute, cohort_filter, and sample_limit positional args")
+        positional = list(args)
+        if positional[0] is None:
+            positional = positional[1:]
+        fields = ["job_id", "dry_run", "confirm_execute", "cohort_filter", "sample_limit"]
+        values = {
+            "job_id": job_id,
+            "dry_run": dry_run,
+            "confirm_execute": confirm_execute,
+            "cohort_filter": cohort_filter,
+            "sample_limit": sample_limit,
+        }
+        for field, value in zip(fields, positional):
+            values[field] = value
+        job_id = values["job_id"]
+        dry_run = values["dry_run"]
+        confirm_execute = values["confirm_execute"]
+        cohort_filter = values["cohort_filter"]
+        sample_limit = values["sample_limit"]
+
     session = _get_pg_session()
     engine = session.get_bind()
 
@@ -675,6 +705,7 @@ def resolve_entities(
         from src.tasks.ingest import _ensure_or_create_job, _finish_job
 
         job_id = _ensure_or_create_job(session, job_id, "entity_resolution", "leads")
+        run_id = f"entity-resolution-{job_id}-{datetime.now(timezone.utc):%Y%m%d%H%M%S}"
         session.commit()
 
         clusters = _resolve_clusters(_build_entity_graph(session))
@@ -691,7 +722,10 @@ def resolve_entities(
             "preview": {
                 "counts": preview_counts,
                 "guardrails": preview["guardrails"],
+                "samples": preview["samples"],
             },
+            "run_id": run_id,
+            "rollback_strategy": ENTITY_RESOLUTION_ROLLBACK_STRATEGY,
         }
 
         base_config["proposal_sync"] = None
@@ -703,11 +737,15 @@ def resolve_entities(
             session.commit()
             logger.info("Entity resolution dry-run captured %s cluster previews", len(prep_rows))
             return {
+                "run_id": run_id,
                 "job_id": job_id,
                 "clusters": len(prep_rows),
                 "updated": 0,
                 "mode": "dry_run",
                 "preview_counts": preview_counts,
+                "samples": preview["samples"],
+                "guardrails": preview["guardrails"],
+                "rollback_strategy": "Dry-run mode made no changes.",
             }
 
         if cohort_filter not in EXECUTABLE_COHORTS:
@@ -804,6 +842,7 @@ def resolve_entities(
                 "eligible_clusters": len(eligible_rows),
                 "updated_clusters": updated,
                 "rollback_samples": rollback_samples,
+                "rollback_strategy": ENTITY_RESOLUTION_ROLLBACK_STRATEGY,
             },
         }
         _store_job_config(session, job_id, execution_config)
@@ -812,11 +851,14 @@ def resolve_entities(
         session.commit()
         logger.info("Entity resolution executed %s safe clusters", updated)
         return {
+            "run_id": run_id,
             "job_id": job_id,
             "clusters": len(prep_rows),
             "updated": updated,
             "mode": "execute",
             "cohort_filter": cohort_filter,
+            "rollback_samples": rollback_samples,
+            "rollback_strategy": ENTITY_RESOLUTION_ROLLBACK_STRATEGY,
         }
 
     except Exception as e:

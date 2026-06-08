@@ -31,6 +31,7 @@ configure_logging()
 init_sentry()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+STARTUP_SYNC_ENV = "DOUBLE_EDGE_RUN_STARTUP_SYNC"
 
 # SQLAlchemy async session
 from src.db.session import get_session  # noqa: F401
@@ -50,6 +51,7 @@ from src.routers.targets import router as targets_router
 from src.routers.export_v1 import router as export_v1_router
 from src.routers.smart_lists import router as smart_lists_router
 from src.routers.building_lists import router as building_lists_router
+from src.routers.truth import router as truth_router
 
 # Optional routers loaded conditionally.
 _optional_routers = []
@@ -95,8 +97,10 @@ _allowed_origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()
 
 if _env != "production":
     _allowed_origins.extend([
-        "http://localhost:5173", "http://localhost:3000",
-        "http://localhost:3001", "http://localhost:3002",
+        "http://localhost:5173", "http://127.0.0.1:5173",
+        "http://localhost:3000", "http://127.0.0.1:3000",
+        "http://localhost:3001", "http://127.0.0.1:3001",
+        "http://localhost:3002", "http://127.0.0.1:3002",
     ])
 
 _origin_regex = r"https://[-\w]+\.vercel\.app"
@@ -191,6 +195,7 @@ app.include_router(targets_router)
 app.include_router(export_v1_router)
 app.include_router(smart_lists_router)
 app.include_router(building_lists_router)
+app.include_router(truth_router)
 for r in _optional_routers:
     app.include_router(r)
 
@@ -220,6 +225,20 @@ async def db_pool_health():
     return {"status": status, "pool": snapshot}
 
 
+def _startup_sync_enabled() -> bool:
+    return os.environ.get(STARTUP_SYNC_ENV, "").strip().lower() in {"1", "true", "yes"}
+
+
+async def _run_legacy_startup_sync() -> dict[str, int]:
+    factory = get_session_factory()
+    async with factory() as session:
+        await ensure_smart_lists_table(session)
+        await ensure_building_lists_tables(session)
+        snapshot = await sync_lead_portfolio_snapshot(session)
+        await session.commit()
+    return snapshot
+
+
 @app.on_event("startup")
 async def startup():
     _jwt_secret = os.environ.get("JWT_SECRET", "")
@@ -230,13 +249,15 @@ async def startup():
         raise RuntimeError("JWT_SECRET must be set in production")
     logger.info(f"Double Edge API starting (env={_env})")
 
+    if not _startup_sync_enabled():
+        logger.info(
+            "startup_sync skipped; set %s=1 to run legacy smart/building-list repair and lead portfolio snapshot sync explicitly",
+            STARTUP_SYNC_ENV,
+        )
+        return
+
     try:
-        factory = get_session_factory()
-        async with factory() as session:
-            await ensure_smart_lists_table(session)
-            await ensure_building_lists_tables(session)
-            snapshot = await sync_lead_portfolio_snapshot(session)
-            await session.commit()
+        snapshot = await _run_legacy_startup_sync()
         logger.info(
             "startup_sync complete: smart/building lists ensured; lead portfolio snapshot rows_updated=%s threshold_count=%s",
             snapshot.get("rows_updated"),

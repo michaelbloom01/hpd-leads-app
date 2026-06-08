@@ -13,6 +13,35 @@ Production operations for the PostgreSQL + Redis + worker runtime.
 - `GET /api/v1/quality/data-health` - aggregate data quality plus canonical materialization counts
 - `GET /api/v1/canonical/entities` - materialized canonical entities
 - `GET /api/v1/canonical/proposals` - materialized canonical proposals and review buckets
+- `GET /api/v1/truth/schema-status` - truth-confidence table and Alembic readiness
+- `GET /api/v1/truth/activation-packet` - compact truth activation/business-use gate
+- `GET /api/v1/truth/health-report` - read-only truth health, source audit, benchmark, and activation checklist
+
+## Data Truth & Confidence Activation
+
+Run these checks before any truth-confidence migration, source refresh, or materialization:
+
+```powershell
+.\.venv-x64\Scripts\python.exe scripts\truth_migration_preflight.py --indent 2
+.\.venv-x64\Scripts\python.exe scripts\truth_activation_packet.py --indent 2
+.\.venv-x64\Scripts\python.exe scripts\truth_health_report.py --materialization-limit 50 --validation-sample-limit 10
+.\.venv-x64\Scripts\python.exe scripts\truth_completion_audit.py --include-runtime --include-production --indent 2
+.\.venv-x64\Scripts\python.exe scripts\truth_completion_audit.py --artifacts-only --indent 2
+.\.venv-x64\Scripts\python.exe scripts\truth_production_probe.py --indent 2
+```
+
+Interpretation:
+
+- `truth_completion_audit.py` must exit nonzero while the objective is not complete; this is expected before migration/materialization/source readiness.
+- `truth_completion_audit.py --artifacts-only` is intended for CI and checks implementation/runbook coverage only; it does not evaluate local or production business-use readiness.
+- `business_use_allowed=false` means Double Edge is not approved for sourcing, diligence, or outreach decisions from the truth layer.
+- Any `truth_surface_status` other than `deployed` means production is not truth-confidence ready. `not_deployed`, `partial_or_auth_gated`, and `unreachable` all keep `production_business_use_allowed=false`.
+
+Approval boundary:
+
+- Applying migrations through `010_truth_manifest` mutates the configured database by adding truth-confidence and rollback-manifest tables.
+- Source-refresh jobs mutate source tables and data-quality logs.
+- Truth materialization mutates only truth claim/evidence/snapshot tables, but still requires dry-run review plus `dry_run=false&confirm_execute=true`.
 
 ## Job Hygiene
 
@@ -24,6 +53,7 @@ Production operations for the PostgreSQL + Redis + worker runtime.
   - `POST /api/v1/jobs/reconcile-stale-running?dry_run=false`
 
 Default stale threshold is 120 minutes for jobs in `running` with no `finished_at`.
+Executing stale job reconciliation changes job rows. Review the dry-run output and get explicit operator approval before running with `dry_run=false`.
 
 ## Smart List Auto-Evaluation
 
@@ -73,6 +103,20 @@ Default stale threshold is 120 minutes for jobs in `running` with no `finished_a
   - `GET /api/v1/canonical/proposals`
   - `GET /api/leads/{lead_id}/lineage`
 
+## Truth Materialization Rollout
+
+- Always start with a dry-run preview:
+  - `POST /api/v1/truth/materialize/preview?limit=50`
+- Prefer source-scoped batches for large ledgers:
+  - `POST /api/v1/truth/materialize/preview?limit=50&source=building_management`
+  - `POST /api/v1/jobs/truth_materialization/start?dry_run=false&confirm_execute=true&limit=50&source=building_management`
+- Before execution, inspect `sample_materialized_claim_specs`, `planned_claims_by_source`, source freshness, and the activation packet.
+- After execution, record the returned `run_id` and immediately dry-run rollback:
+  - `python scripts/truth_materialization_rollback.py --run-id <run_id>`
+- Execute rollback only if needed and only after confirming the run-specific manifest:
+  - `python scripts/truth_materialization_rollback.py --run-id <run_id> --execute --confirm-execute`
+- Do not use the system for business decisions until the activation packet reports `business_use_allowed=true`.
+
 ## Deployment Checklist (Railway + Vercel)
 
 1. Deploy backend and frontend.
@@ -90,7 +134,7 @@ Default stale threshold is 120 minutes for jobs in `running` with no `finished_a
 
 - Worker stalled / stale running jobs:
   - Run `POST /api/v1/jobs/reconcile-stale-running?dry_run=true`
-  - If results are correct, run with `dry_run=false`
+  - If results are correct, get explicit operator approval before running with `dry_run=false`
 - DB pool pressure:
   - Check `GET /api/health/db-pool`
   - Reduce concurrent heavy jobs, then inspect long query patterns
