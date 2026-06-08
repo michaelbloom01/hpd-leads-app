@@ -12,6 +12,15 @@ import type { BuildingContactEntry } from './buildings-api';
 // Re-export for backward compatibility (other files import from api.ts)
 export { API_BASE_URL };
 
+let lastNetworkToastAt = 0;
+
+function showNetworkToastOnce() {
+  const now = Date.now();
+  if (now - lastNetworkToastAt < 5000) return;
+  lastNetworkToastAt = now;
+  toast.error('Network error - check your connection.');
+}
+
 // ============================================================================
 // R4: Health Check
 // ============================================================================
@@ -173,6 +182,15 @@ async function fetchWithRetry(
     } catch (err: unknown) {
       clearTimeout(timeoutId);
       lastError = err instanceof Error ? err : new Error(String(err));
+
+      if (
+        lastError.message.includes('Session expired')
+        || lastError.message === 'Forbidden'
+        || lastError.message === 'Validation error'
+        || lastError.message.startsWith('Not found:')
+      ) {
+        throw lastError;
+      }
       
       if (attempt < retries) {
         await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
@@ -184,7 +202,8 @@ async function fetchWithRetry(
   if (finalError.name === 'AbortError') {
     toast.error('Request timed out — the server may be busy.');
   } else if (!finalError.message.includes('Session expired')) {
-    toast.error('Network error — check your connection.');
+    showNetworkToastOnce();
+    throw finalError;
   }
   throw finalError;
 }
