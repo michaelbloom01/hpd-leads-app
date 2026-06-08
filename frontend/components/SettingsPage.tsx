@@ -1900,23 +1900,23 @@ const DataHealthSection: React.FC = () => {
                         <div>
                           <div className="text-[10px] uppercase text-sky-700">Verification frontier</div>
                           <div className="text-xs font-semibold text-gray-800">
-                            {Number(truthVerificationFrontier.current_ledger.source_ready_fact_group_count ?? 0).toLocaleString()} source-ready / {Number(truthVerificationFrontier.verification_candidate_count ?? 0).toLocaleString()} verification candidates
+                            {Number(truthVerificationFrontier.current_ledger?.source_ready_fact_group_count ?? 0).toLocaleString()} source-ready / {Number(truthVerificationFrontier.verification_candidate_count ?? 0).toLocaleString()} verification candidates
                           </div>
                           <div className="mt-0.5 text-[10px] text-gray-600">
-                            One-source threshold clears: {Number(truthVerificationFrontier.source_ready_below_verified.single_source_upgrade_would_verify_count ?? 0).toLocaleString()} / {Number(truthVerificationFrontier.source_ready_below_verified.proposal_count ?? 0).toLocaleString()}.
-                            {' '}Bundle clears: {Number(truthVerificationFrontier.source_ready_below_verified.bundle_upgrade_would_verify_count ?? 0).toLocaleString()}.
+                            One-source threshold clears: {Number(truthVerificationFrontier.source_ready_below_verified?.single_source_upgrade_would_verify_count ?? 0).toLocaleString()} / {Number(truthVerificationFrontier.source_ready_below_verified?.proposal_count ?? 0).toLocaleString()}.
+                            {' '}Bundle clears: {Number(truthVerificationFrontier.source_ready_below_verified?.bundle_upgrade_would_verify_count ?? 0).toLocaleString()}.
                           </div>
                           <div className="mt-0.5 text-[10px] text-gray-600">
-                            HPM next-source seeds: {Number(truthVerificationFrontier.source_acquisition_frontier.manager_next_source_seed_count ?? 0).toLocaleString()} / operator second-source seeds: {Number(truthVerificationFrontier.source_acquisition_frontier.operator_second_source_seed_count ?? 0).toLocaleString()}.
+                            HPM next-source seeds: {Number(truthVerificationFrontier.source_acquisition_frontier?.manager_next_source_seed_count ?? 0).toLocaleString()} / operator second-source seeds: {Number(truthVerificationFrontier.source_acquisition_frontier?.operator_second_source_seed_count ?? 0).toLocaleString()}.
                           </div>
                           {truthVerificationFrontier.verification_readiness_gate && (
                             <div className="mt-0.5 text-[10px] text-amber-700">
-                              Verification gate: {truthVerificationFrontier.verification_readiness_gate.status.replace(/_/g, ' ')}; record-ready {truthVerificationFrontier.verification_readiness_gate.record_ready_count.toLocaleString()} / acquisition-required {truthVerificationFrontier.verification_readiness_gate.acquisition_required_count.toLocaleString()} / required evidence {truthVerificationFrontier.verification_readiness_gate.required_real_evidence_count.toLocaleString()}.
+                              Verification gate: {truthVerificationFrontier.verification_readiness_gate.status.replace(/_/g, ' ')}; record-ready {Number(truthVerificationFrontier.verification_readiness_gate.record_ready_count ?? 0).toLocaleString()} / acquisition-required {Number(truthVerificationFrontier.verification_readiness_gate.acquisition_required_count ?? 0).toLocaleString()} / required evidence {Number(truthVerificationFrontier.verification_readiness_gate.required_real_evidence_count ?? 0).toLocaleString()}.
                             </div>
                           )}
                           {verificationEvidenceRequestPacket && (
                             <div className="mt-0.5 text-[10px] text-sky-700">
-                              Evidence request packet: {verificationEvidenceRequestPacket.request_count.toLocaleString()} requests; source-ready {verificationEvidenceRequestPacket.source_ready_request_count.toLocaleString()} / single-source {verificationEvidenceRequestPacket.single_source_request_count.toLocaleString()} / source-acquisition {verificationEvidenceRequestPacket.source_acquisition_request_count.toLocaleString()}; record-ready {verificationEvidenceRequestPacket.recording_ready_count.toLocaleString()}.
+                              Evidence request packet: {Number(verificationEvidenceRequestPacket.request_count ?? 0).toLocaleString()} requests; source-ready {Number(verificationEvidenceRequestPacket.source_ready_request_count ?? 0).toLocaleString()} / single-source {Number(verificationEvidenceRequestPacket.single_source_request_count ?? 0).toLocaleString()} / source-acquisition {Number(verificationEvidenceRequestPacket.source_acquisition_request_count ?? 0).toLocaleString()}; record-ready {Number(verificationEvidenceRequestPacket.recording_ready_count ?? 0).toLocaleString()}.
                             </div>
                           )}
                           {verificationEvidenceRequestPacket?.reviewed_source_finding_count != null && (
