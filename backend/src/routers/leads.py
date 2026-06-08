@@ -64,6 +64,32 @@ LIVE_UNITS_PER_BUILDING_SQL = (
 )
 
 
+async def _table_has_column(session: AsyncSession, table_name: str, column_name: str) -> bool:
+    """Return whether a column exists, without assuming production migrations already ran."""
+    if not hasattr(session, "rollback"):
+        return True
+    try:
+        result = await session.execute(
+            text("""
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = :table_name
+                  AND column_name = :column_name
+                LIMIT 1
+            """),
+            {"table_name": table_name, "column_name": column_name},
+        )
+        return result.first() is not None
+    except Exception:
+        await session.rollback()
+        return False
+
+
+async def _active_leads_where_sql(session: AsyncSession) -> str:
+    return "retired_at IS NULL" if await _table_has_column(session, "leads", "retired_at") else "1=1"
+
+
 def _display_name_key_sql(alias: Optional[str] = None) -> str:
     prefix = f"{alias}." if alias else ""
     return f"""
@@ -461,7 +487,8 @@ async def get_leads(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
-    wheres: list[str] = ["retired_at IS NULL"]
+    active_leads_where = await _active_leads_where_sql(session)
+    wheres: list[str] = [] if active_leads_where == "1=1" else [active_leads_where]
     params: dict = {"limit": limit, "offset": offset}
     requires_live_links = False
 
@@ -1853,7 +1880,8 @@ async def get_follow_ups_due(
 @limiter.limit("60/minute")
 async def get_stats(request: Request, session: AsyncSession = Depends(get_session), user: AuthUser = Depends(get_current_user)):
     """Aggregate stats for the dashboard — full structure expected by the frontend."""
-    core = dict((await session.execute(text("""
+    active_leads_where = await _active_leads_where_sql(session)
+    core = dict((await session.execute(text(f"""
         SELECT
             COUNT(*) AS total_leads,
             COALESCE(SUM(portfolio_size), 0) AS total_buildings,
@@ -1864,14 +1892,14 @@ async def get_stats(request: Request, session: AsyncSession = Depends(get_sessio
             COALESCE(SUM(CASE WHEN email IS NOT NULL AND email != '' THEN 1 ELSE 0 END), 0) AS with_email,
             COALESCE(SUM(CASE WHEN website IS NOT NULL AND website != '' THEN 1 ELSE 0 END), 0) AS with_website
         FROM leads
-        WHERE retired_at IS NULL
+        WHERE {active_leads_where}
     """))).first()._mapping)
 
     # Borough distribution
     by_borough = {
         r[0] or "Unknown": r[1]
         for r in (await session.execute(text(
-            "SELECT primary_borough, COUNT(*) FROM leads WHERE retired_at IS NULL GROUP BY primary_borough"
+            f"SELECT primary_borough, COUNT(*) FROM leads WHERE {active_leads_where} GROUP BY primary_borough"
         ))).fetchall()
     }
 
@@ -1879,7 +1907,7 @@ async def get_stats(request: Request, session: AsyncSession = Depends(get_sessio
     by_enrichment = {
         r[0] or "none": r[1]
         for r in (await session.execute(text(
-            "SELECT enrichment_status, COUNT(*) FROM leads WHERE retired_at IS NULL GROUP BY enrichment_status"
+            f"SELECT enrichment_status, COUNT(*) FROM leads WHERE {active_leads_where} GROUP BY enrichment_status"
         ))).fetchall()
     }
 
@@ -1887,7 +1915,7 @@ async def get_stats(request: Request, session: AsyncSession = Depends(get_sessio
     by_outreach = {
         r[0] or "new": r[1]
         for r in (await session.execute(text(
-            "SELECT outreach_status, COUNT(*) FROM leads WHERE retired_at IS NULL GROUP BY outreach_status"
+            f"SELECT outreach_status, COUNT(*) FROM leads WHERE {active_leads_where} GROUP BY outreach_status"
         ))).fetchall()
     }
 
@@ -1895,7 +1923,7 @@ async def get_stats(request: Request, session: AsyncSession = Depends(get_sessio
     by_entity = {
         r[0] or "unknown": r[1]
         for r in (await session.execute(text(
-            "SELECT entity_type, COUNT(*) FROM leads WHERE retired_at IS NULL GROUP BY entity_type"
+            f"SELECT entity_type, COUNT(*) FROM leads WHERE {active_leads_where} GROUP BY entity_type"
         ))).fetchall()
     }
 
@@ -1903,7 +1931,7 @@ async def get_stats(request: Request, session: AsyncSession = Depends(get_sessio
     by_pipeline = {
         r[0] or "research": r[1]
         for r in (await session.execute(text(
-            "SELECT pipeline_stage, COUNT(*) FROM leads WHERE retired_at IS NULL GROUP BY pipeline_stage"
+            f"SELECT pipeline_stage, COUNT(*) FROM leads WHERE {active_leads_where} GROUP BY pipeline_stage"
         ))).fetchall()
     }
 
@@ -1920,7 +1948,7 @@ async def get_stats(request: Request, session: AsyncSession = Depends(get_sessio
                     ELSE '80-100'
                 END AS bucket,
                 COUNT(*) AS cnt
-            FROM leads WHERE retired_at IS NULL GROUP BY bucket
+            FROM leads WHERE {active_leads_where} GROUP BY bucket
         """))).fetchall()
     }
 
@@ -1938,7 +1966,7 @@ async def get_stats(request: Request, session: AsyncSession = Depends(get_sessio
                     ELSE '100+'
                 END AS bucket,
                 COUNT(*) AS cnt
-            FROM leads WHERE retired_at IS NULL GROUP BY bucket
+            FROM leads WHERE {active_leads_where} GROUP BY bucket
         """))).fetchall()
     }
 
