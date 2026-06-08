@@ -214,6 +214,13 @@ const BuildingDetailPage: React.FC = () => {
     Boolean(building.corporate_owner) ||
     contactCount > 0;
   const breakdownEntries = Object.entries(breakdown || {}).sort(([, a], [, b]) => b.contribution - a.contribution);
+  const activeBreakdownEntries = breakdownEntries.filter(([, val]) =>
+    val.raw !== null && (Number(val.raw || 0) > 0 || Number(val.contribution || 0) > 0)
+  );
+  const noSignalBreakdownEntries = breakdownEntries.filter(([, val]) =>
+    val.raw !== null && Number(val.raw || 0) === 0 && Number(val.contribution || 0) === 0
+  );
+  const unavailableBreakdownEntries = breakdownEntries.filter(([, val]) => val.raw === null);
   const truthClaims = (truthSummary?.claims || []).slice(0, 6);
   const truthSourceNames = Array.from(new Set(
     truthClaims.flatMap((claim: TruthClaim) => [
@@ -582,7 +589,7 @@ const BuildingDetailPage: React.FC = () => {
           </p>
           {breakdown ? (
             <div className="space-y-3">
-              {breakdownEntries.map(([key, val]) => {
+              {activeBreakdownEntries.length > 0 ? activeBreakdownEntries.map(([key, val]) => {
                 const raw = val.raw;
                 const contribution = val.contribution;
                 const adjustedWeightLabel = val.effective_weight !== val.weight ? `${val.weight}% -> ${val.effective_weight}%` : `${val.weight}%`;
@@ -612,7 +619,58 @@ const BuildingDetailPage: React.FC = () => {
                     </div>
                   </div>
                 );
-              })}
+              }) : (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+                  No active churn drivers in this scoring run.
+                </div>
+              )}
+
+              {noSignalBreakdownEntries.length > 0 && (
+                <details className="rounded-lg border border-gray-200 bg-gray-50">
+                  <summary className="cursor-pointer px-3 py-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
+                    Checked zero-signal sources ({noSignalBreakdownEntries.length})
+                  </summary>
+                  <div className="divide-y divide-gray-200 border-t border-gray-200">
+                    {noSignalBreakdownEntries.map(([key, val]) => {
+                      const adjustedWeightLabel = val.effective_weight !== val.weight ? `${val.weight}% -> ${val.effective_weight}%` : `${val.weight}%`;
+                      return (
+                        <div key={key} className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+                          <div>
+                            <div className="font-medium text-gray-700">{signalLabels[key] || key}</div>
+                            <div className="text-gray-500">Checked: no churn signal detected.</div>
+                          </div>
+                          <div className="text-right text-gray-500">
+                            <div>0 impact</div>
+                            <div>Weight share: {adjustedWeightLabel}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </details>
+              )}
+
+              {unavailableBreakdownEntries.length > 0 && (
+                <details className="rounded-lg border border-amber-200 bg-amber-50">
+                  <summary className="cursor-pointer px-3 py-2 text-xs font-semibold uppercase tracking-wider text-amber-700">
+                    Awaiting source data ({unavailableBreakdownEntries.length})
+                  </summary>
+                  <div className="divide-y divide-amber-200 border-t border-amber-200">
+                    {unavailableBreakdownEntries.map(([key, val]) => (
+                      <div key={key} className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+                        <div>
+                          <div className="font-medium text-amber-800">{signalLabels[key] || key}</div>
+                          <div className="text-amber-700">No source data available yet for this signal.</div>
+                        </div>
+                        <div className="text-right text-amber-700">
+                          <div>Awaiting data</div>
+                          <div>Base weight: {val.weight}%</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
             </div>
           ) : (
             <div className="text-gray-400 text-sm">No score breakdown available</div>

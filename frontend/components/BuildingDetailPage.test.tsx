@@ -132,4 +132,48 @@ describe('BuildingDetailPage truth confidence', () => {
       expect(fetchSubjectTruthSummaryMock).toHaveBeenCalledWith('building', '1000000001');
     });
   });
+
+  it('groups zero-signal and unavailable churn factors away from active drivers', async () => {
+    fetchBuildingDetailMock.mockResolvedValueOnce({
+      bbl: '1000000001',
+      address: '100 Example Ave',
+      borough: 'MANHATTAN',
+      unit_count: 42,
+      year_built: 1920,
+      churn_score: 3.5,
+      churn_category: 'stable',
+      churn_breakdown: {
+        building_size: { raw: 60, weight: 5, effective_weight: 5.8, contribution: 3.5 },
+        dob_permits: { raw: 0, weight: 8, effective_weight: 9.3, contribution: 0 },
+        facade_status: { raw: null, weight: 6, effective_weight: 0, contribution: 0 },
+      },
+      all_contacts: [],
+      dos_contacts_status: 'loaded',
+      dos_contacts_is_stale: false,
+      management_company: 'Example Manager Inc',
+      corporate_owner: 'Example Owner LLC',
+      latitude: null,
+      longitude: null,
+    });
+
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+
+    render(
+      <QueryClientProvider client={client}>
+        <BuildingDetailPage />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('Building Scale')).toBeInTheDocument();
+    expect(screen.getByText('Signal score: 60.0 / 100')).toBeInTheDocument();
+    expect(screen.getByText('Checked zero-signal sources (1)')).toBeInTheDocument();
+    expect(screen.getByText('Awaiting source data (1)')).toBeInTheDocument();
+    expect(screen.getByText('Checked: no churn signal detected.')).toBeInTheDocument();
+    expect(screen.getByText('No source data available yet for this signal.')).toBeInTheDocument();
+  });
 });
