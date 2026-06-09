@@ -108,6 +108,29 @@ describe('api service', () => {
     expect(result.message).not.toMatch(/^Enrichment complete/i);
   });
 
+  it('passes explicit enrichment execution flags only when requested', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({
+        status: 'complete',
+        lead_id: 'lead-1',
+        contacts: { phones_found: 1, emails_found: 0, website_found: true },
+        research: { owner_names: [], year_established: null, website_scraped: true },
+        ai_summary: { generated: true, description: 'Updated profile' },
+        errors: [],
+        enrichment_status: 'complete',
+        pipeline_stage: 'research',
+        lead: { lead_id: 'lead-1' },
+      }), { status: 200 }),
+    );
+
+    await enrichLeadAll('lead-1', { execute: true });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/leads/lead-1/enrich-all?dry_run=false&confirm_execute=true',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
   it('preserves schema-not-ready details for smart list reads', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({

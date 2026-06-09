@@ -859,7 +859,7 @@ export interface ContactEnrichmentResult {
  * Unified enrichment: contacts + research + AI summary in one call.
  * This is the single "Enrich Lead" action for the simplified UX.
  */
-export async function enrichLeadAll(leadId: string): Promise<{
+export async function enrichLeadAll(leadId: string, options: { execute?: boolean } = {}): Promise<{
   status?: string;
   lead_id: string;
   contacts: { phones_found: number; emails_found: number; website_found: boolean };
@@ -879,7 +879,8 @@ export async function enrichLeadAll(leadId: string): Promise<{
   };
   lead: ApiLead;  // Full updated lead — use this directly, no second API call needed
 }> {
-  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/enrich-all`, { method: 'POST' }, 1, 120000);
+  const query = options.execute ? '?dry_run=false&confirm_execute=true' : '';
+  const response = await fetchWithRetry(`${API_BASE_URL}/api/leads/${leadId}/enrich-all${query}`, { method: 'POST' }, 1, 120000);
   if (!response.ok) throw new Error(`Failed to enrich lead: ${response.statusText}`);
   const data = await response.json();
   if (data.status === 'approval_required') {

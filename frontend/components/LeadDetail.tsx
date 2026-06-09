@@ -98,6 +98,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   const [loadingBuildingContacts, setLoadingBuildingContacts] = useState(false);
   const [enrichmentElapsedSec, setEnrichmentElapsedSec] = useState(0);
   const [enrichmentPreview, setEnrichmentPreview] = useState<EnrichmentPreviewState>(null);
+  const [showEnrichmentPanel, setShowEnrichmentPanel] = useState(false);
 
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -115,6 +116,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     setIsEstimatingRevenue(false);
     setRevenueEstimateFailed(false);
     setEnrichmentPreview(null);
+    setShowEnrichmentPanel(false);
   }, [lead]);
 
   // Always refresh with canonical lead detail on open.
@@ -358,19 +360,29 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
 
   // Unified enrichment: contacts + research + AI summary in one call.
   // The backend returns the full updated lead in the response — no second API call needed.
-  const handleEnrichAll = async () => {
+  const handleEnrichAll = async (execute = false) => {
+    if (execute) {
+      const confirmed = window.confirm(
+        'Run enrichment for this company now? This can update contact, website, profile, and enrichment-source fields.',
+      );
+      if (!confirmed) return;
+    }
     setIsEnriching(true);
-    setEnrichmentPreview(null);
+    if (!execute) {
+      setEnrichmentPreview(null);
+      setShowEnrichmentPanel(true);
+    }
     try {
-      const result = await enrichLeadAll(lead.lead_id);
+      const result = await enrichLeadAll(lead.lead_id, { execute });
       if (result.status === 'approval_required') {
         setEnrichmentPreview({
           status: result.enrichment_status,
-          message: result.message || 'Preview ready. No enrichment was run.',
+          message: result.message || 'Enrichment is ready to run. Review the plan before executing.',
           wouldMutate: result.preview?.would_mutate,
           requiredExecuteQuery: result.preview?.required_execute_query,
         });
-        toast('Preview ready. Enrichment was not run.');
+        setShowEnrichmentPanel(true);
+        toast('Enrichment is ready to run. Review the plan first.');
         return;
       }
       
@@ -401,6 +413,8 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
       if (result.lead) {
         const updatedLead = result.lead;
         setEnrichedLead(updatedLead);
+        setEnrichmentPreview(null);
+        setShowEnrichmentPanel(false);
         if (updatedLead.business_summary) {
           setAiDescription(updatedLead.business_summary);
         }
@@ -498,15 +512,26 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
 
   const TABS: { id: TabId; label: string }[] = [
     { id: 'overview', label: 'Overview' },
-    { id: 'truth', label: 'Evidence' },
+    { id: 'buildings', label: `Portfolio (${visibleBuildingCount})` },
     { id: 'contacts', label: 'Contacts' },
-    { id: 'pipeline', label: 'Pipeline' },
-    { id: 'buildings', label: `Buildings (${visibleBuildingCount})` },
-    { id: 'dd', label: 'Due Diligence' },
+    { id: 'pipeline', label: 'Work' },
+    { id: 'truth', label: 'Sources' },
   ];
   const hasDirectContact = Boolean(enrichedLead.phone || enrichedLead.email);
+  const enrichmentStatusLabel = isEnriching
+    ? 'Checking sources'
+    : enrichedLead.enrichment_status === 'complete'
+      ? 'Enriched'
+      : enrichedLead.enrichment_status === 'partial'
+        ? 'Partially enriched'
+        : enrichedLead.enrichment_status === 'failed'
+          ? 'Needs retry'
+          : 'Not enriched';
+  const enrichmentButtonLabel = enrichedLead.enrichment_status === 'complete' || enrichedLead.enrichment_status === 'partial'
+    ? 'Update Enrichment'
+    : 'Enrich Company';
   const nextActionLabel = !hasDirectContact
-    ? 'Review enrichment preview before outreach'
+    ? 'Enrich this company before outreach'
     : pipelineStage === 'research'
       ? 'Move to First Contact once outreach copy is ready'
       : pipelineStage === 'first_contact'
@@ -532,7 +557,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
 
   return (
     <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50 flex items-center justify-center p-0 md:p-4" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="lead-detail-title">
-      <div ref={modalRef} tabIndex={-1} className="bg-white border border-gray-200 md:rounded-2xl max-w-3xl w-full h-full md:h-auto md:max-h-[90vh] flex flex-col shadow-2xl outline-none" onClick={e => e.stopPropagation()}>
+      <div ref={modalRef} tabIndex={-1} className="bg-white border border-gray-200 md:rounded-2xl max-w-4xl w-full h-full md:h-auto md:max-h-[90vh] flex flex-col shadow-2xl outline-none" onClick={e => e.stopPropagation()}>
         
         {/* === STICKY HEADER === */}
         <div className="flex-shrink-0 border-b border-gray-200">
@@ -638,12 +663,12 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
             >
               {isExportingContacts ? 'Exporting...' : 'Export Contacts'}
             </button>
-            <button onClick={handleEnrichAll} disabled={isEnriching} className="flex-shrink-0 px-3 py-2 sm:py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors" title="Preview contact search, website scrape, and AI summary enrichment">
-              {isEnriching ? `Checking... ${enrichmentElapsedSec}s` : 'Check Enrichment'}
+            <button onClick={() => handleEnrichAll(false)} disabled={isEnriching} className="flex-shrink-0 px-3 py-2 sm:py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors" title="Look for contact, website, public-source, and company-profile data before running the update">
+              {isEnriching ? `Checking... ${enrichmentElapsedSec}s` : enrichmentButtonLabel}
             </button>
             {isEnriching && (
               <span className="text-[10px] text-gray-500">
-                Checking available sources. No production enrichment will run from this click.
+                Checking sources and update plan.
               </span>
             )}
             <div className="hidden sm:block flex-1" />
@@ -661,48 +686,27 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
               </select>
             </div>
           </div>
-          <div className="mx-4 sm:mx-5 mb-3 grid grid-cols-2 md:grid-cols-5 gap-2 sm:gap-3">
-            <div className="col-span-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 sm:px-4 sm:py-3 md:col-span-2">
+          <div className="mx-4 sm:mx-5 mb-3 grid grid-cols-1 gap-2 sm:grid-cols-3 sm:gap-3">
+            <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 sm:px-4 sm:py-3">
               <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Next Best Action</div>
               <p className="mt-1 text-sm font-medium text-gray-900">{nextActionLabel}</p>
               <p className="mt-1 text-xs text-gray-500">
-                {hasDirectContact ? 'Contact coverage is ready for outreach work.' : 'Use enrichment before starting outreach.'}
+                {hasDirectContact ? 'Contact coverage is ready for outreach work.' : 'Run enrichment before starting outreach.'}
               </p>
-            </div>
-            <div className={`rounded-xl border px-3 py-2 sm:px-4 sm:py-3 ${confidenceClass(leadTruth?.overall_confidence_score)}`}>
-              <div className="text-[10px] font-bold uppercase tracking-wider">Evidence Check</div>
-              <p className="mt-1 text-sm font-semibold">{leadTruth ? pct(leadTruth.overall_confidence_score) : 'Pending'}</p>
-              <p className="mt-1 text-xs opacity-80">{leadTruth ? formatReviewBucket(leadTruth.review_bucket) : 'Not evaluated'}</p>
             </div>
             <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 sm:px-4 sm:py-3">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Follow-Up</div>
-              <p className="mt-1 text-sm font-medium text-gray-900">{nextFollowUp ? formatAbsoluteDate(nextFollowUp) : 'Not scheduled'}</p>
-              <p className="mt-1 text-xs text-gray-500">{nextFollowUp ? formatRelativeDate(nextFollowUp) : 'Set a date once outreach is logged.'}</p>
-            </div>
-            <div className="col-span-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 sm:px-4 sm:py-3 md:col-span-1">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Identity Review</div>
-              <p className="mt-1 text-sm font-medium text-gray-900">
-                {leadLineage?.canonical_entity ? 'Canonical entity linked' : leadLineage?.sibling_count ? 'Review duplicate cohort' : 'Single workflow row'}
+              <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Enrichment</div>
+              <p className="mt-1 text-sm font-medium text-gray-900">{enrichmentStatusLabel}</p>
+              <p className="mt-1 text-xs text-gray-500">
+                {hasDirectContact ? 'Direct contact path available.' : 'Contact, website, and profile data missing.'}
               </p>
-              <p className="mt-1 text-xs text-gray-500">{duplicateSummary}</p>
+            </div>
+            <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 sm:px-4 sm:py-3">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Portfolio</div>
+              <p className="mt-1 text-sm font-medium text-gray-900">{enrichedLead.portfolio_size || 0} buildings / {(enrichedLead.total_units || 0).toLocaleString()} units</p>
+              <p className="mt-1 text-xs text-gray-500">{(enrichedLead.boros || [enrichedLead.boro]).filter(Boolean).join(', ') || 'NYC portfolio'}</p>
             </div>
           </div>
-          {leadLineage && leadLineage.sibling_count > 0 && (
-            <div className="mx-4 sm:mx-5 mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-              <div className="text-xs font-bold uppercase tracking-wider text-amber-700">Potential duplicate records hidden in list view</div>
-              <p className="mt-1 text-sm text-amber-800">
-                This entity has {leadLineage.sibling_count} sibling lead record{leadLineage.sibling_count === 1 ? '' : 's'} with the same display identity. The Leads table now hides likely duplicates to reduce clutter, but the underlying rows remain available for audit.
-              </p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {leadLineage.sibling_leads.map((sibling) => (
-                  <span key={sibling.lead_id} className="rounded-full border border-amber-200 bg-white px-2 py-1 text-[11px] text-amber-800">
-                    {sibling.entity_name || 'Related lead'} - {sibling.pipeline_stage || sibling.outreach_status || 'research'}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Tab bar — scrollable on mobile */}
           <div className="flex overflow-x-auto border-b border-gray-200 scrollbar-hide">
             {TABS.map(tab => (
@@ -722,8 +726,80 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
           {/* TAB: OVERVIEW */}
           {activeTab === 'overview' && (
             <>
+              <div className="rounded-xl border border-gray-200 bg-white p-4">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900">What To Do Next</h3>
+                    <p className="mt-1 text-sm text-gray-600">{nextActionLabel}</p>
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-gray-500">
+                      <span>{enrichmentStatusLabel}</span>
+                      <span>{hasDirectContact ? 'Direct contact found' : 'No direct contact yet'}</span>
+                      <span>{enrichedLead.portfolio_size || 0} buildings</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 md:justify-end">
+                    <button
+                      onClick={() => handleEnrichAll(false)}
+                      disabled={isEnriching}
+                      className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+                    >
+                      {isEnriching ? `Checking... ${enrichmentElapsedSec}s` : enrichmentButtonLabel}
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('contacts')}
+                      className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                    >
+                      View Contacts
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('buildings')}
+                      className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                    >
+                      View Portfolio
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {(showEnrichmentPanel || enrichmentPreview) && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <h3 className="text-sm font-bold text-emerald-900">Enrichment Plan</h3>
+                      <p className="mt-1 text-sm text-emerald-800">
+                        This will look for direct phone/email, company website, public company profile data, NY DOS context, and a short company summary.
+                      </p>
+                      <div className="mt-3 grid gap-2 text-xs text-emerald-800 sm:grid-cols-2">
+                        <div className="rounded-lg bg-white/70 p-2">
+                          <div className="font-semibold">May update</div>
+                          <div>{enrichmentPreview?.wouldMutate?.join(', ') || 'contact, website, profile, and source fields'}</div>
+                        </div>
+                        <div className="rounded-lg bg-white/70 p-2">
+                          <div className="font-semibold">Will not do</div>
+                          <div>It will not log outreach, mark a contact verified, or change pipeline stage.</div>
+                        </div>
+                      </div>
+                      {enrichmentPreview?.message && (
+                        <p className="mt-3 text-xs text-emerald-800">{enrichmentPreview.message}</p>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => handleEnrichAll(true)}
+                      disabled={isEnriching}
+                      className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
+                    >
+                      {isEnriching ? `Running... ${enrichmentElapsedSec}s` : 'Run Enrichment'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Revenue & Violations */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <details className="rounded-xl border border-gray-200 bg-gray-50">
+                <summary className="cursor-pointer px-4 py-3 text-xs font-bold uppercase tracking-wider text-gray-600">
+                  Revenue, violations, and score detail
+                </summary>
+                <div className="grid grid-cols-1 gap-4 border-t border-gray-200 p-4 md:grid-cols-2">
                 <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
                   <h3 className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-2">Estimated Management Fee</h3>
                   {(enrichedLead.estimated_annual_revenue || 0) > 0 ? (
@@ -805,7 +881,8 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                     <div className="text-gray-400 text-sm">No violations on record</div>
                   )}
                 </div>
-              </div>
+                </div>
+              </details>
 
               {/* Portfolio Summary */}
               <div className="grid grid-cols-3 sm:grid-cols-3 gap-2 sm:gap-3">
@@ -856,18 +933,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                       .trim()
                   }</p>
                 ) : (
-                  <p className="text-sm text-gray-400 italic">Use "Check Enrichment" to see which public sources are available before any approved enrichment run.</p>
-                )}
-                {enrichmentPreview && (
-                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                    <div className="font-semibold">Enrichment check only</div>
-                    <p className="mt-1">
-                      {enrichmentPreview.message} No contact, website, or profile fields were changed.
-                    </p>
-                    {enrichmentPreview.wouldMutate && enrichmentPreview.wouldMutate.length > 0 && (
-                      <p className="mt-1">Would update: {enrichmentPreview.wouldMutate.join(', ')}.</p>
-                    )}
-                  </div>
+                  <p className="text-sm text-gray-400 italic">Use "Enrich Company" to look for public contact, website, and profile sources.</p>
                 )}
               </div>
 
@@ -952,10 +1018,26 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
           {/* TAB: EVIDENCE */}
           {activeTab === 'truth' && (
             <div className="space-y-4">
+              {leadLineage && leadLineage.sibling_count > 0 && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                  <div className="text-xs font-bold uppercase tracking-wider text-amber-700">Related workflow records</div>
+                  <p className="mt-1 text-sm text-amber-800">
+                    {duplicateSummary}. These rows are hidden from the main Leads table to reduce clutter, but remain available here for review.
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {leadLineage.sibling_leads.map((sibling) => (
+                      <span key={sibling.lead_id} className="rounded-full border border-amber-200 bg-white px-2 py-1 text-[11px] text-amber-800">
+                        {sibling.entity_name || 'Related lead'} - {sibling.pipeline_stage || sibling.outreach_status || 'research'}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className={`rounded-xl border p-4 ${confidenceClass(leadTruth?.overall_confidence_score)}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h3 className="text-sm font-bold">Evidence Summary</h3>
+                    <h3 className="text-sm font-bold">Source Summary</h3>
                     <p className="mt-1 max-w-xl text-xs opacity-85">{leadTruthHeadline}</p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {(leadTruth?.belief_summary.safe_actions || ['not_evaluated']).map((action) => (
@@ -990,7 +1072,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
               </div>
 
               <div className="bg-white border border-gray-200 rounded-xl p-4">
-                <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">What Matters</h4>
+                <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Key Source Findings</h4>
                 <div className="space-y-2">
                   {leadTruthVisibleClaims.map((claim) => (
                     <div key={claim.claim_id} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
@@ -1013,7 +1095,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
 
               <details aria-label="Evidence Ledger audit trail" className="bg-white border border-gray-200 rounded-xl overflow-hidden">
                 <summary className="cursor-pointer px-4 py-3 text-xs font-bold text-gray-700 uppercase tracking-wider">
-                  Audit trail ({leadTruthClaims.length} claims)
+                  Evidence ledger ({leadTruthClaims.length} claims)
                 </summary>
                 {!leadTruthClaims.length ? (
                   <p className="p-4 text-sm text-gray-400">No claims have been materialized or inferred for this lead yet.</p>
@@ -1080,13 +1162,13 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                  enrichedLead.enrichment_status === 'complete' ? 'Enrichment returned strong coverage: direct contact info and a company profile are available.' :
                  enrichedLead.enrichment_status === 'partial' ? 'Enrichment returned some useful data, but not every source produced a result.' :
                  enrichedLead.enrichment_status === 'failed' ? 'Enrichment ran but did not find public contact matches yet.' :
-                 'Enrichment has not run yet. Use "Check Enrichment" in the header to preview available contact/profile sources before any approved execution.'}
+                 'Enrichment has not run yet. Use "Enrich Company" to review the update plan, then run enrichment when ready.'}
               </div>
 
               {/* Single Enrich Action Guidance */}
               <div className={`${!enrichedLead.phone && !enrichedLead.email ? 'bg-emerald-50 border border-emerald-200 rounded-xl p-4' : 'bg-gray-50 rounded-xl p-4'}`}>
                 <p className="text-sm text-gray-600">
-                  Use `Check Enrichment` in the header to review Google Places, NY DOS, public web, Hunter, and AI-summary availability before any approved execution.
+                  Use `Enrich Company` to review Google Places, NY DOS, public web, Hunter, and AI-summary availability before running the update.
                 </p>
                 <p className="text-[10px] text-gray-400 mt-1.5">
                   The result may be `partial` when only some sources match. That is expected and safer than implying full coverage.
@@ -1168,7 +1250,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 )}
 
                 {!enrichedLead.phone && !enrichedLead.email && !enrichedLead.website && (
-                  <p className="text-gray-400 text-sm italic">No contact info yet. Use "Check Enrichment" above to preview available contact, website, and profile sources.</p>
+                  <p className="text-gray-400 text-sm italic">No contact info yet. Use "Enrich Company" to look for contact, website, and profile sources.</p>
                 )}
               </div>
 

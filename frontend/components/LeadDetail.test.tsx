@@ -214,15 +214,15 @@ describe('LeadDetail outreach evidence safety', () => {
 
     renderLeadDetail();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Evidence' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Sources' }));
 
-    expect((await screen.findAllByText('Evidence Summary')).length).toBeGreaterThanOrEqual(1);
+    expect((await screen.findAllByText('Source Summary')).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Needs review').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Use with caution').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('What Matters')).toBeInTheDocument();
+    expect(screen.getByText('Key Source Findings')).toBeInTheDocument();
     expect(screen.getAllByText('Management relationship needs review').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Contact path found: phone, website').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('Audit trail (2 claims)')).toBeInTheDocument();
+    expect(screen.getByText('Evidence ledger (2 claims)')).toBeInTheDocument();
     expect(screen.queryByText('Current Beliefs')).not.toBeInTheDocument();
     expect(screen.queryByText(/has_current_management_link/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/has_contact_path/i)).not.toBeInTheDocument();
