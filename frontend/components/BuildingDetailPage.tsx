@@ -284,22 +284,22 @@ const BuildingDetailPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <button onClick={() => navigate('/buildings')} className="text-sm text-gray-500 hover:text-gray-700 mb-2 flex items-center gap-1">
             ← Back to Buildings
           </button>
-          <h1 className="text-2xl font-bold text-gray-900">{building.address || building.bbl}</h1>
-          <div className="flex items-center gap-3 mt-1 text-sm text-gray-500">
+          <h1 className="break-words text-2xl font-bold text-gray-900">{building.address || building.bbl}</h1>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-500">
             <span>{building.borough}</span>
             <span title="Borough-Block-Lot: NYC's unique property identifier">BBL: {building.bbl}</span>
             {building.unit_count && <span>{building.unit_count} units</span>}
             {building.year_built && <span>Built {building.year_built}</span>}
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex w-full items-center justify-between gap-3 sm:w-auto sm:justify-end">
           {building.churn_score !== null ? (
-            <div className="text-right">
+            <div className="shrink-0 text-left sm:text-right">
               <div className={`text-3xl font-bold ${getChurnTone(building.churn_score)}`}>
                 {building.churn_score.toFixed(1)}
               </div>
@@ -308,14 +308,14 @@ const BuildingDetailPage: React.FC = () => {
               </div>
             </div>
           ) : (
-            <div className="text-right">
+            <div className="shrink-0 text-left sm:text-right">
               <div className="text-2xl font-semibold text-gray-400">--</div>
               <div className="text-[11px] text-gray-500">Score pending</div>
             </div>
           )}
           <button
             onClick={handleAddToPipeline}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+            className="min-w-0 flex-1 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 sm:flex-none"
           >
             Add to Pipeline
           </button>
