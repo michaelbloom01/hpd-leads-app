@@ -696,7 +696,7 @@ export async function refreshPipeline(full: boolean = false): Promise<{
     dispatch_mode: data.dispatch_mode,
     approval_required: Boolean(data.approval_required),
     message: data.status === 'approval_required'
-      ? 'Refresh preview ready. Execution requires explicit approval and confirm_execute=true.'
+      ? 'Data refresh check ready. No refresh was queued; execution requires explicit approval and confirm_execute=true.'
       : undefined,
   };
 }
@@ -885,7 +885,7 @@ export async function enrichLeadAll(leadId: string): Promise<{
   if (data.status === 'approval_required') {
     return {
       ...data,
-      message: 'Lead enrichment preview ready. Execution requires explicit approval and confirm_execute=true.',
+      message: 'Lead enrichment check ready. No enrichment was queued; execution requires explicit approval and confirm_execute=true.',
     };
   }
   return data;

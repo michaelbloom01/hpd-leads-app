@@ -860,7 +860,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 )}
                 {enrichmentPreview && (
                   <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                    <div className="font-semibold">Enrichment preview only</div>
+                    <div className="font-semibold">Enrichment check only</div>
                     <p className="mt-1">
                       {enrichmentPreview.message} No contact, website, or profile fields were changed.
                     </p>
