@@ -387,15 +387,10 @@ async def browse_buildings(
         params["search"] = f"%{search}%"
 
     where_sql = " AND ".join(wheres) if wheres else "1=1"
-    allowed_sorts = {"churn_score", "unit_count", "borough", "address", "assessed_value"}
+    allowed_sorts = {"unit_count", "borough", "address", "assessed_value"}
     sort_col = sort_by if sort_by in allowed_sorts else "churn_score"
     direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
-
-    count_result = await session.execute(
-        text(f"SELECT COUNT(*) FROM buildings b WHERE {where_sql}"),
-        params,
-    )
-    total = count_result.scalar()
+    order_sql = "b.bbl ASC" if sort_col == "churn_score" else f"b.{sort_col} {direction} NULLS LAST"
 
     result = await session.execute(
         text(f"""
@@ -410,7 +405,7 @@ async def browse_buildings(
                    NULL::text AS pm_company
             FROM buildings b
             WHERE {where_sql}
-            ORDER BY b.{sort_col} {direction} NULLS LAST
+            ORDER BY {order_sql}
             LIMIT :limit OFFSET :offset
         """),
         params,
@@ -422,6 +417,7 @@ async def browse_buildings(
             b.get("borough"),
             b.get("building_type"),
         )
+    total = offset + len(buildings) + (1 if len(buildings) == limit else 0)
     return {"buildings": buildings, "total": total, "limit": limit, "offset": offset}
 
 
