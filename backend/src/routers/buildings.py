@@ -189,7 +189,7 @@ async def list_buildings(
     user: AuthUser = Depends(get_current_user),
 ):
     wheres = []
-    params: dict = {"limit": limit, "offset": offset}
+    params: dict = {"limit": limit, "offset": offset, "lead_id": lead_id}
 
     if borough:
         wheres.append("b.borough = :borough")
@@ -264,28 +264,12 @@ async def list_buildings(
                    page.churn_score, page.churn_category, page.key_signal,
                    page.coverage_ratio, page.outreach_status, page.last_scored_at,
                    page.latitude, page.longitude, page.coordinate_source, page.coordinate_precision,
-                   m.current_lead_id, m.current_link_count, m.current_link_lead_ids,
-                   m.current_link_conflict, pm.pm_company
+                   :lead_id AS current_lead_id,
+                   NULL::int AS current_link_count,
+                   ARRAY[]::text[] AS current_link_lead_ids,
+                   false AS current_link_conflict,
+                   NULL::text AS pm_company
             FROM page
-            LEFT JOIN LATERAL (
-                SELECT
-                    CASE
-                        WHEN COUNT(*) = 1 AND COUNT(DISTINCT bm.lead_id) = 1 THEN MAX(bm.lead_id)
-                        ELSE NULL
-                    END AS current_lead_id,
-                    COUNT(*)::int AS current_link_count,
-                    ARRAY_AGG(DISTINCT bm.lead_id ORDER BY bm.lead_id) AS current_link_lead_ids,
-                    (COUNT(*) > 1 OR COUNT(DISTINCT bm.lead_id) > 1) AS current_link_conflict
-                FROM building_management bm
-                WHERE bm.bbl = page.bbl
-                  AND bm.is_current = true
-            ) m ON TRUE
-            LEFT JOIN LATERAL (
-                SELECT bc.corporation_name AS pm_company
-                FROM building_contacts bc
-                WHERE bc.bbl = page.bbl AND bc.contact_type = 'Agent'
-                LIMIT 1
-            ) pm ON TRUE
         """),
         params,
     )
