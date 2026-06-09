@@ -324,6 +324,107 @@ async def building_stats(
     }
 
 
+@router.get("/browse")
+@limiter.limit("60/minute")
+async def browse_buildings(
+    request: Request,
+    borough: Optional[str] = Query(None, max_length=100),
+    building_type: Optional[str] = None,
+    min_units: Optional[int] = None,
+    max_units: Optional[int] = None,
+    min_churn: Optional[float] = None,
+    max_churn: Optional[float] = None,
+    churn_category: Optional[str] = None,
+    outreach_status: Optional[str] = None,
+    lead_id: Optional[str] = None,
+    search: Optional[str] = Query(None, max_length=200),
+    sort_by: str = "churn_score",
+    sort_dir: str = "desc",
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Fast building browse endpoint for list/map surfaces.
+
+    Keep relationship and contact decoration on detail/contacts endpoints so the
+    primary Buildings table cannot be taken down by expensive lateral lookups.
+    """
+    wheres = []
+    params: dict = {"limit": limit, "offset": offset, "lead_id": lead_id}
+
+    if borough:
+        wheres.append("b.borough = :borough")
+        params["borough"] = borough
+    if building_type:
+        wheres.append("b.building_type = :btype")
+        params["btype"] = building_type
+    if min_units is not None:
+        wheres.append("b.unit_count >= :min_units")
+        params["min_units"] = min_units
+    if max_units is not None:
+        wheres.append("b.unit_count <= :max_units")
+        params["max_units"] = max_units
+    if min_churn is not None:
+        wheres.append("b.churn_score >= :min_churn")
+        params["min_churn"] = min_churn
+    if max_churn is not None:
+        wheres.append("b.churn_score <= :max_churn")
+        params["max_churn"] = max_churn
+    if churn_category:
+        wheres.append("b.churn_category = :category")
+        params["category"] = churn_category
+    if lead_id:
+        wheres.append("EXISTS (SELECT 1 FROM building_management bm WHERE bm.bbl = b.bbl AND bm.lead_id = :lead_id AND bm.is_current)")
+    if outreach_status:
+        if outreach_status == "in_pipeline":
+            wheres.append("b.outreach_status != 'none'")
+        else:
+            wheres.append("b.outreach_status = :ostatus")
+            params["ostatus"] = outreach_status
+    if search:
+        wheres.append("(b.address ILIKE :search OR b.bbl ILIKE :search)")
+        params["search"] = f"%{search}%"
+
+    where_sql = " AND ".join(wheres) if wheres else "1=1"
+    allowed_sorts = {"churn_score", "unit_count", "borough", "address", "assessed_value"}
+    sort_col = sort_by if sort_by in allowed_sorts else "churn_score"
+    direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
+
+    count_result = await session.execute(
+        text(f"SELECT COUNT(*) FROM buildings b WHERE {where_sql}"),
+        params,
+    )
+    total = count_result.scalar()
+
+    result = await session.execute(
+        text(f"""
+            SELECT b.bbl, b.address, b.borough, b.unit_count, b.building_type,
+                   b.churn_score, b.churn_category, b.key_signal,
+                   b.coverage_ratio, b.outreach_status, b.last_scored_at,
+                   b.latitude, b.longitude, b.coordinate_source, b.coordinate_precision,
+                   :lead_id AS current_lead_id,
+                   NULL::int AS current_link_count,
+                   ARRAY[]::text[] AS current_link_lead_ids,
+                   false AS current_link_conflict,
+                   NULL::text AS pm_company
+            FROM buildings b
+            WHERE {where_sql}
+            ORDER BY b.{sort_col} {direction} NULLS LAST
+            LIMIT :limit OFFSET :offset
+        """),
+        params,
+    )
+    buildings = [dict(r._mapping) for r in result]
+    for b in buildings:
+        b["estimated_annual_revenue"] = estimate_building_revenue(
+            b.get("unit_count"),
+            b.get("borough"),
+            b.get("building_type"),
+        )
+    return {"buildings": buildings, "total": total, "limit": limit, "offset": offset}
+
+
 @router.get("/hot")
 @limiter.limit("60/minute")
 async def hot_buildings(

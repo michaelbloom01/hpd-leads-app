@@ -222,7 +222,7 @@ export function fetchBuildings(params: BuildingsQueryParams = {}): Promise<Build
     if (v !== undefined && v !== null && v !== '') sp.set(k, String(v));
   });
   const qs = sp.toString();
-  return apiGet(`/api/v1/buildings${qs ? '?' + qs : ''}`, 60000);
+  return apiGet(`/api/v1/buildings/browse${qs ? '?' + qs : ''}`, 60000);
 }
 
 export function fetchBuildingStats(): Promise<BuildingStats> {
