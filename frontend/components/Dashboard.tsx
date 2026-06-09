@@ -988,7 +988,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectLead, onNavigateToLeads }
                 disabled={startingEnrichment}
                 className="text-[10px] px-2 py-1 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors font-medium disabled:opacity-50"
               >
-                {startingEnrichment ? 'Checking...' : 'Preview Top 500'}
+                {startingEnrichment ? 'Checking...' : 'Check Top 500'}
               </button>
             )}
           </div>

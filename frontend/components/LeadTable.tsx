@@ -458,7 +458,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
     try {
       const result = await startSelectedLeadsEnrichment(Array.from(selectedIds));
       if (result.status === 'approval_required') {
-        toast(result.message || `Selected enrichment preview ready for ${result.target_count} lead(s).`);
+        toast(result.message || `Selected enrichment check ready for ${result.target_count} lead(s). No enrichment was queued.`);
       } else if (result.missing_lead_ids.length > 0) {
         toast.success(`Queued enrichment for ${result.target_count} lead(s). ${result.missing_lead_ids.length} selection(s) were skipped.`);
       } else if (result.dispatch_mode === 'in_process') {
@@ -469,7 +469,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
       setSelectedIds(new Set());
     } catch (err) {
       console.error('Enrichment failed:', err);
-      toast.error('Failed to queue enrichment. Please try again.');
+      toast.error('Failed to check enrichment. Please try again.');
     } finally {
       setEnriching(false);
     }
@@ -1000,7 +1000,7 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                 disabled={enriching}
                 className="px-4 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                {enriching ? 'Checking...' : `Preview ${selectedIds.size} Selected`}
+                {enriching ? 'Checking...' : `Check ${selectedIds.size} Selected`}
               </button>
             </div>
           )}

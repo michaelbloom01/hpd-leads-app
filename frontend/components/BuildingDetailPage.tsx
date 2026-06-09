@@ -179,7 +179,7 @@ const BuildingDetailPage: React.FC = () => {
       if (response.status === 'skipped') {
         toast.error('No corporate owner found for DOS lookup');
       } else if (response.status === 'approval_required') {
-        toast.success('DOS refresh preview ready; no refresh was queued');
+        toast.success('DOS contact check ready; no refresh was queued');
       } else {
         toast.success(response.status === 'refreshing' ? 'DOS refresh requested' : 'DOS contacts updated');
       }
@@ -482,7 +482,7 @@ const BuildingDetailPage: React.FC = () => {
                     disabled={isRefreshingDos}
                     className="shrink-0 rounded border border-current px-2 py-1 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {isRefreshingDos ? 'Requesting...' : dosStatus === 'not_loaded' ? 'Preview DOS contacts refresh' : 'Preview DOS contacts refresh'}
+                    {isRefreshingDos ? 'Checking...' : 'Check DOS contacts'}
                   </button>
                 )}
               </div>

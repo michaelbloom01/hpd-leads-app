@@ -770,7 +770,7 @@ export async function startSelectedLeadsEnrichment(
   if (data.status === 'approval_required') {
     return {
       ...data,
-      message: `Selected enrichment preview ready for ${data.target_count || 0} lead(s). Execution requires explicit approval and confirm_execute=true.`,
+      message: `Selected enrichment check ready for ${data.target_count || 0} lead(s). No enrichment was queued; execution requires explicit approval and confirm_execute=true.`,
     };
   }
   return data;
