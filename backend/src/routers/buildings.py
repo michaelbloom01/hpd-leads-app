@@ -395,9 +395,7 @@ async def browse_buildings(
     result = await session.execute(
         text(f"""
             SELECT b.bbl, b.address, b.borough, b.unit_count, b.building_type,
-                   b.churn_score, b.churn_category, b.key_signal,
-                   b.coverage_ratio, b.outreach_status, b.last_scored_at,
-                   b.latitude, b.longitude, b.coordinate_source, b.coordinate_precision
+                   b.churn_score, b.churn_category, b.key_signal
             FROM buildings b
             WHERE {where_sql}
             ORDER BY {order_sql}
@@ -412,6 +410,13 @@ async def browse_buildings(
         b["current_link_lead_ids"] = []
         b["current_link_conflict"] = False
         b["pm_company"] = None
+        b["coverage_ratio"] = None
+        b["outreach_status"] = None
+        b["last_scored_at"] = None
+        b["latitude"] = None
+        b["longitude"] = None
+        b["coordinate_source"] = None
+        b["coordinate_precision"] = None
         b["estimated_annual_revenue"] = estimate_building_revenue(
             b.get("unit_count"),
             b.get("borough"),
