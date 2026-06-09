@@ -1938,7 +1938,7 @@ async def get_stats(request: Request, session: AsyncSession = Depends(get_sessio
     # Score distribution (buckets)
     score_dist = {
         r[0]: r[1]
-        for r in (await session.execute(text("""
+        for r in (await session.execute(text(f"""
             SELECT
                 CASE
                     WHEN score < 20 THEN '0-20'
@@ -1955,7 +1955,7 @@ async def get_stats(request: Request, session: AsyncSession = Depends(get_sessio
     # Portfolio size distribution
     portfolio_dist = {
         r[0]: r[1]
-        for r in (await session.execute(text("""
+        for r in (await session.execute(text(f"""
             SELECT
                 CASE
                     WHEN portfolio_size <= 5 THEN '1-5'

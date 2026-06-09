@@ -250,13 +250,23 @@ async def list_buildings(
 
     result = await session.execute(
         text(f"""
-            SELECT b.bbl, b.address, b.borough, b.unit_count, b.building_type,
-                   b.churn_score, b.churn_category, b.key_signal,
-                   b.coverage_ratio, b.outreach_status, b.last_scored_at,
-                   b.latitude, b.longitude, b.coordinate_source, b.coordinate_precision,
+            WITH page AS (
+                SELECT b.bbl, b.address, b.borough, b.unit_count, b.building_type,
+                       b.churn_score, b.churn_category, b.key_signal,
+                       b.coverage_ratio, b.outreach_status, b.last_scored_at,
+                       b.latitude, b.longitude, b.coordinate_source, b.coordinate_precision
+                FROM buildings b
+                WHERE {where_sql}
+                ORDER BY b.{sort_col} {direction} NULLS LAST
+                LIMIT :limit OFFSET :offset
+            )
+            SELECT page.bbl, page.address, page.borough, page.unit_count, page.building_type,
+                   page.churn_score, page.churn_category, page.key_signal,
+                   page.coverage_ratio, page.outreach_status, page.last_scored_at,
+                   page.latitude, page.longitude, page.coordinate_source, page.coordinate_precision,
                    m.current_lead_id, m.current_link_count, m.current_link_lead_ids,
                    m.current_link_conflict, pm.pm_company
-            FROM buildings b
+            FROM page
             LEFT JOIN LATERAL (
                 SELECT
                     CASE
@@ -267,18 +277,15 @@ async def list_buildings(
                     ARRAY_AGG(DISTINCT bm.lead_id ORDER BY bm.lead_id) AS current_link_lead_ids,
                     (COUNT(*) > 1 OR COUNT(DISTINCT bm.lead_id) > 1) AS current_link_conflict
                 FROM building_management bm
-                WHERE bm.bbl = b.bbl
+                WHERE bm.bbl = page.bbl
                   AND bm.is_current = true
             ) m ON TRUE
             LEFT JOIN LATERAL (
                 SELECT bc.corporation_name AS pm_company
                 FROM building_contacts bc
-                WHERE bc.bbl = b.bbl AND bc.contact_type = 'Agent'
+                WHERE bc.bbl = page.bbl AND bc.contact_type = 'Agent'
                 LIMIT 1
             ) pm ON TRUE
-            WHERE {where_sql}
-            ORDER BY b.{sort_col} {direction} NULLS LAST
-            LIMIT :limit OFFSET :offset
         """),
         params,
     )
