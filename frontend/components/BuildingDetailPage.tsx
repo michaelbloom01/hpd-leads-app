@@ -240,6 +240,12 @@ const BuildingDetailPage: React.FC = () => {
   const truthSchemaReady = (truthSummary as SubjectTruthSummary | undefined)?.schema_status?.ready;
   const contradictionCount = truthSummary?.belief_summary.contradiction_count || 0;
   const truthHeadline = truthSummaryHeadline(truthSummary, 'building');
+  const evidenceHeadline = truthSummary?.schema_status && !truthSchemaReady
+    ? 'Verified-confidence review is still being activated. Use the source table below as the operating view for contacts and roles.'
+    : truthHeadline;
+  const evidenceClass = truthSummary?.schema_status && !truthSchemaReady
+    ? 'bg-gray-50 text-gray-700 border-gray-200'
+    : confidenceClass(truthSummary?.overall_confidence_score);
   const strongestTruthClaims = visibleTruthClaims(truthClaims, 4);
   const dosBanner = (() => {
     if (dosStatus === 'refreshing') {
@@ -316,18 +322,18 @@ const BuildingDetailPage: React.FC = () => {
         </div>
       </div>
 
-      <div className={`rounded-lg border p-5 ${confidenceClass(truthSummary?.overall_confidence_score)}`}>
+      <div className={`rounded-lg border p-4 ${evidenceClass}`}>
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="font-semibold">Data Confidence</h2>
-              {truthSummary?.schema_status && (
+              <h2 className="font-semibold">Evidence Check</h2>
+              {truthSummary?.schema_status && truthSchemaReady && (
                 <span className="rounded border border-current px-2 py-0.5 text-[11px] font-medium">
-                  {truthSchemaReady ? 'ledger online' : 'ledger setup incomplete'}
+                  review layer online
                 </span>
               )}
             </div>
-            <p className="mt-1 max-w-2xl text-sm opacity-85">{truthHeadline}</p>
+            <p className="mt-1 max-w-2xl text-sm opacity-85">{evidenceHeadline}</p>
             <div className="mt-3 flex flex-wrap gap-2">
               {(truthSummary?.belief_summary.safe_actions || ['not_evaluated']).map((action) => (
                 <span key={action} className="rounded-full bg-white/70 px-2 py-1 text-[11px] font-medium">
@@ -351,7 +357,7 @@ const BuildingDetailPage: React.FC = () => {
 
         <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
           {[
-            ['Claims checked', truthSummary?.claims.length ?? '--'],
+            ['Evidence items', truthSummary?.claims.length ?? '--'],
             ['Conflicts', contradictionCount],
             ['Supporting sources', truthSummary?.belief_summary.supporting_sources?.length ?? '--'],
             ['Contradicting sources', truthSummary?.belief_summary.contradicting_sources?.length ?? 0],
@@ -364,7 +370,7 @@ const BuildingDetailPage: React.FC = () => {
         </div>
 
         <div className="mt-4 rounded border border-white/70 bg-white/70 p-3">
-          <h3 className="text-xs font-bold uppercase tracking-wider opacity-70">What Matters</h3>
+          <h3 className="text-xs font-bold uppercase tracking-wider opacity-70">Key Evidence</h3>
           <div className="mt-2 space-y-2">
             {(strongestTruthClaims.length ? strongestTruthClaims : truthClaims).slice(0, 4).map((claim) => (
               <div key={claim.claim_id} className="rounded border border-white bg-white/80 px-3 py-2">
@@ -390,12 +396,12 @@ const BuildingDetailPage: React.FC = () => {
           className="mt-3 rounded border border-white/70 bg-white/60"
         >
           <summary className="cursor-pointer px-3 py-2 text-xs font-bold uppercase tracking-wider opacity-75">
-            Audit trail ({truthClaims.length} claims)
+            Source details ({truthClaims.length} items)
           </summary>
           <div className="border-t border-white/70 p-3">
             {!truthClaims.length ? (
               <p className="mt-2 text-sm opacity-75">
-                No building-level claims are materialized yet. The schema/ledger gate is keeping this from looking more certain than it is.
+                No building-level evidence items are available yet. Use the source table below until confidence review is ready.
               </p>
             ) : (
               <div className="mt-2 space-y-2">
@@ -728,7 +734,7 @@ const BuildingDetailPage: React.FC = () => {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="font-semibold text-gray-900">Building Map</h2>
-            <p className="text-sm text-gray-500 mt-1">Map the current building record in the same shared map component used elsewhere in the app.</p>
+            <p className="text-sm text-gray-500 mt-1">Shows the building location when stored or public geocoded coordinates are available.</p>
           </div>
         </div>
         <Suspense fallback={<div className="h-[280px] bg-gray-100 rounded-lg animate-pulse" />}>
@@ -743,6 +749,7 @@ const BuildingDetailPage: React.FC = () => {
             }]}
             boro={building.borough || undefined}
             height="280px"
+            allowClientGeocodingFallback
           />
         </Suspense>
       </div>

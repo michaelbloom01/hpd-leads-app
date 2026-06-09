@@ -81,7 +81,7 @@ const TargetsPage: React.FC = () => {
   const queryClient = useQueryClient();
   const [selectedListId, setSelectedListId] = useState<string | null>(null);
   const [newListName, setNewListName] = useState('Prime PM Targets');
-  const [newListDescription, setNewListDescription] = useState('Curated acquisition target list');
+  const [newListDescription, setNewListDescription] = useState('');
   const [pasteText, setPasteText] = useState('');
   const [discoveries, setDiscoveries] = useState<TargetDiscovery[]>([]);
 
@@ -168,7 +168,7 @@ const TargetsPage: React.FC = () => {
                 placeholder="Description"
               />
               <button
-                onClick={() => createListMutation.mutate({ name: newListName, description: newListDescription })}
+                onClick={() => createListMutation.mutate({ name: newListName.trim(), description: newListDescription.trim() || undefined })}
                 className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700"
               >
                 {createListMutation.isPending ? 'Creating...' : 'Create List'}

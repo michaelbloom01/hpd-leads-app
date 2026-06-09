@@ -233,9 +233,28 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({
   }
   if (positions.length === 0) {
     if (skippedCount > 0) {
+      const fallbackLinks = normalizedBuildings.slice(0, 5);
       return (
-        <div style={{ height, width: '100%' }} className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
-          Map unavailable right now because this portfolio does not yet have persisted building coordinates. Run the coordinate sync job to materialize stored markers instead of relying on approximate browser geocoding.
+        <div style={{ minHeight: height, width: '100%' }} className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+          <div className="font-semibold">Map markers are not available yet</div>
+          <p className="mt-1">
+            This portfolio has addresses but no stored coordinates available to the embedded map right now.
+          </p>
+          {fallbackLinks.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {fallbackLinks.map((building) => (
+                <a
+                  key={`${building.addr}-${building.buildingBoro}`}
+                  href={`https://www.google.com/maps/search/${encodeURIComponent(`${building.addr}, ${building.buildingBoro || 'New York'}, NY`)}`}
+                  target="_blank"
+                  rel="noopener"
+                  className="rounded border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-800 hover:bg-amber-100"
+                >
+                  Map {building.addr}
+                </a>
+              ))}
+            </div>
+          )}
         </div>
       );
     }

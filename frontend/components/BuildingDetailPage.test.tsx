@@ -117,14 +117,14 @@ describe('BuildingDetailPage truth confidence', () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText('Data Confidence')).toBeInTheDocument();
+    expect(await screen.findByText('Evidence Check')).toBeInTheDocument();
     expect((await screen.findAllByText('82%')).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('Needs review')).toBeInTheDocument();
     expect(screen.getByText('Outreach-ready')).toBeInTheDocument();
     expect(screen.getAllByText('Owner relationship found: Example Owner LLC').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Ownership sources conflict. Use as diligence context until reviewed.').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('What Matters')).toBeInTheDocument();
-    expect(screen.getByText('Audit trail (1 claims)')).toBeInTheDocument();
+    expect(screen.getByText('Key Evidence')).toBeInTheDocument();
+    expect(screen.getByText('Source details (1 items)')).toBeInTheDocument();
     expect(screen.getByText('2 supporting')).toBeInTheDocument();
     expect(screen.getByText('1 contradicting')).toBeInTheDocument();
     expect(screen.getByText(/Sources: ACRIS, HPD registration, outreach feedback \(conflicts\)/i)).toBeInTheDocument();

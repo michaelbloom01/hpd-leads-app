@@ -214,9 +214,9 @@ describe('LeadDetail outreach evidence safety', () => {
 
     renderLeadDetail();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Truth' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Evidence' }));
 
-    expect((await screen.findAllByText('Data Confidence')).length).toBeGreaterThanOrEqual(1);
+    expect((await screen.findAllByText('Evidence Summary')).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Needs review').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Use with caution').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('What Matters')).toBeInTheDocument();

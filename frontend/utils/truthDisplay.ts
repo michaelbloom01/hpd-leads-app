@@ -35,7 +35,7 @@ const HUMAN_LABELS: Record<string, string> = {
   recommended_outreach: 'Outreach-ready',
   review_queue: 'review queue',
   safe_to_mark_verified: 'safe to mark verified',
-  schema_not_ready: 'ledger setup incomplete',
+  schema_not_ready: 'Evidence review not ready',
   source_acquisition_frontier: 'source-acquisition frontier',
   source_gap: 'Needs more sources',
   source_ready: 'source-ready',
