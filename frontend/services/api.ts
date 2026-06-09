@@ -1099,7 +1099,7 @@ export async function startBatchEnrichment(limit: number = 100): Promise<{
   if (data.status === 'approval_required') {
     return {
       status: 'approval_required',
-      message: `Enrichment preview ready for top ${safeLimit || requestedLimit} lead(s). Execution requires explicit approval and confirm_execute=true.`,
+      message: `Enrichment check ready for top ${safeLimit || requestedLimit} lead(s). No enrichment was queued; execution requires explicit approval and confirm_execute=true.`,
       target_count: safeLimit || requestedLimit,
       dispatch_mode: dispatchMode,
       approval_required: true,

@@ -55,7 +55,8 @@ describe('api service', () => {
 
     expect(result.status).toBe('approval_required');
     expect(result.approval_required).toBe(true);
-    expect(result.message).toMatch(/preview ready/i);
+    expect(result.message).toMatch(/check ready/i);
+    expect(result.message).toMatch(/No enrichment was queued/i);
     expect(result.message).not.toMatch(/^Queued/i);
   });
 
@@ -75,7 +76,8 @@ describe('api service', () => {
     expect(result.status).toBe('approval_required');
     expect(result.job_id).toBeNull();
     expect(result.approval_required).toBe(true);
-    expect(result.message).toMatch(/preview ready/i);
+    expect(result.message).toMatch(/check ready/i);
+    expect(result.message).toMatch(/No enrichment was queued/i);
     expect(result.message).not.toMatch(/^Queued/i);
   });
 
