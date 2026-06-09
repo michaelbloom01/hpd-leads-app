@@ -398,7 +398,7 @@ async def browse_buildings(
                    b.churn_score, b.churn_category, b.key_signal,
                    b.coverage_ratio, b.outreach_status, b.last_scored_at,
                    b.latitude, b.longitude, b.coordinate_source, b.coordinate_precision,
-                   :lead_id AS current_lead_id,
+                   CAST(:lead_id AS TEXT) AS current_lead_id,
                    NULL::int AS current_link_count,
                    ARRAY[]::text[] AS current_link_lead_ids,
                    false AS current_link_conflict,
