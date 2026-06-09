@@ -397,12 +397,7 @@ async def browse_buildings(
             SELECT b.bbl, b.address, b.borough, b.unit_count, b.building_type,
                    b.churn_score, b.churn_category, b.key_signal,
                    b.coverage_ratio, b.outreach_status, b.last_scored_at,
-                   b.latitude, b.longitude, b.coordinate_source, b.coordinate_precision,
-                   CAST(:lead_id AS TEXT) AS current_lead_id,
-                   NULL::int AS current_link_count,
-                   ARRAY[]::text[] AS current_link_lead_ids,
-                   false AS current_link_conflict,
-                   NULL::text AS pm_company
+                   b.latitude, b.longitude, b.coordinate_source, b.coordinate_precision
             FROM buildings b
             WHERE {where_sql}
             ORDER BY {order_sql}
@@ -412,6 +407,11 @@ async def browse_buildings(
     )
     buildings = [dict(r._mapping) for r in result]
     for b in buildings:
+        b["current_lead_id"] = lead_id
+        b["current_link_count"] = None
+        b["current_link_lead_ids"] = []
+        b["current_link_conflict"] = False
+        b["pm_company"] = None
         b["estimated_annual_revenue"] = estimate_building_revenue(
             b.get("unit_count"),
             b.get("borough"),
