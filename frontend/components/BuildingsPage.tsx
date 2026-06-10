@@ -35,17 +35,19 @@ const churnBadge = (category: string | null) => {
 };
 
 const baseColumns = [
-  columnHelper.accessor('bbl', {
-    header: 'BBL (Borough-Block-Lot)',
-    cell: info => (
-      <span className="text-gray-600 font-mono text-xs" title="NYC's unique property identifier">
-        {info.getValue() || '--'}
-      </span>
-    ),
-  }),
   columnHelper.accessor('address', {
-    header: 'Address',
-    cell: info => <span className="font-medium text-gray-900">{info.getValue() || '--'}</span>,
+    header: 'Building',
+    cell: info => {
+      const building = info.row.original;
+      return (
+        <div>
+          <div className="font-medium text-gray-900">{info.getValue() || '--'}</div>
+          <div className="mt-0.5 text-[11px] text-gray-400">
+            BBL {building.bbl || '--'}
+          </div>
+        </div>
+      );
+    },
   }),
   columnHelper.accessor('borough', { header: 'Borough' }),
   columnHelper.accessor('pm_company', {
@@ -325,7 +327,7 @@ const BuildingsPage: React.FC = () => {
       <div className="flex flex-wrap gap-3 items-center">
         <input
           type="text"
-          placeholder="Search address or BBL (Borough-Block-Lot)..."
+          placeholder="Search address, PM company, or BBL..."
           value={searchInput}
           onChange={e => setSearchInput(e.target.value)}
           className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent w-64"
