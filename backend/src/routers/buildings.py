@@ -3,6 +3,7 @@
 The PM Operator's primary workspace: find buildings with high churn
 probability, understand why, and do outreach.
 """
+import asyncio
 import logging
 import re
 import json
@@ -19,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.session import get_session
 from src.auth.auth import AuthUser, get_current_user
 from src.score.revenue import estimate_building_revenue
+from src.services.building_geocode import geocode_building
 from src.services.contact_roster import get_building_contacts
 from src.services.outreach_feedback import load_outreach_feedback_truth_write_status, record_outreach_feedback_claims
 
@@ -26,6 +28,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/buildings", tags=["buildings"])
 limiter = Limiter(key_func=get_remote_address)
 DOS_REFRESH_COOLDOWN = timedelta(minutes=5)
+NYC_COORDINATE_BOUNDS = {
+    "min_latitude": 40.45,
+    "max_latitude": 40.95,
+    "min_longitude": -74.3,
+    "max_longitude": -73.65,
+}
+MAP_MARKER_GEOCODE_CONCURRENCY = 8
 
 
 def _normalize_bbl_digits(raw_value: Optional[str]) -> Optional[str]:
@@ -42,6 +51,46 @@ def _normalize_bbl_digits(raw_value: Optional[str]) -> Optional[str]:
     if 0 < len(digits) < 10:
         return digits.zfill(10)
     return None
+
+
+def _parse_coordinate(value) -> Optional[float]:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed != parsed or parsed in (float("inf"), float("-inf")):
+        return None
+    return parsed
+
+
+def _is_nyc_coordinate(latitude, longitude) -> bool:
+    lat = _parse_coordinate(latitude)
+    lon = _parse_coordinate(longitude)
+    if lat is None or lon is None:
+        return False
+    return (
+        NYC_COORDINATE_BOUNDS["min_latitude"] <= lat <= NYC_COORDINATE_BOUNDS["max_latitude"]
+        and NYC_COORDINATE_BOUNDS["min_longitude"] <= lon <= NYC_COORDINATE_BOUNDS["max_longitude"]
+    )
+
+
+def _coordinate_key(latitude, longitude) -> str:
+    lat = _parse_coordinate(latitude)
+    lon = _parse_coordinate(longitude)
+    return f"{lat:.5f},{lon:.5f}" if lat is not None and lon is not None else ""
+
+
+def _has_collapsed_coordinates(rows: list[dict]) -> bool:
+    coordinate_counts: dict[str, int] = {}
+    for row in rows:
+        if _is_nyc_coordinate(row.get("latitude"), row.get("longitude")):
+            key = _coordinate_key(row.get("latitude"), row.get("longitude"))
+            coordinate_counts[key] = coordinate_counts.get(key, 0) + 1
+    stored_candidate_count = sum(coordinate_counts.values())
+    if stored_candidate_count < 5:
+        return False
+    unique_count = len(coordinate_counts)
+    return unique_count <= max(1, int((stored_candidate_count + 9) // 10))
 
 
 async def _resolve_canonical_bbl(session: AsyncSession, raw_bbl: str) -> Optional[str]:
@@ -519,6 +568,121 @@ async def browse_buildings(
         )
     total = offset + len(buildings) + (1 if len(buildings) == limit else 0)
     return {"buildings": buildings, "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/map-markers")
+@limiter.limit("30/minute")
+async def building_map_markers(
+    request: Request,
+    lead_id: str = Query(..., min_length=1, max_length=64),
+    limit: int = Query(default=150, ge=1, le=500),
+    session: AsyncSession = Depends(get_session),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Resolve portfolio map markers from current linked buildings.
+
+    This endpoint is intentionally read-only. It uses persisted coordinates when
+    they are sane and falls back to backend geocoding when stored coordinates are
+    missing, outside NYC, or collapsed onto a small number of points.
+    """
+    result = await session.execute(
+        text("""
+            SELECT DISTINCT ON (b.bbl)
+                   b.bbl,
+                   b.address,
+                   b.borough,
+                   b.unit_count,
+                   b.latitude,
+                   b.longitude,
+                   b.coordinate_source,
+                   b.coordinate_precision
+            FROM building_management bm
+            JOIN buildings b ON b.bbl = bm.bbl
+            WHERE bm.lead_id = :lead_id
+              AND bm.is_current = true
+              AND b.address IS NOT NULL
+              AND BTRIM(b.address) != ''
+            ORDER BY b.bbl ASC
+            LIMIT :limit
+        """),
+        {"lead_id": lead_id, "limit": limit},
+    )
+    rows = [dict(row._mapping) for row in result]
+    has_collapsed_stored_coordinates = _has_collapsed_coordinates(rows)
+    marker_rows: list[dict] = []
+    geocode_candidates: list[dict] = []
+    ignored_stored_count = 0
+
+    for row in rows:
+        latitude = _parse_coordinate(row.get("latitude"))
+        longitude = _parse_coordinate(row.get("longitude"))
+        has_stored_coordinate = latitude is not None or longitude is not None
+        if (
+            latitude is not None
+            and longitude is not None
+            and _is_nyc_coordinate(latitude, longitude)
+            and not has_collapsed_stored_coordinates
+        ):
+            marker_rows.append({
+                "bbl": row.get("bbl"),
+                "address": row.get("address"),
+                "borough": row.get("borough"),
+                "unit_count": row.get("unit_count"),
+                "latitude": latitude,
+                "longitude": longitude,
+                "coordinate_source": row.get("coordinate_source") or "stored",
+                "coordinate_precision": row.get("coordinate_precision"),
+                "persisted": True,
+            })
+            continue
+        if has_stored_coordinate:
+            ignored_stored_count += 1
+        geocode_candidates.append(row)
+
+    semaphore = asyncio.Semaphore(MAP_MARKER_GEOCODE_CONCURRENCY)
+
+    async def resolve_candidate(row: dict) -> dict | None:
+        async with semaphore:
+            geocoded = await asyncio.to_thread(
+                geocode_building,
+                str(row.get("address") or ""),
+                row.get("borough"),
+            )
+        if not geocoded or not _is_nyc_coordinate(geocoded.latitude, geocoded.longitude):
+            return None
+        return {
+            "bbl": row.get("bbl"),
+            "address": row.get("address"),
+            "borough": row.get("borough"),
+            "unit_count": row.get("unit_count"),
+            "latitude": geocoded.latitude,
+            "longitude": geocoded.longitude,
+            "coordinate_source": geocoded.coordinate_source,
+            "coordinate_precision": geocoded.coordinate_precision,
+            "persisted": False,
+        }
+
+    if geocode_candidates:
+        resolved_candidates = await asyncio.gather(
+            *(resolve_candidate(row) for row in geocode_candidates)
+        )
+        marker_rows.extend(marker for marker in resolved_candidates if marker)
+
+    marker_rows.sort(key=lambda row: (str(row.get("address") or ""), str(row.get("bbl") or "")))
+    stored_count = sum(1 for row in marker_rows if row.get("persisted"))
+    geocoded_count = len(marker_rows) - stored_count
+
+    return {
+        "lead_id": lead_id,
+        "total_buildings": len(rows),
+        "resolved_count": len(marker_rows),
+        "stored_count": stored_count,
+        "geocoded_count": geocoded_count,
+        "ignored_stored_count": ignored_stored_count,
+        "unresolved_count": max(0, len(rows) - len(marker_rows)),
+        "map_ready": bool(marker_rows),
+        "markers": marker_rows,
+    }
 
 
 @router.get("/hot")

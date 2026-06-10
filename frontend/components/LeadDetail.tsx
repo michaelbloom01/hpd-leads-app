@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
 import { toast } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { ApiLead, fetchLead, fetchLeadLineage, type LeadLineageResponse, updateLead, addOutreachAttempt, enrichLeadAll, estimateLeadRevenue, OutreachAttempt, fetchLeadContacts, downloadPortfolioContactsWorkbook } from '../services/api';
-import { addBuildingToPipeline, fetchBuildings, type BuildingRow, type BuildingContactEntry } from '../services/buildings-api';
+import { addBuildingToPipeline, fetchBuildingMapMarkers, fetchBuildings, type BuildingMapMarker, type BuildingRow, type BuildingContactEntry } from '../services/buildings-api';
 import { fetchLeadTruthSummary, type LeadTruthSummary } from '../services/truth-api';
 import { PIPELINE_STAGES, OUTREACH_STATUSES, OUTREACH_METHODS, OUTREACH_OUTCOMES, formatCurrency } from '../utils/format';
 import { getLeadDisplayName } from '../utils/leads';
@@ -91,6 +91,8 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
   const [revenueEstimateFailed, setRevenueEstimateFailed] = useState(false);
   const [linkedBuildings, setLinkedBuildings] = useState<BuildingRow[]>([]);
   const [loadingLinkedBuildings, setLoadingLinkedBuildings] = useState(false);
+  const [portfolioMapMarkers, setPortfolioMapMarkers] = useState<BuildingMapMarker[]>([]);
+  const [loadingPortfolioMapMarkers, setLoadingPortfolioMapMarkers] = useState(false);
   const [leadLineage, setLeadLineage] = useState<LeadLineageResponse | null>(null);
   const [leadTruth, setLeadTruth] = useState<LeadTruthSummary | null>(null);
   const [pipelineAddBusy, setPipelineAddBusy] = useState<Record<string, boolean>>({});
@@ -117,6 +119,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     setRevenueEstimateFailed(false);
     setEnrichmentPreview(null);
     setShowEnrichmentPanel(false);
+    setPortfolioMapMarkers([]);
   }, [lead]);
 
   // Always refresh with canonical lead detail on open.
@@ -168,6 +171,50 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     loadLinkedBuildings();
     return () => { cancelled = true; };
   }, [activeTab, enrichedLead.lead_id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPortfolioMapMarkers = async () => {
+      if (activeTab !== 'buildings' && activeTab !== 'overview') return;
+      setLoadingPortfolioMapMarkers(true);
+      try {
+        const res = await fetchBuildingMapMarkers(enrichedLead.lead_id, 150);
+        if (!cancelled) setPortfolioMapMarkers(res.markers || []);
+      } catch {
+        if (!cancelled) setPortfolioMapMarkers([]);
+      } finally {
+        if (!cancelled) setLoadingPortfolioMapMarkers(false);
+      }
+    };
+    loadPortfolioMapMarkers();
+    return () => { cancelled = true; };
+  }, [activeTab, enrichedLead.lead_id]);
+
+  const portfolioMapBuildings = useMemo(() => {
+    if (portfolioMapMarkers.length > 0) {
+      return portfolioMapMarkers.map((marker) => ({
+        address: marker.address,
+        borough: marker.borough || undefined,
+        latitude: marker.latitude,
+        longitude: marker.longitude,
+        coordinate_source: marker.coordinate_source ?? 'resolved',
+        coordinate_precision: marker.coordinate_precision ?? null,
+      }));
+    }
+    if (linkedBuildings.length > 0) {
+      return linkedBuildings
+        .filter((b) => Boolean(b.address))
+        .map((b) => ({
+          address: b.address,
+          borough: b.borough || undefined,
+          latitude: b.latitude ?? null,
+          longitude: b.longitude ?? null,
+          coordinate_source: b.coordinate_source ?? null,
+          coordinate_precision: b.coordinate_precision ?? null,
+        }));
+    }
+    return enrichedLead.buildings || [];
+  }, [enrichedLead.buildings, linkedBuildings, portfolioMapMarkers]);
 
   useEffect(() => {
     let cancelled = false;
@@ -975,28 +1022,23 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
               )}
 
               {/* Interactive Map (OpenStreetMap) */}
-              {(linkedBuildings.length > 0 || (enrichedLead.buildings && enrichedLead.buildings.length > 0)) && (
+              {(portfolioMapBuildings.length > 0 || loadingPortfolioMapMarkers) && (
                 <div className="bg-gray-50 rounded-xl p-4">
                   <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-3">Portfolio Footprint</h3>
-                  <Suspense fallback={<div className="h-[250px] bg-gray-100 rounded-lg animate-pulse" />}>
-                    <PortfolioMap
-                      buildings={linkedBuildings.length > 0
-                        ? linkedBuildings
-                            .filter((b) => Boolean(b.address))
-                            .map((b) => ({
-                              address: b.address,
-                              borough: b.borough || undefined,
-                              latitude: b.latitude ?? null,
-                              longitude: b.longitude ?? null,
-                              coordinate_source: b.coordinate_source ?? null,
-                              coordinate_precision: b.coordinate_precision ?? null,
-                            }))
-                        : enrichedLead.buildings}
-                      boro={enrichedLead.boro}
-                      boros={enrichedLead.boros}
-                      allowClientGeocodingFallback
-                    />
-                  </Suspense>
+                  {loadingPortfolioMapMarkers && portfolioMapMarkers.length === 0 ? (
+                    <div className="h-[250px] bg-gray-100 rounded-lg animate-pulse flex items-center justify-center text-xs text-gray-500">
+                      Loading portfolio map...
+                    </div>
+                  ) : (
+                    <Suspense fallback={<div className="h-[250px] bg-gray-100 rounded-lg animate-pulse" />}>
+                      <PortfolioMap
+                        buildings={portfolioMapBuildings}
+                        boro={enrichedLead.boro}
+                        boros={enrichedLead.boros}
+                        allowClientGeocodingFallback={portfolioMapMarkers.length === 0}
+                      />
+                    </Suspense>
+                  )}
                 </div>
               )}
 
@@ -1475,26 +1517,21 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-900" />
               
               {/* Interactive Map (OpenStreetMap) */}
-              {(linkedBuildings.length > 0 || (enrichedLead.buildings && enrichedLead.buildings.length > 0)) && (
-                <Suspense fallback={<div className="h-[250px] bg-gray-100 rounded-lg animate-pulse" />}>
-                  <PortfolioMap
-                    buildings={linkedBuildings.length > 0
-                      ? linkedBuildings
-                          .filter((b) => Boolean(b.address))
-                          .map((b) => ({
-                            address: b.address,
-                            borough: b.borough || undefined,
-                            latitude: b.latitude ?? null,
-                            longitude: b.longitude ?? null,
-                            coordinate_source: b.coordinate_source ?? null,
-                            coordinate_precision: b.coordinate_precision ?? null,
-                          }))
-                      : enrichedLead.buildings}
-                    boro={enrichedLead.boro}
-                    boros={enrichedLead.boros}
-                    allowClientGeocodingFallback
-                  />
-                </Suspense>
+              {(portfolioMapBuildings.length > 0 || loadingPortfolioMapMarkers) && (
+                loadingPortfolioMapMarkers && portfolioMapMarkers.length === 0 ? (
+                  <div className="h-[250px] bg-gray-100 rounded-lg animate-pulse flex items-center justify-center text-xs text-gray-500">
+                    Loading portfolio map...
+                  </div>
+                ) : (
+                  <Suspense fallback={<div className="h-[250px] bg-gray-100 rounded-lg animate-pulse" />}>
+                    <PortfolioMap
+                      buildings={portfolioMapBuildings}
+                      boro={enrichedLead.boro}
+                      boros={enrichedLead.boros}
+                      allowClientGeocodingFallback={portfolioMapMarkers.length === 0}
+                    />
+                  </Suspense>
+                )
               )}
 
               {/* Building List */}

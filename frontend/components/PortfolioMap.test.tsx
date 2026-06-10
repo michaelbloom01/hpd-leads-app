@@ -85,7 +85,7 @@ describe('PortfolioMap', () => {
     );
 
     await waitFor(() => expect(markerMock).toHaveBeenCalledTimes(8));
-    expect(screen.getByText(/8 stored coordinates were ignored/i)).toBeInTheDocument();
+    expect(screen.getByText(/8 saved markers needed refresh/i)).toBeInTheDocument();
     expect(screen.getByText(/0 stored, 8 geocoded/i)).toBeInTheDocument();
     const markerPositions = markerMock.mock.calls.map(([props]) => props.position.join(','));
     expect(new Set(markerPositions).size).toBe(8);
@@ -105,8 +105,8 @@ describe('PortfolioMap', () => {
       />,
     );
 
-    expect(await screen.findByText(/Map markers are not available yet/i)).toBeInTheDocument();
-    expect(screen.getByText(/1 stored coordinate was ignored/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Portfolio map is not available yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/saved map markers need to be refreshed/i)).toBeInTheDocument();
     expect(markerMock).not.toHaveBeenCalled();
   });
 });

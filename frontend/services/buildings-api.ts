@@ -81,6 +81,30 @@ export interface BuildingsListResponse {
   offset: number;
 }
 
+export interface BuildingMapMarker {
+  bbl: string;
+  address: string;
+  borough: string | null;
+  unit_count: number | null;
+  latitude: number;
+  longitude: number;
+  coordinate_source: string | null;
+  coordinate_precision: string | null;
+  persisted: boolean;
+}
+
+export interface BuildingMapMarkersResponse {
+  lead_id: string;
+  total_buildings: number;
+  resolved_count: number;
+  stored_count: number;
+  geocoded_count: number;
+  ignored_stored_count: number;
+  unresolved_count: number;
+  map_ready: boolean;
+  markers: BuildingMapMarker[];
+}
+
 export interface BuildingDetail {
   bbl: string;
   bin: string | null;
@@ -223,6 +247,11 @@ export function fetchBuildings(params: BuildingsQueryParams = {}): Promise<Build
   });
   const qs = sp.toString();
   return apiGet(`/api/v1/buildings/browse${qs ? '?' + qs : ''}`, 60000);
+}
+
+export function fetchBuildingMapMarkers(leadId: string, limit = 150): Promise<BuildingMapMarkersResponse> {
+  const sp = new URLSearchParams({ lead_id: leadId, limit: String(limit) });
+  return apiGet(`/api/v1/buildings/map-markers?${sp.toString()}`, 90000);
 }
 
 export function fetchBuildingStats(): Promise<BuildingStats> {

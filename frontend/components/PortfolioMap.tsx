@@ -292,15 +292,15 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({
       const hasRejectedStoredCoordinates = rejectedStoredCount > 0;
       return (
         <div style={{ minHeight: height, width: '100%' }} className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-          <div className="font-semibold">Map markers are not available yet</div>
+          <div className="font-semibold">Portfolio map is not available yet</div>
           <p className="mt-1">
             {hasRejectedStoredCoordinates
-              ? `${rejectedStoredCount} stored coordinate${rejectedStoredCount === 1 ? '' : 's'} ${rejectedStoredCount === 1 ? 'was' : 'were'} ignored because ${rejectedStoredCount === 1 ? 'it was' : 'they were'} outside NYC or collapsed many buildings onto one point. Run the coordinate backfill/repair before relying on this embedded portfolio map.`
-              : 'This portfolio has addresses but no stored coordinates available to the embedded map right now.'}
+              ? `The buildings have usable addresses, but the saved map markers need to be refreshed before this embedded map can show the portfolio.`
+              : 'This portfolio has addresses, but the embedded map could not resolve markers yet.'}
           </p>
           {allowClientGeocodingFallback && hasRejectedStoredCoordinates && (
             <p className="mt-1">
-              Browser geocoding could not recover enough usable markers, so direct map links are shown instead.
+              Direct map links are shown instead.
             </p>
           )}
           {fallbackLinks.length > 0 && (
@@ -348,7 +348,7 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({
     <div style={{ width: '100%' }} className="space-y-2">
       <div className={`mb-2 rounded-lg px-3 py-2 text-[11px] ${(skippedCount > 0 || rejectedStoredCount > 0 || tileErrorCount > 0) ? 'border border-amber-200 bg-amber-50 text-amber-700' : 'border border-gray-200 bg-gray-50 text-gray-600'}`}>
         Marker provenance: {persistedCount} stored, {geocodedCount} geocoded.
-        {rejectedStoredCount > 0 ? ` ${rejectedStoredCount} stored coordinate${rejectedStoredCount === 1 ? '' : 's'} were ignored because they were outside NYC or collapsed many buildings onto one point.` : ''}
+        {rejectedStoredCount > 0 ? ` ${rejectedStoredCount} saved marker${rejectedStoredCount === 1 ? '' : 's'} needed refresh and were replaced where possible.` : ''}
         {skippedCount > 0 ? ` ${skippedCount} building${skippedCount === 1 ? '' : 's'} are omitted until usable coordinates are available.` : geocodedCount > 0 ? ' Stored coordinates are preferred; remaining markers were derived from public geocoding services.' : ' All visible markers are using persisted building coordinates.'}
         {hiddenDuplicateCount > 0 ? ` ${hiddenDuplicateCount} duplicate marker${hiddenDuplicateCount === 1 ? '' : 's'} are summarized in popups to keep the map readable.` : ''}
         {tileErrorCount > 0 ? ' Some map tiles failed to load; markers and links remain usable.' : ''}

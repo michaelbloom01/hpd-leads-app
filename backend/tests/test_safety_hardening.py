@@ -346,6 +346,63 @@ async def test_browse_buildings_returns_current_pm_company_link():
 
 
 @pytest.mark.anyio
+async def test_map_markers_resolve_collapsed_saved_coordinates_with_backend_geocoding(monkeypatch):
+    session = _ReadOnlyAsyncSession(
+        [
+            _FakeAsyncResult(
+                rows=[
+                    _FakeRow(
+                        {
+                            "bbl": f"100000000{i}",
+                            "address": f"{1000 + i} PARK AVENUE",
+                            "borough": "MANHATTAN",
+                            "unit_count": 10,
+                            "latitude": 40.7128,
+                            "longitude": -74.006,
+                            "coordinate_source": "stored",
+                            "coordinate_precision": "parcel",
+                        }
+                    )
+                    for i in range(1, 6)
+                ]
+            ),
+        ]
+    )
+
+    class _Geocoded:
+        def __init__(self, index: int):
+            self.latitude = 40.77 + (index * 0.001)
+            self.longitude = -73.96 - (index * 0.001)
+            self.coordinate_source = "planninglabs"
+            self.coordinate_precision = "parcel"
+
+    def fake_geocode(address: str, borough: str | None = None):
+        index = int(address.split(" ", 1)[0]) - 1000
+        return _Geocoded(index)
+
+    monkeypatch.setattr(buildings_router, "geocode_building", fake_geocode)
+
+    response = await buildings_router.building_map_markers(
+        request=_request(),
+        lead_id="lead-1",
+        limit=50,
+        session=session,
+        user=AuthUser(user_id="u1", email="test@example.com"),
+    )
+
+    assert response["map_ready"] is True
+    assert response["total_buildings"] == 5
+    assert response["resolved_count"] == 5
+    assert response["stored_count"] == 0
+    assert response["geocoded_count"] == 5
+    assert response["ignored_stored_count"] == 5
+    assert len({(m["latitude"], m["longitude"]) for m in response["markers"]}) == 5
+    executed_sql = "\n".join(sql for sql, _params in session.calls)
+    assert "FROM building_management bm" in executed_sql
+    assert "JOIN buildings b ON b.bbl = bm.bbl" in executed_sql
+
+
+@pytest.mark.anyio
 async def test_get_building_does_not_queue_dos_refresh(monkeypatch):
     session = _ReadOnlyAsyncSession(
         [
