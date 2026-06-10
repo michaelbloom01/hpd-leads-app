@@ -514,7 +514,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     { id: 'overview', label: 'Overview' },
     { id: 'buildings', label: `Portfolio (${visibleBuildingCount})` },
     { id: 'contacts', label: 'Contacts' },
-    { id: 'pipeline', label: 'Work' },
+    { id: 'pipeline', label: 'Outreach' },
     { id: 'truth', label: 'Sources' },
   ];
   const hasDirectContact = Boolean(enrichedLead.phone || enrichedLead.email);
