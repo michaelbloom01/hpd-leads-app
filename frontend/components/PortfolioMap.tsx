@@ -289,12 +289,20 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({
   if (positions.length === 0) {
     if (skippedCount > 0) {
       const fallbackLinks = normalizedBuildings.slice(0, 5);
+      const hasRejectedStoredCoordinates = rejectedStoredCount > 0;
       return (
         <div style={{ minHeight: height, width: '100%' }} className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
           <div className="font-semibold">Map markers are not available yet</div>
           <p className="mt-1">
-            This portfolio has addresses but no stored coordinates available to the embedded map right now.
+            {hasRejectedStoredCoordinates
+              ? `${rejectedStoredCount} stored coordinate${rejectedStoredCount === 1 ? '' : 's'} ${rejectedStoredCount === 1 ? 'was' : 'were'} ignored because ${rejectedStoredCount === 1 ? 'it was' : 'they were'} outside NYC or collapsed many buildings onto one point. Run the coordinate backfill/repair before relying on this embedded portfolio map.`
+              : 'This portfolio has addresses but no stored coordinates available to the embedded map right now.'}
           </p>
+          {allowClientGeocodingFallback && hasRejectedStoredCoordinates && (
+            <p className="mt-1">
+              Browser geocoding could not recover enough usable markers, so direct map links are shown instead.
+            </p>
+          )}
           {fallbackLinks.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-2">
               {fallbackLinks.map((building) => (

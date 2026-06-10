@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import PortfolioMap from './PortfolioMap';
 
@@ -46,6 +46,11 @@ describe('PortfolioMap', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal('btoa', (value: string) => Buffer.from(value).toString('base64'));
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
   });
 
   it('rejects collapsed stored coordinates and geocodes the portfolio footprint', async () => {
@@ -101,6 +106,7 @@ describe('PortfolioMap', () => {
     );
 
     expect(await screen.findByText(/Map markers are not available yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 stored coordinate was ignored/i)).toBeInTheDocument();
     expect(markerMock).not.toHaveBeenCalled();
   });
 });
