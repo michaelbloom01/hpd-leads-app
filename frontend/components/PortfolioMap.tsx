@@ -29,6 +29,27 @@ type MapPosition = {
 };
 const geocodeCache = new Map<string, GeocodeResult>();
 
+const NYC_BOUNDS = {
+  minLat: 40.45,
+  maxLat: 40.95,
+  minLon: -74.3,
+  maxLon: -73.65,
+};
+
+function isNycCoordinate(latitude: number | null, longitude: number | null): boolean {
+  if (latitude === null || longitude === null) return false;
+  return (
+    latitude >= NYC_BOUNDS.minLat &&
+    latitude <= NYC_BOUNDS.maxLat &&
+    longitude >= NYC_BOUNDS.minLon &&
+    longitude <= NYC_BOUNDS.maxLon
+  );
+}
+
+function coordinateKey(latitude: number, longitude: number): string {
+  return `${latitude.toFixed(5)},${longitude.toFixed(5)}`;
+}
+
 async function geocodeAddress(address: string, borough?: string): Promise<GeocodeResult> {
   const query = `${address}, ${borough || 'New York'}, NY`;
   const cacheKey = query.toUpperCase();
@@ -99,10 +120,14 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
   const map = useMap();
   
   useEffect(() => {
+    const invalidateTimer = window.setTimeout(() => {
+      map.invalidateSize();
+    }, 80);
     if (positions.length > 0) {
       const bounds = L.latLngBounds(positions.map(p => L.latLng(p[0], p[1])));
       map.fitBounds(bounds, { padding: [30, 30], maxZoom: 14 });
     }
+    return () => window.clearTimeout(invalidateTimer);
   }, [map, positions]);
   
   return null;
@@ -138,6 +163,8 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({
   const [isResolving, setIsResolving] = useState(false);
   const [positions, setPositions] = useState<MapPosition[]>([]);
   const [skippedCount, setSkippedCount] = useState(0);
+  const [rejectedStoredCount, setRejectedStoredCount] = useState(0);
+  const [tileErrorCount, setTileErrorCount] = useState(0);
 
   const normalizedBuildings = useMemo(() => {
     const seen = new Set<string>();
@@ -169,22 +196,46 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({
     let cancelled = false;
     const resolvePositions = async () => {
       setIsResolving(true);
+      setTileErrorCount(0);
       if (!normalizedBuildings.length) {
         setPositions([]);
+        setSkippedCount(0);
+        setRejectedStoredCount(0);
         setIsResolving(false);
         return;
       }
 
       const resolved: MapPosition[] = [];
       let skipped = 0;
+      let rejectedStored = 0;
+      const storedCoordinateCounts = new Map<string, number>();
+      normalizedBuildings.forEach(({ latitude, longitude }) => {
+        if (isNycCoordinate(latitude, longitude)) {
+          const key = coordinateKey(latitude, longitude);
+          storedCoordinateCounts.set(key, (storedCoordinateCounts.get(key) || 0) + 1);
+        }
+      });
+      const storedCandidateCount = Array.from(storedCoordinateCounts.values()).reduce((sum, count) => sum + count, 0);
+      const uniqueStoredCoordinateCount = storedCoordinateCounts.size;
+      const hasCollapsedStoredCoordinates =
+        storedCandidateCount >= 5 &&
+        uniqueStoredCoordinateCount <= Math.max(1, Math.ceil(storedCandidateCount * 0.1));
+      const overloadedCoordinateLimit = Math.max(6, Math.ceil(storedCandidateCount * 0.25));
       const publishProgress = () => {
         if (cancelled) return;
         setPositions([...resolved]);
         setSkippedCount(skipped);
+        setRejectedStoredCount(rejectedStored);
       };
       for (let i = 0; i < normalizedBuildings.length; i++) {
         const { addr, buildingBoro, latitude, longitude, coordinateSource, coordinatePrecision } = normalizedBuildings[i];
-        if (latitude !== null && longitude !== null) {
+        const coordinateIsUsable =
+          latitude !== null &&
+          longitude !== null &&
+          isNycCoordinate(latitude, longitude) &&
+          !hasCollapsedStoredCoordinates &&
+          (storedCoordinateCounts.get(coordinateKey(latitude, longitude)) || 0) <= overloadedCoordinateLimit;
+        if (coordinateIsUsable) {
           resolved.push({
             position: [latitude, longitude],
             address: addr,
@@ -194,6 +245,9 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({
           });
           if (resolved.length === 1 || resolved.length % 10 === 0) publishProgress();
           continue;
+        }
+        if (latitude !== null || longitude !== null) {
+          rejectedStored += 1;
         }
         if (!allowClientGeocodingFallback) {
           skipped += 1;
@@ -216,13 +270,14 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({
 
       if (!cancelled) setPositions(resolved);
       if (!cancelled) setSkippedCount(skipped);
+      if (!cancelled) setRejectedStoredCount(rejectedStored);
       if (!cancelled) setIsResolving(false);
     };
     resolvePositions();
     return () => {
       cancelled = true;
     };
-  }, [normalizedBuildings]);
+  }, [normalizedBuildings, allowClientGeocodingFallback]);
 
   if (isResolving && positions.length === 0) {
     return (
@@ -269,36 +324,59 @@ const PortfolioMap: React.FC<PortfolioMapProps> = ({
     : [40.7128, -73.95];
   const persistedCount = positions.filter((p) => p.persisted).length;
   const geocodedCount = positions.length - persistedCount;
+  const positionCountByKey = positions.reduce((acc, p) => {
+    const key = coordinateKey(p.position[0], p.position[1]);
+    acc.set(key, (acc.get(key) || 0) + 1);
+    return acc;
+  }, new Map<string, number>());
+  const visiblePositions = positions.filter((p, index) => {
+    const key = coordinateKey(p.position[0], p.position[1]);
+    const duplicateIndex = positions.slice(0, index).filter((prior) => coordinateKey(prior.position[0], prior.position[1]) === key).length;
+    return duplicateIndex < 8;
+  });
+  const hiddenDuplicateCount = positions.length - visiblePositions.length;
 
   return (
-    <div style={{ height, width: '100%' }} className="rounded-lg overflow-hidden">
-      <div className={`mb-2 rounded-lg px-3 py-2 text-[11px] ${skippedCount > 0 ? 'border border-amber-200 bg-amber-50 text-amber-700' : 'border border-gray-200 bg-gray-50 text-gray-600'}`}>
-        Marker provenance: {persistedCount} stored, {geocodedCount} geocoded. {skippedCount > 0 ? `${skippedCount} building${skippedCount === 1 ? '' : 's'} are omitted until persisted coordinates are available.` : geocodedCount > 0 ? 'Stored coordinates are preferred; remaining markers were derived from public geocoding services.' : 'All visible markers are using persisted building coordinates.'}
+    <div style={{ width: '100%' }} className="space-y-2">
+      <div className={`mb-2 rounded-lg px-3 py-2 text-[11px] ${(skippedCount > 0 || rejectedStoredCount > 0 || tileErrorCount > 0) ? 'border border-amber-200 bg-amber-50 text-amber-700' : 'border border-gray-200 bg-gray-50 text-gray-600'}`}>
+        Marker provenance: {persistedCount} stored, {geocodedCount} geocoded.
+        {rejectedStoredCount > 0 ? ` ${rejectedStoredCount} stored coordinate${rejectedStoredCount === 1 ? '' : 's'} were ignored because they were outside NYC or collapsed many buildings onto one point.` : ''}
+        {skippedCount > 0 ? ` ${skippedCount} building${skippedCount === 1 ? '' : 's'} are omitted until usable coordinates are available.` : geocodedCount > 0 ? ' Stored coordinates are preferred; remaining markers were derived from public geocoding services.' : ' All visible markers are using persisted building coordinates.'}
+        {hiddenDuplicateCount > 0 ? ` ${hiddenDuplicateCount} duplicate marker${hiddenDuplicateCount === 1 ? '' : 's'} are summarized in popups to keep the map readable.` : ''}
+        {tileErrorCount > 0 ? ' Some map tiles failed to load; markers and links remain usable.' : ''}
       </div>
-      <MapContainer
-        ref={mapRef}
-        center={center}
-        zoom={11}
-        style={{ height: '100%', width: '100%' }}
-        scrollWheelZoom={false}
-        attributionControl={true}
-      >
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
-        <FitBounds positions={positions.map(p => p.position)} />
-        {positions.map((p, i) => (
-          <Marker key={i} position={p.position} icon={smallMarker}>
-            <Popup>
-              <span className="text-xs">
-                {p.address}
-                {` (${p.source}${p.precision ? `, ${p.precision}` : ''})`}
-              </span>
-            </Popup>
-          </Marker>
-        ))}
-      </MapContainer>
+      <div style={{ height, width: '100%' }} className="rounded-lg overflow-hidden">
+        <MapContainer
+          ref={mapRef}
+          center={center}
+          zoom={11}
+          style={{ height: '100%', width: '100%' }}
+          scrollWheelZoom={false}
+          attributionControl={true}
+        >
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            eventHandlers={{
+              tileerror: () => setTileErrorCount((count) => count + 1),
+            }}
+          />
+          <FitBounds positions={positions.map(p => p.position)} />
+          {visiblePositions.map((p, i) => (
+            <Marker key={i} position={p.position} icon={smallMarker}>
+              <Popup>
+                <span className="text-xs">
+                  {p.address}
+                  {` (${p.source}${p.precision ? `, ${p.precision}` : ''})`}
+                  {(positionCountByKey.get(coordinateKey(p.position[0], p.position[1])) || 0) > 1
+                    ? `; ${(positionCountByKey.get(coordinateKey(p.position[0], p.position[1])) || 0) - 1} more at this point`
+                    : ''}
+                </span>
+              </Popup>
+            </Marker>
+          ))}
+        </MapContainer>
+      </div>
     </div>
   );
 };
