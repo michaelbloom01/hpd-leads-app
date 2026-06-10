@@ -293,6 +293,56 @@ async def test_list_buildings_returns_stored_coordinates_for_portfolio_maps():
     executed_sql = "\n".join(sql for sql, _params in session.calls)
     assert "b.latitude, b.longitude, b.coordinate_source, b.coordinate_precision" in executed_sql
     assert "NULL::double precision AS latitude" not in executed_sql
+    assert "lead_match.lead_name AS pm_company" in executed_sql
+    assert "NULL::text AS pm_company" not in executed_sql
+
+
+@pytest.mark.anyio
+async def test_browse_buildings_returns_current_pm_company_link():
+    session = _ReadOnlyAsyncSession(
+        [
+            _FakeAsyncResult(
+                rows=[
+                    _FakeRow(
+                        {
+                            "bbl": "3023587501",
+                            "address": "100 NORTH 3 STREET",
+                            "borough": "BROOKLYN",
+                            "unit_count": 24,
+                            "building_type": "Condo",
+                            "churn_score": 3.5,
+                            "churn_category": "stable",
+                            "key_signal": "Building Scale",
+                            "current_lead_id": "lead-1",
+                            "current_link_count": 1,
+                            "current_link_lead_ids": ["lead-1"],
+                            "current_link_conflict": False,
+                            "pm_company": "VENTURE NY PROPERTY MANAGEMENT, LLC",
+                        }
+                    )
+                ]
+            ),
+        ]
+    )
+
+    response = await buildings_router.browse_buildings(
+        request=_request(),
+        search="Venture",
+        sort_by="address",
+        sort_dir="asc",
+        limit=50,
+        offset=0,
+        session=session,
+        user=AuthUser(user_id="u1", email="test@example.com"),
+    )
+
+    building = response["buildings"][0]
+    assert building["pm_company"] == "VENTURE NY PROPERTY MANAGEMENT, LLC"
+    assert building["current_link_count"] == 1
+    assert building["current_link_lead_ids"] == ["lead-1"]
+    executed_sql = "\n".join(sql for sql, _params in session.calls)
+    assert "JOIN leads l_search ON l_search.lead_id = bm_search.lead_id" in executed_sql
+    assert "lead_match.lead_name AS pm_company" in executed_sql
 
 
 @pytest.mark.anyio

@@ -56,7 +56,14 @@ const baseColumns = [
       const v = info.getValue();
       return v
         ? <span className="text-gray-700 text-xs truncate max-w-[180px] block">{v}</span>
-        : <span className="text-gray-400 text-xs italic">Unknown</span>;
+        : (
+          <span
+            className="text-gray-400 text-xs"
+            title="No current building-management link is stored for this building."
+          >
+            No linked PM
+          </span>
+        );
     },
   }),
   columnHelper.accessor('unit_count', {

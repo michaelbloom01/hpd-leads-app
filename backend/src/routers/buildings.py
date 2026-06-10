@@ -228,10 +228,18 @@ async def list_buildings(
                 OR b.bbl ILIKE :search
                 OR EXISTS (
                     SELECT 1
-                    FROM building_contacts bc_search
-                    WHERE bc_search.bbl = b.bbl
-                      AND bc_search.contact_type = 'Agent'
-                      AND bc_search.corporation_name ILIKE :search
+                    FROM building_management bm_search
+                    JOIN leads l_search ON l_search.lead_id = bm_search.lead_id
+                    WHERE bm_search.bbl = b.bbl
+                      AND bm_search.is_current = true
+                      AND COALESCE(
+                          NULLIF(BTRIM(l_search.company_name), ''),
+                          NULLIF(BTRIM(l_search.agent_name), ''),
+                          NULLIF(BTRIM(l_search.owner_name), ''),
+                          NULLIF(BTRIM(l_search.primary_contact), ''),
+                          NULLIF(BTRIM(l_search.normalized_name), ''),
+                          l_search.lead_id
+                      ) ILIKE :search
                 )
             )
         """)
@@ -264,12 +272,45 @@ async def list_buildings(
                    page.churn_score, page.churn_category, page.key_signal,
                    page.coverage_ratio, page.outreach_status, page.last_scored_at,
                    page.latitude, page.longitude, page.coordinate_source, page.coordinate_precision,
-                   :lead_id AS current_lead_id,
-                   NULL::int AS current_link_count,
-                   ARRAY[]::text[] AS current_link_lead_ids,
-                   false AS current_link_conflict,
-                   NULL::text AS pm_company
+                   m.current_lead_id,
+                   COALESCE(m.current_link_count, 0)::int AS current_link_count,
+                   COALESCE(m.current_link_lead_ids, ARRAY[]::text[]) AS current_link_lead_ids,
+                   COALESCE(m.current_link_conflict, false) AS current_link_conflict,
+                   lead_match.lead_name AS pm_company
             FROM page
+            LEFT JOIN LATERAL (
+                SELECT
+                    COALESCE(
+                        :lead_id,
+                        CASE
+                            WHEN COUNT(*) = 1 AND COUNT(DISTINCT bm.lead_id) = 1 THEN MAX(bm.lead_id)
+                            ELSE NULL
+                        END
+                    ) AS current_lead_id,
+                    COUNT(*)::int AS current_link_count,
+                    ARRAY_AGG(DISTINCT bm.lead_id ORDER BY bm.lead_id) AS current_link_lead_ids,
+                    (COUNT(*) > 1 OR COUNT(DISTINCT bm.lead_id) > 1) AS current_link_conflict
+                FROM building_management bm
+                WHERE bm.bbl = page.bbl
+                  AND bm.is_current = true
+            ) m ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    COALESCE(
+                        NULLIF(BTRIM(l.company_name), ''),
+                        NULLIF(BTRIM(l.agent_name), ''),
+                        NULLIF(BTRIM(l.owner_name), ''),
+                        NULLIF(BTRIM(l.primary_contact), ''),
+                        NULLIF(BTRIM(l.normalized_name), ''),
+                        l.lead_id
+                    ) AS lead_name
+                FROM building_management bm
+                JOIN leads l ON l.lead_id = bm.lead_id
+                WHERE bm.bbl = page.bbl
+                  AND bm.is_current = true
+                ORDER BY l.score DESC NULLS LAST, l.updated_at DESC NULLS LAST, l.lead_id ASC
+                LIMIT 1
+            ) lead_match ON true
         """),
         params,
     )
@@ -345,11 +386,7 @@ async def browse_buildings(
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
-    """Fast building browse endpoint for list/map surfaces.
-
-    Keep relationship and contact decoration on detail/contacts endpoints so the
-    primary Buildings table cannot be taken down by expensive lateral lookups.
-    """
+    """Fast building browse endpoint for list/map surfaces."""
     wheres = []
     params: dict = {"limit": limit, "offset": offset, "lead_id": lead_id}
 
@@ -383,7 +420,27 @@ async def browse_buildings(
             wheres.append("b.outreach_status = :ostatus")
             params["ostatus"] = outreach_status
     if search:
-        wheres.append("(b.address ILIKE :search OR b.bbl ILIKE :search)")
+        wheres.append("""
+            (
+                b.address ILIKE :search
+                OR b.bbl ILIKE :search
+                OR EXISTS (
+                    SELECT 1
+                    FROM building_management bm_search
+                    JOIN leads l_search ON l_search.lead_id = bm_search.lead_id
+                    WHERE bm_search.bbl = b.bbl
+                      AND bm_search.is_current = true
+                      AND COALESCE(
+                          NULLIF(BTRIM(l_search.company_name), ''),
+                          NULLIF(BTRIM(l_search.agent_name), ''),
+                          NULLIF(BTRIM(l_search.owner_name), ''),
+                          NULLIF(BTRIM(l_search.primary_contact), ''),
+                          NULLIF(BTRIM(l_search.normalized_name), ''),
+                          l_search.lead_id
+                      ) ILIKE :search
+                )
+            )
+        """)
         params["search"] = f"%{search}%"
 
     where_sql = " AND ".join(wheres) if wheres else "1=1"
@@ -394,22 +451,60 @@ async def browse_buildings(
 
     result = await session.execute(
         text(f"""
-            SELECT b.bbl, b.address, b.borough, b.unit_count, b.building_type,
-                   b.churn_score, b.churn_category, b.key_signal
-            FROM buildings b
-            WHERE {where_sql}
-            ORDER BY {order_sql}
-            LIMIT :limit OFFSET :offset
+            WITH page AS (
+                SELECT b.bbl, b.address, b.borough, b.unit_count, b.building_type,
+                       b.churn_score, b.churn_category, b.key_signal
+                FROM buildings b
+                WHERE {where_sql}
+                ORDER BY {order_sql}
+                LIMIT :limit OFFSET :offset
+            )
+            SELECT page.bbl, page.address, page.borough, page.unit_count, page.building_type,
+                   page.churn_score, page.churn_category, page.key_signal,
+                   m.current_lead_id,
+                   COALESCE(m.current_link_count, 0)::int AS current_link_count,
+                   COALESCE(m.current_link_lead_ids, ARRAY[]::text[]) AS current_link_lead_ids,
+                   COALESCE(m.current_link_conflict, false) AS current_link_conflict,
+                   lead_match.lead_name AS pm_company
+            FROM page
+            LEFT JOIN LATERAL (
+                SELECT
+                    COALESCE(
+                        :lead_id,
+                        CASE
+                            WHEN COUNT(*) = 1 AND COUNT(DISTINCT bm.lead_id) = 1 THEN MAX(bm.lead_id)
+                            ELSE NULL
+                        END
+                    ) AS current_lead_id,
+                    COUNT(*)::int AS current_link_count,
+                    ARRAY_AGG(DISTINCT bm.lead_id ORDER BY bm.lead_id) AS current_link_lead_ids,
+                    (COUNT(*) > 1 OR COUNT(DISTINCT bm.lead_id) > 1) AS current_link_conflict
+                FROM building_management bm
+                WHERE bm.bbl = page.bbl
+                  AND bm.is_current = true
+            ) m ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    COALESCE(
+                        NULLIF(BTRIM(l.company_name), ''),
+                        NULLIF(BTRIM(l.agent_name), ''),
+                        NULLIF(BTRIM(l.owner_name), ''),
+                        NULLIF(BTRIM(l.primary_contact), ''),
+                        NULLIF(BTRIM(l.normalized_name), ''),
+                        l.lead_id
+                    ) AS lead_name
+                FROM building_management bm
+                JOIN leads l ON l.lead_id = bm.lead_id
+                WHERE bm.bbl = page.bbl
+                  AND bm.is_current = true
+                ORDER BY l.score DESC NULLS LAST, l.updated_at DESC NULLS LAST, l.lead_id ASC
+                LIMIT 1
+            ) lead_match ON true
         """),
         params,
     )
     buildings = [dict(r._mapping) for r in result]
     for b in buildings:
-        b["current_lead_id"] = lead_id
-        b["current_link_count"] = None
-        b["current_link_lead_ids"] = []
-        b["current_link_conflict"] = False
-        b["pm_company"] = None
         b["coverage_ratio"] = None
         b["outreach_status"] = None
         b["last_scored_at"] = None
