@@ -237,12 +237,6 @@ const BuildingDetailPage: React.FC = () => {
       ...(claim.contradicting_sources || []).map((source) => `${source} (contradicts)`),
     ]),
   ));
-  const knownAddresses = building.known_addresses || [];
-  const hpdRangeAddress = knownAddresses.find((item) => item.source === 'hpd_registration_range');
-  const visibleAliases = knownAddresses
-    .map((item) => item.display_address)
-    .filter((value, index, values) => value && values.indexOf(value) === index && value !== building.address)
-    .slice(0, 8);
   const truthSchemaReady = (truthSummary as SubjectTruthSummary | undefined)?.schema_status?.ready;
   const contradictionCount = truthSummary?.belief_summary.contradiction_count || 0;
   const truthHeadline = truthSummaryHeadline(truthSummary, 'building');
@@ -302,20 +296,6 @@ const BuildingDetailPage: React.FC = () => {
             {building.unit_count && <span>{building.unit_count} units</span>}
             {building.year_built && <span>Built {building.year_built}</span>}
           </div>
-          {(hpdRangeAddress || visibleAliases.length > 0) && (
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-600">
-              {hpdRangeAddress && (
-                <span className="rounded border border-gray-200 bg-gray-50 px-2 py-1">
-                  HPD range: {hpdRangeAddress.display_address}
-                </span>
-              )}
-              {visibleAliases.map((alias) => (
-                <span key={alias} className="rounded border border-gray-200 bg-white px-2 py-1">
-                  {alias}
-                </span>
-              ))}
-            </div>
-          )}
         </div>
         <div className="flex w-full items-center justify-between gap-3 sm:w-auto sm:justify-end">
           {building.churn_score !== null ? (

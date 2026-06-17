@@ -1018,9 +1018,6 @@ const LeadTable: React.FC<Props> = ({ onSelectLead, filterPreset, onFilterPreset
                 <div key={b.building_id || `${b.address}-${idx}`} className="flex items-center justify-between p-2 rounded-lg bg-blue-50/50 hover:bg-blue-50 transition-colors">
                 <div>
                   <div className="text-sm font-medium text-gray-900">{b.address}</div>
-                  {b.canonical_address && b.canonical_address !== b.address && (
-                    <div className="text-xs text-gray-500">Canonical record: {b.canonical_address}</div>
-                  )}
                   {isLeadAddress && (
                     <div className="text-xs text-gray-500">{b.boro || 'Unknown borough'} - lead address record</div>
                   )}

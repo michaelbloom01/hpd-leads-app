@@ -26,7 +26,6 @@ from src.schemas.requests import (
     OutreachAttemptRequest,
 )
 from src.services.contact_roster import get_lead_contacts
-from src.services.address_aliases import address_alias_search_sql, address_alias_table_exists
 from src.services.lead_generation import summarize_portfolio_building_types
 from src.services.outreach_feedback import load_outreach_feedback_truth_write_status, record_outreach_feedback_claims
 
@@ -603,20 +602,6 @@ async def get_leads(
                 params[key] = btype
     if search:
         requires_live_links = True
-        alias_filter = ""
-        if await address_alias_table_exists(session):
-            alias_condition, alias_params = address_alias_search_sql("baa", search, "alias")
-            params.update(alias_params)
-            alias_filter = f"""
-                OR EXISTS (
-                    SELECT 1
-                    FROM building_management bm_alias
-                    JOIN building_address_aliases baa ON baa.bbl = bm_alias.bbl
-                    WHERE bm_alias.lead_id = leads.lead_id
-                      AND bm_alias.is_current = true
-                      AND {alias_condition}
-                )
-            """
         wheres.append("""
             (
                 owner_name ILIKE :search
@@ -639,9 +624,8 @@ async def get_leads(
                         OR CAST(b.bbl AS TEXT) ILIKE :search
                       )
                 )
-                {alias_filter}
             )
-        """.format(alias_filter=alias_filter))
+        """)
         params["search"] = f"%{search}%"
 
     where_sql = " AND ".join(wheres) if wheres else "1=1"

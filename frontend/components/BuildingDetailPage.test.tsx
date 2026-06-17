@@ -64,20 +64,6 @@ describe('BuildingDetailPage truth confidence', () => {
       corporate_owner: 'Example Owner LLC',
       latitude: null,
       longitude: null,
-      known_addresses: [
-        {
-          display_address: '100 Example Ave',
-          source: 'building_record_address',
-          confidence_score: 0.75,
-          is_primary: true,
-        },
-        {
-          display_address: '100-104 EXAMPLE AVE',
-          source: 'hpd_registration_range',
-          confidence_score: 0.9,
-          is_primary: false,
-        },
-      ],
     });
     fetchBuildingTimelineMock.mockResolvedValue([]);
     fetchBuildingScoreHistoryMock.mockResolvedValue([]);
@@ -143,7 +129,6 @@ describe('BuildingDetailPage truth confidence', () => {
     expect(screen.getByText('1 contradicting')).toBeInTheDocument();
     expect(screen.getByText(/Sources: ACRIS, HPD registration, outreach feedback \(conflicts\)/i)).toBeInTheDocument();
     expect(screen.queryByText(/exists in building table/i)).not.toBeInTheDocument();
-    expect(screen.getByText('HPD range: 100-104 EXAMPLE AVE')).toBeInTheDocument();
 
     await waitFor(() => {
       expect(fetchSubjectTruthSummaryMock).toHaveBeenCalledWith('building', '1000000001');
