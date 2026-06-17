@@ -23,6 +23,11 @@ class FakeExecuteResult:
         for row in self._rows:
             yield SimpleNamespace(_mapping=row)
 
+    def first(self):
+        if not self._rows:
+            return None
+        return SimpleNamespace(_mapping=self._rows[0])
+
     def scalar(self):
         return self._scalar
 
@@ -218,6 +223,7 @@ async def test_get_leads_uses_fast_estimated_total_for_stored_borough_filter():
 @pytest.mark.anyio
 async def test_get_leads_search_matches_stored_lead_address():
     session = FakeAsyncSession([
+        FakeExecuteResult(rows=[{"alias_table_exists": False}]),
         FakeExecuteResult(rows=[_lead_row(address="110 EAST 55TH ST")])
     ])
 
@@ -251,6 +257,49 @@ async def test_get_leads_search_matches_stored_lead_address():
         user=AuthUser(user_id="u1", email="test@example.com"),
     )
 
-    first_sql = session.calls[0][0]
+    first_sql = session.calls[1][0]
     assert "address ILIKE :search" in first_sql
     assert response["leads"][0]["address"] == "110 EAST 55TH ST"
+
+
+@pytest.mark.anyio
+async def test_get_leads_search_can_match_building_address_aliases():
+    session = FakeAsyncSession([
+        FakeExecuteResult(rows=[{"alias_table_exists": True}]),
+        FakeExecuteResult(rows=[_lead_row(address="4 HANOVER SQUARE")])
+    ])
+
+    response = await leads_router.get_leads(
+        request=_make_request(),
+        min_score=None,
+        max_score=None,
+        min_portfolio=None,
+        max_portfolio=None,
+        boro=None,
+        neighborhood=None,
+        has_phone=None,
+        has_email=None,
+        has_website=None,
+        entity_type=None,
+        enrichment_status=None,
+        outreach_status=None,
+        pipeline_stage=None,
+        search="10 Hanover Square",
+        limit=50,
+        offset=0,
+        sort_by="score",
+        sort_dir="desc",
+        min_units=None,
+        max_units=None,
+        min_units_per_bldg=None,
+        max_units_per_bldg=None,
+        building_type_has=None,
+        count_mode="estimate",
+        session=session,
+        user=AuthUser(user_id="u1", email="test@example.com"),
+    )
+
+    search_sql = session.calls[1][0]
+    assert "building_address_aliases baa" in search_sql
+    assert "bm_alias.lead_id = leads.lead_id" in search_sql
+    assert response["leads"][0]["address"] == "4 HANOVER SQUARE"
