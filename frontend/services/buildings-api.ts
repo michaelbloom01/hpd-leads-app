@@ -53,10 +53,6 @@ async function extractApiErrorMessage(response: Response, fallback: string): Pro
 export interface BuildingRow {
   bbl: string;
   address: string;
-  canonical_address?: string | null;
-  matched_address?: string | null;
-  address_source?: string | null;
-  address_confidence?: number | null;
   borough: string;
   unit_count: number | null;
   building_type: string | null;
@@ -113,7 +109,6 @@ export interface BuildingDetail {
   bbl: string;
   bin: string | null;
   address: string;
-  known_addresses?: BuildingAddressAlias[];
   borough: string;
   block: string | null;
   lot: string | null;
@@ -152,14 +147,6 @@ export interface BuildingDetail {
   dos_contacts_status?: 'loaded' | 'stale' | 'refreshing' | 'not_loaded' | 'no_match';
   dos_refresh_requested_at?: string | null;
   dos_contacts_last_refreshed_at?: string | null;
-}
-
-export interface BuildingAddressAlias {
-  display_address: string;
-  source: string;
-  confidence_score: number | null;
-  is_primary: boolean;
-  metadata?: Record<string, unknown> | null;
 }
 
 export interface BuildingContactEntry {
