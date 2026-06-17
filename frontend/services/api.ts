@@ -1450,6 +1450,10 @@ export interface BuildingSearchResult {
   building_id: string;
   bbl?: string | null;
   address: string;
+  canonical_address?: string | null;
+  matched_address?: string | null;
+  address_source?: string | null;
+  address_confidence?: number | null;
   house_number: string;
   street_name: string;
   boro: string;

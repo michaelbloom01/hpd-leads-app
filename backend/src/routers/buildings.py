@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.session import get_session
 from src.auth.auth import AuthUser, get_current_user
 from src.score.revenue import estimate_building_revenue
+from src.services.address_aliases import address_alias_search_sql, address_alias_table_exists
 from src.services.building_geocode import geocode_building
 from src.services.contact_roster import get_building_contacts
 from src.services.outreach_feedback import load_outreach_feedback_truth_write_status, record_outreach_feedback_claims
@@ -270,7 +271,47 @@ async def list_buildings(
         else:
             wheres.append("b.outreach_status = :ostatus")
             params["ostatus"] = outreach_status
+    alias_select_sql = """
+                   page.address AS address,
+                   NULL::text AS canonical_address,
+                   NULL::text AS matched_address,
+                   NULL::text AS address_source,
+                   NULL::double precision AS address_confidence,
+    """
+    alias_join_sql = ""
     if search:
+        alias_filter = ""
+        if await address_alias_table_exists(session):
+            alias_condition, alias_params = address_alias_search_sql("baa", search, "alias")
+            params.update(alias_params)
+            alias_filter = f"""
+                OR EXISTS (
+                    SELECT 1
+                    FROM building_address_aliases baa
+                    WHERE baa.bbl = b.bbl
+                      AND {alias_condition}
+                )
+            """
+            alias_select_sql = """
+                   COALESCE(alias_match.display_address, page.address) AS address,
+                   CASE WHEN alias_match.display_address IS NOT NULL THEN page.address ELSE NULL END AS canonical_address,
+                   alias_match.display_address AS matched_address,
+                   alias_match.source AS address_source,
+                   alias_match.confidence_score AS address_confidence,
+            """
+            alias_join_sql = f"""
+            LEFT JOIN LATERAL (
+                SELECT baa.display_address, baa.source, baa.confidence_score
+                FROM building_address_aliases baa
+                WHERE baa.bbl = page.bbl
+                  AND {alias_condition}
+                ORDER BY CASE WHEN baa.normalized_address = :alias_normalized THEN 0 ELSE 1 END,
+                         baa.is_primary DESC,
+                         baa.confidence_score DESC,
+                         baa.display_address ASC
+                LIMIT 1
+            ) alias_match ON TRUE
+            """
         wheres.append("""
             (
                 b.address ILIKE :search
@@ -290,8 +331,9 @@ async def list_buildings(
                           l_search.lead_id
                       ) ILIKE :search
                 )
+                {alias_filter}
             )
-        """)
+        """.format(alias_filter=alias_filter))
         params["search"] = f"%{search}%"
 
     where_sql = " AND ".join(wheres) if wheres else "1=1"
@@ -317,7 +359,9 @@ async def list_buildings(
                 ORDER BY b.{sort_col} {direction} NULLS LAST
                 LIMIT :limit OFFSET :offset
             )
-            SELECT page.bbl, page.address, page.borough, page.unit_count, page.building_type,
+            SELECT page.bbl,
+{alias_select_sql}
+                   page.borough, page.unit_count, page.building_type,
                    page.churn_score, page.churn_category, page.key_signal,
                    page.coverage_ratio, page.outreach_status, page.last_scored_at,
                    page.latitude, page.longitude, page.coordinate_source, page.coordinate_precision,
@@ -360,6 +404,7 @@ async def list_buildings(
                 ORDER BY l.score DESC NULLS LAST, l.updated_at DESC NULLS LAST, l.lead_id ASC
                 LIMIT 1
             ) lead_match ON true
+            {alias_join_sql}
         """),
         params,
     )
@@ -766,6 +811,19 @@ async def get_building(
     building["dos_contacts_status"] = dos_status
     building["dos_refresh_requested_at"] = contact_meta.get("dos_refresh_requested_at")
     building["dos_contacts_last_refreshed_at"] = contact_meta.get("dos_contacts_last_refreshed_at")
+    building["known_addresses"] = []
+    if await address_alias_table_exists(session):
+        aliases_result = await session.execute(
+            text("""
+                SELECT display_address, source, confidence_score, is_primary, metadata
+                FROM building_address_aliases
+                WHERE bbl = :bbl
+                ORDER BY is_primary DESC, confidence_score DESC, display_address ASC
+                LIMIT 25
+            """),
+            {"bbl": canonical_bbl},
+        )
+        building["known_addresses"] = [dict(row._mapping) for row in aliases_result]
 
     return building
 

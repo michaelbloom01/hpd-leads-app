@@ -18,6 +18,11 @@ import requests
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from src.services.address_aliases import (
+    address_alias_table_exists_sync,
+    build_hpd_registration_aliases,
+    upsert_building_address_aliases_sync,
+)
 from src.services.building_geocode import geocode_building
 
 try:
@@ -405,8 +410,9 @@ def ingest_buildings_from_hpd(self, job_id: Optional[int] = None):
     try:
         logger.info("Fetching HPD registrations...")
         registrations = _socrata_fetch(DATASETS["hpd_registrations"], {
-            "$select": "boroid,block,lot,buildingid,registrationid,housenumber,"
-                       "streetname,zip,boro,lastregistrationdate,registrationenddate",
+            "$select": "boroid,block,lot,buildingid,bin,registrationid,housenumber,"
+                       "lowhousenumber,highhousenumber,streetname,zip,boro,"
+                       "lastregistrationdate,registrationenddate",
             "$order": "lastregistrationdate DESC",
         })
         logger.info(f"Fetched {len(registrations)} registrations")
@@ -439,6 +445,7 @@ def ingest_buildings_from_hpd(self, job_id: Optional[int] = None):
         matched = 0
         rejected = 0
         buildings_seen = set()
+        write_address_aliases = address_alias_table_exists_sync(session)
 
         for reg in registrations:
             bbl = _compute_bbl(
@@ -453,6 +460,7 @@ def ingest_buildings_from_hpd(self, job_id: Optional[int] = None):
 
             pluto = pluto_by_bbl.get(bbl, {})
             address = f"{reg.get('housenumber', '')} {reg.get('streetname', '')}".strip()
+            bin_value = reg.get("bin") or reg.get("buildingid")
 
             session.execute(
                 text("""
@@ -474,7 +482,7 @@ def ingest_buildings_from_hpd(self, job_id: Optional[int] = None):
                 """),
                 {
                     "bbl": bbl,
-                    "bin": reg.get("buildingid"),
+                    "bin": bin_value,
                     "address": address,
                     "borough": reg.get("boro"),
                     "block": reg.get("block"),
@@ -490,6 +498,20 @@ def ingest_buildings_from_hpd(self, job_id: Optional[int] = None):
                     "nta": None,
                 },
             )
+            if write_address_aliases:
+                upsert_building_address_aliases_sync(
+                    session,
+                    bbl=bbl,
+                    bin_value=bin_value,
+                    aliases=build_hpd_registration_aliases(
+                        house_number=reg.get("housenumber"),
+                        low_house_number=reg.get("lowhousenumber"),
+                        high_house_number=reg.get("highhousenumber"),
+                        street_name=reg.get("streetname"),
+                        registration_id=reg.get("registrationid"),
+                        hpd_building_id=reg.get("buildingid"),
+                    ),
+                )
             inserted += 1
 
             reg_id = reg.get("registrationid")

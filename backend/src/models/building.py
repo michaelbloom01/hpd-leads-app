@@ -78,6 +78,7 @@ class Building(TimestampMixin, Base):
     )
     score_history = relationship("BuildingScoreHistory", back_populates="building")
     contacts = relationship("BuildingContact", back_populates="building")
+    address_aliases = relationship("BuildingAddressAlias", back_populates="building")
 
     __table_args__ = (
         Index("idx_buildings_churn_score", "churn_score"),
@@ -85,6 +86,41 @@ class Building(TimestampMixin, Base):
         Index("idx_buildings_borough", "borough"),
         Index("idx_buildings_outreach_status", "outreach_status"),
         Index("idx_buildings_coordinates", "latitude", "longitude"),
+    )
+
+
+class BuildingAddressAlias(TimestampMixin, Base):
+    """Search/display aliases for one NYC building keyed by BBL."""
+
+    __tablename__ = "building_address_aliases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    bbl: Mapped[str] = mapped_column(
+        String(10), ForeignKey("buildings.bbl"), nullable=False
+    )
+    bin: Mapped[Optional[str]] = mapped_column(String(20))
+    display_address: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_address: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_record_id: Mapped[Optional[str]] = mapped_column(String(80))
+    confidence_score: Mapped[float] = mapped_column(Float, server_default="0.8")
+    is_primary: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    metadata_json: Mapped[Optional[dict]] = mapped_column("metadata", JSONB)
+
+    building = relationship("Building", back_populates="address_aliases")
+
+    __table_args__ = (
+        Index("idx_building_address_aliases_normalized", "normalized_address"),
+        Index("idx_building_address_aliases_bbl", "bbl"),
+        Index("idx_building_address_aliases_source", "source"),
+        Index("idx_building_address_aliases_primary", "bbl", "is_primary"),
+        Index(
+            "uq_building_address_aliases_bbl_normalized_source",
+            "bbl",
+            "normalized_address",
+            "source",
+            unique=True,
+        ),
     )
 
 

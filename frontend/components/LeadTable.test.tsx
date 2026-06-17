@@ -66,6 +66,7 @@ describe('LeadTable', () => {
         building_id: 'lead:lead-1',
         bbl: null,
         address: '110 EAST 55TH ST',
+        canonical_address: null,
         house_number: '110',
         street_name: 'EAST 55TH ST',
         boro: 'MANHATTAN',
@@ -152,5 +153,40 @@ describe('LeadTable', () => {
     expect(screen.getByText('MANHATTAN - lead address record')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open building' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Open lead (score: 88.0)' })).toBeInTheDocument();
+  });
+
+  it('shows canonical address context for matched aliases', async () => {
+    searchBuildingsMock.mockResolvedValueOnce({
+      query: '10 HANOVER SQUARE',
+      total: 1,
+      buildings: [{
+        building_id: '1000310001',
+        bbl: '1000310001',
+        address: '10 HANOVER SQUARE',
+        canonical_address: '4 HANOVER SQUARE',
+        house_number: '10',
+        street_name: 'HANOVER SQUARE',
+        boro: 'MANHATTAN',
+        units_res: 493,
+        building_class: 'D6',
+        building_type: null,
+        lead_id: null,
+        agent_name: '',
+        owner_name: '',
+        score: null,
+        portfolio_size: null,
+        total_units: null,
+        status: 'unlinked',
+      }],
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/leads?mode=address&q=10%20HANOVER%20SQUARE']}>
+        <LeadTable onSelectLead={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('10 HANOVER SQUARE');
+    expect(screen.getByText('Canonical record: 4 HANOVER SQUARE')).toBeInTheDocument();
   });
 });
