@@ -27,11 +27,6 @@ if not os.environ.get("DATABASE_URL"):
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 from src.db.session import get_sync_url
-from src.services.address_aliases import (
-    address_alias_table_exists_sync,
-    build_hpd_registration_aliases,
-    upsert_building_address_aliases_sync,
-)
 
 SOCRATA_BASE = "https://data.cityofnewyork.us/resource"
 APP_TOKEN = os.environ.get("NYC_OPEN_DATA_APP_TOKEN", "")
@@ -181,9 +176,8 @@ def run_buildings(session):
     session.commit()
 
     registrations = socrata_fetch(DATASETS["hpd_registrations"], {
-        "$select": "boroid,block,lot,buildingid,bin,registrationid,housenumber,"
-                   "lowhousenumber,highhousenumber,streetname,zip,boro,"
-                   "lastregistrationdate,registrationenddate",
+        "$select": "boroid,block,lot,buildingid,registrationid,housenumber,"
+                   "streetname,zip,boro,lastregistrationdate,registrationenddate",
         "$order": "lastregistrationdate DESC",
     }, "HPD Registrations")
 
@@ -214,8 +208,6 @@ def run_buildings(session):
     buildings_seen = set()
     building_batch = []
     contact_batch = []
-    alias_batch = []
-    write_address_aliases = address_alias_table_exists_sync(session)
     BATCH_SIZE = 5000
 
     def flush_buildings(batch):
@@ -264,17 +256,6 @@ def run_buildings(session):
             session.rollback()
             logger.warning(f"Contact batch insert failed, skipping {len(batch)} rows: {e}")
 
-    def flush_aliases(batch):
-        if not batch or not write_address_aliases:
-            return
-        for item in batch:
-            upsert_building_address_aliases_sync(
-                session,
-                bbl=item["bbl"],
-                bin_value=item["bin"],
-                aliases=item["aliases"],
-            )
-
     for reg in registrations:
         bbl = compute_bbl(reg.get("boroid"), reg.get("block"), reg.get("lot"))
         if not bbl or bbl in buildings_seen:
@@ -285,10 +266,9 @@ def run_buildings(session):
         matched += 1
         pluto = pluto_by_bbl.get(bbl, {})
         address = f"{reg.get('housenumber', '')} {reg.get('streetname', '')}".strip()
-        bin_value = reg.get("bin") or reg.get("buildingid")
 
         building_batch.append({
-            "bbl": bbl, "bin": bin_value,
+            "bbl": bbl, "bin": reg.get("buildingid"),
             "address": address, "borough": reg.get("boro"),
             "block": reg.get("block"), "lot": reg.get("lot"), "zip": reg.get("zip"),
             "bldg_class": pluto.get("bldgclass"),
@@ -298,19 +278,6 @@ def run_buildings(session):
             "council": pluto.get("council"), "cd": pluto.get("cd"),
             "census": pluto.get("ct2010"), "nta": None,
         })
-        if write_address_aliases:
-            alias_batch.append({
-                "bbl": bbl,
-                "bin": bin_value,
-                "aliases": build_hpd_registration_aliases(
-                    house_number=reg.get("housenumber"),
-                    low_house_number=reg.get("lowhousenumber"),
-                    high_house_number=reg.get("highhousenumber"),
-                    street_name=reg.get("streetname"),
-                    registration_id=reg.get("registrationid"),
-                    hpd_building_id=reg.get("buildingid"),
-                ),
-            })
         inserted += 1
 
         reg_id = reg.get("registrationid")
@@ -329,17 +296,14 @@ def run_buildings(session):
         if len(building_batch) >= BATCH_SIZE:
             flush_buildings(building_batch)
             flush_contacts(contact_batch)
-            flush_aliases(alias_batch)
             session.commit()
             logger.info(f"  Buildings progress: {inserted}")
             building_batch = []
             contact_batch = []
-            alias_batch = []
 
     # Flush remaining
     flush_buildings(building_batch)
     flush_contacts(contact_batch)
-    flush_aliases(alias_batch)
 
     session.commit()
     log_quality(session, "hpd_buildings", len(registrations), matched, rejected, inserted)

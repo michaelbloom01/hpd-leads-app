@@ -3,6 +3,7 @@
 Migrated to PostgreSQL (AsyncSession).
 """
 import asyncio
+import re
 import time
 import logging
 
@@ -15,11 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.session import get_session
 from src.auth.auth import AuthUser, get_current_admin, get_current_user
-from src.services.address_aliases import (
-    address_alias_search_sql,
-    address_alias_table_exists,
-    address_search_patterns,
-)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["admin"])
@@ -474,7 +470,42 @@ async def contacts_reconciliation(
 
 
 def _normalize_address_for_search(query: str) -> list[str]:
-    return address_search_patterns(query)
+    q = query.strip().upper()
+    ordinal_stripped = re.sub(r'\b(\d+)(?:ST|ND|RD|TH)\b', r'\1', q)
+    _dir_map = {"E": "EAST", "W": "WEST", "N": "NORTH", "S": "SOUTH"}
+    _dir_reverse = {v: k for k, v in _dir_map.items()}
+    _type_map = {
+        "ST": "STREET", "AVE": "AVENUE", "AV": "AVENUE",
+        "BLVD": "BOULEVARD", "DR": "DRIVE", "PL": "PLACE",
+        "CT": "COURT", "LN": "LANE", "RD": "ROAD",
+        "PKWY": "PARKWAY", "HWY": "HIGHWAY", "SQ": "SQUARE",
+        "TER": "TERRACE", "CIR": "CIRCLE",
+    }
+    _type_reverse = {v: k for k, v in _type_map.items()}
+
+    def _expand(txt: str) -> set[str]:
+        variants = {txt}
+        words = txt.split()
+        for i, w in enumerate(words):
+            swaps: list[str] = []
+            if w in _dir_map:
+                swaps.append(_dir_map[w])
+            if w in _dir_reverse:
+                swaps.append(_dir_reverse[w])
+            if w in _type_map:
+                swaps.append(_type_map[w])
+            if w in _type_reverse:
+                swaps.append(_type_reverse[w])
+            for s in swaps:
+                new_words = words[:i] + [s] + words[i + 1:]
+                variants.add(" ".join(new_words))
+        return variants
+
+    patterns = set()
+    for base in {q, ordinal_stripped}:
+        if base:
+            patterns.update(f"%{v}%" for v in _expand(base))
+    return list(patterns)
 
 
 @router.get("/buildings/search")
@@ -491,42 +522,12 @@ async def search_buildings(
     like_clauses = " OR ".join([f"b.address ILIKE :p{i}" for i in range(len(patterns))])
     params = {f"p{i}": p for i, p in enumerate(patterns)}
     params["limit"] = limit
-    alias_select_sql = """
-                NULL::text AS matched_alias_address,
-                NULL::text AS alias_source,
-                NULL::double precision AS alias_confidence_score,
-    """
-    alias_join_sql = ""
-    alias_where_sql = ""
-    if await address_alias_table_exists(session):
-        alias_condition, alias_params = address_alias_search_sql("baa", address, "alias")
-        params.update(alias_params)
-        alias_select_sql = """
-                alias_match.display_address AS matched_alias_address,
-                alias_match.source AS alias_source,
-                alias_match.confidence_score AS alias_confidence_score,
-        """
-        alias_join_sql = f"""
-            LEFT JOIN LATERAL (
-                SELECT baa.bbl, baa.display_address, baa.source, baa.confidence_score
-                FROM building_address_aliases baa
-                WHERE baa.bbl = b.bbl
-                  AND {alias_condition}
-                ORDER BY CASE WHEN baa.normalized_address = :alias_normalized THEN 0 ELSE 1 END,
-                         baa.is_primary DESC,
-                         baa.confidence_score DESC,
-                         baa.display_address ASC
-                LIMIT 1
-            ) alias_match ON true
-        """
-        alias_where_sql = " OR alias_match.bbl IS NOT NULL"
 
     result = await session.execute(
         text(f"""
             SELECT
                 b.bbl,
                 b.address,
-{alias_select_sql}
                 b.borough,
                 b.unit_count,
                 b.building_class,
@@ -575,8 +576,7 @@ async def search_buildings(
                 bc_search.corporation_name
                 LIMIT 1
             ) pm_match ON true
-            {alias_join_sql}
-            WHERE ({like_clauses}{alias_where_sql})
+            WHERE ({like_clauses})
             ORDER BY b.churn_score DESC NULLS LAST
             LIMIT :limit
         """),
@@ -586,9 +586,7 @@ async def search_buildings(
     buildings = []
     seen_lead_ids = set()
     for r in rows:
-        canonical_addr = r.get("address") or ""
-        matched_addr = r.get("matched_alias_address") or None
-        addr = matched_addr or canonical_addr
+        addr = r.get("address") or ""
         parts = addr.split(" ", 1)
         if r.get("lead_id"):
             seen_lead_ids.add(r["lead_id"])
@@ -596,10 +594,6 @@ async def search_buildings(
             "building_id": r["bbl"],
             "bbl": r["bbl"],
             "address": addr,
-            "canonical_address": canonical_addr if matched_addr and matched_addr != canonical_addr else None,
-            "matched_address": matched_addr,
-            "address_source": r.get("alias_source"),
-            "address_confidence": r.get("alias_confidence_score"),
             "house_number": parts[0] if len(parts) > 1 else "",
             "street_name": parts[1] if len(parts) > 1 else addr,
             "boro": r.get("borough") or "",
