@@ -400,6 +400,8 @@ async def test_map_markers_resolve_collapsed_saved_coordinates_with_backend_geoc
     executed_sql = "\n".join(sql for sql, _params in session.calls)
     assert "FROM building_management bm" in executed_sql
     assert "JOIN buildings b ON b.bbl = bm.bbl" in executed_sql
+    assert "to_jsonb(b)->>'latitude'" in executed_sql
+    assert "to_jsonb(b)->>'coordinate_source'" in executed_sql
 
 
 @pytest.mark.anyio

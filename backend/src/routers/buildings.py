@@ -583,7 +583,9 @@ async def building_map_markers(
 
     This endpoint is intentionally read-only. It uses persisted coordinates when
     they are sane and falls back to backend geocoding when stored coordinates are
-    missing, outside NYC, or collapsed onto a small number of points.
+    missing, outside NYC, or collapsed onto a small number of points. Coordinate
+    fields are read through the row JSON so legacy production schemas return null
+    values instead of failing the full portfolio request.
     """
     result = await session.execute(
         text("""
@@ -592,10 +594,10 @@ async def building_map_markers(
                    b.address,
                    b.borough,
                    b.unit_count,
-                   b.latitude,
-                   b.longitude,
-                   b.coordinate_source,
-                   b.coordinate_precision
+                   NULLIF(to_jsonb(b)->>'latitude', '')::double precision AS latitude,
+                   NULLIF(to_jsonb(b)->>'longitude', '')::double precision AS longitude,
+                   NULLIF(to_jsonb(b)->>'coordinate_source', '') AS coordinate_source,
+                   NULLIF(to_jsonb(b)->>'coordinate_precision', '') AS coordinate_precision
             FROM building_management bm
             JOIN buildings b ON b.bbl = bm.bbl
             WHERE bm.lead_id = :lead_id
