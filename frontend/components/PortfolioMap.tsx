@@ -125,7 +125,8 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
     }, 80);
     if (positions.length > 0) {
       const bounds = L.latLngBounds(positions.map(p => L.latLng(p[0], p[1])));
-      map.fitBounds(bounds, { padding: [30, 30], maxZoom: 14 });
+      map.stop();
+      map.fitBounds(bounds, { padding: [30, 30], maxZoom: 14, animate: false });
     }
     return () => window.clearTimeout(invalidateTimer);
   }, [map, positions]);

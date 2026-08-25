@@ -10,6 +10,7 @@ const markerMock = vi.fn((props: { children?: React.ReactNode; position: [number
 const tileLayerMock = vi.fn((_props: Record<string, unknown>) => <div data-testid="tile-layer" />);
 const fitBoundsMock = vi.fn();
 const invalidateSizeMock = vi.fn();
+const stopMock = vi.fn();
 
 vi.mock('leaflet/dist/leaflet.css', () => ({}));
 
@@ -39,6 +40,7 @@ vi.mock('react-leaflet', () => ({
   useMap: () => ({
     fitBounds: fitBoundsMock,
     invalidateSize: invalidateSizeMock,
+    stop: stopMock,
   }),
 }));
 
@@ -89,6 +91,11 @@ describe('PortfolioMap', () => {
     expect(screen.getByText(/0 stored, 8 geocoded/i)).toBeInTheDocument();
     const markerPositions = markerMock.mock.calls.map(([props]) => props.position.join(','));
     expect(new Set(markerPositions).size).toBe(8);
+    expect(stopMock).toHaveBeenCalled();
+    expect(fitBoundsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ animate: false }),
+    );
   });
 
   it('does not render impossible non-NYC coordinates as valid markers', async () => {

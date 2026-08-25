@@ -4,6 +4,8 @@ const frontendUrl = (process.env.FRONTEND_URL || 'http://127.0.0.1:3000').replac
 const apiUrl = (process.env.VITE_API_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '');
 const email = process.env.SMOKE_EMAIL;
 const password = process.env.SMOKE_PASSWORD;
+const configuredLeadId = process.env.SMOKE_LEAD_ID?.trim();
+const configuredBbl = process.env.SMOKE_BBL?.trim();
 
 const MUTATING_LABEL = /\b(delete|remove|save|create|add|load|refresh|run|start|execute|approve|reject|import|export|upload|enrich|generate|discover|sync|materialize|validate|send|submit|confirm|rescore|log outcome|mark sent|archive|clear all|contacted|meeting|won|lost)\b/i;
 const SAFE_LABEL = /\b(data health|source status|system|dashboard|overview|truth|evidence|lineage|contacts|buildings|leads|settings|alerts|targets|smart lists|building lists|next|previous|clear|filters|sort|view|details|close|cancel|search|pipeline|due diligence|score|table|kanban|pm companies|address lookup|man|bklyn|qns|bronx|si|phone|email|go|apply|scoring weights|preview recalculation|preview manual evidence)\b/i;
@@ -204,11 +206,15 @@ async function clickSafeButtons(page, route) {
 async function main() {
   const auth = await login();
   const [leadPayload, buildingPayload] = await Promise.all([
-    getJson('/api/leads?limit=1&count_mode=estimate', auth.token),
-    getJson('/api/v1/buildings?limit=1', auth.token),
+    configuredLeadId
+      ? Promise.resolve(null)
+      : getJson('/api/leads?limit=1&count_mode=estimate', auth.token),
+    configuredBbl
+      ? Promise.resolve(null)
+      : getJson('/api/v1/buildings/browse?limit=1', auth.token),
   ]);
-  const leadId = leadPayload?.leads?.[0]?.lead_id;
-  const bbl = buildingPayload?.buildings?.[0]?.bbl;
+  const leadId = configuredLeadId || leadPayload?.leads?.[0]?.lead_id;
+  const bbl = configuredBbl || buildingPayload?.buildings?.[0]?.bbl;
 
   const routes = [
     '/',
