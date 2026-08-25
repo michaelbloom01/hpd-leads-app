@@ -156,6 +156,23 @@ describe('LeadDetail outreach evidence safety', () => {
     click.mockRestore();
   });
 
+  it('describes completed enrichment without claiming a missing company summary', async () => {
+    const completedLead = {
+      ...lead,
+      business_summary: '',
+      enrichment_status: 'complete',
+    };
+    fetchLeadMock.mockResolvedValue(completedLead);
+
+    renderLeadDetail();
+
+    expect(await screen.findByText('The latest enrichment run did not return a company summary. Contact and website results remain available in the Contacts tab.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Contacts' }));
+    expect(screen.getByText('The latest enrichment run is complete. Review each contact and source before use.')).toBeInTheDocument();
+    expect(screen.queryByText(/strong coverage/i)).not.toBeInTheDocument();
+  });
+
   it('shows lead truth in product language with raw ledger details collapsed', async () => {
     fetchLeadTruthSummaryMock.mockResolvedValue({
       lead_id: 'lead-1',

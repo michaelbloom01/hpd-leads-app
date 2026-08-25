@@ -980,7 +980,11 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                       .trim()
                   }</p>
                 ) : (
-                  <p className="text-sm text-gray-400 italic">Use "Enrich Company" to look for public contact, website, and profile sources.</p>
+                  <p className="text-sm text-gray-400 italic">
+                    {enrichedLead.enrichment_status === 'complete'
+                      ? 'The latest enrichment run did not return a company summary. Contact and website results remain available in the Contacts tab.'
+                      : 'Use "Enrich Company" to look for public contact, website, and profile sources.'}
+                  </p>
                 )}
               </div>
 
@@ -1201,7 +1205,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                    enrichedLead.enrichment_status === 'failed' ? '●' : '○'}
                 </span>
                 {isEnriching ? `Preparing enrichment preview for ${enrichmentElapsedSec}s.` :
-                 enrichedLead.enrichment_status === 'complete' ? 'Enrichment returned strong coverage: direct contact info and a company profile are available.' :
+                 enrichedLead.enrichment_status === 'complete' ? 'The latest enrichment run is complete. Review each contact and source before use.' :
                  enrichedLead.enrichment_status === 'partial' ? 'Enrichment returned some useful data, but not every source produced a result.' :
                  enrichedLead.enrichment_status === 'failed' ? 'Enrichment ran but did not find public contact matches yet.' :
                  'Enrichment has not run yet. Use "Enrich Company" to review the update plan, then run enrichment when ready.'}
