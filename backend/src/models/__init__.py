@@ -5,6 +5,7 @@ discovers every table.
 """
 from .base import Base, TimestampMixin
 
+from .assessment import BuildingAssessment
 from .auth import User
 from .building import Building, BuildingManagement
 from .contacts import BuildingContact, EnrichmentResult
@@ -106,6 +107,7 @@ __all__ = [
     "ScoringConfig",
     "BuildingScoreHistory",
     # Auth
+    "BuildingAssessment",
     "User",
     # Legacy
     "LeadUserData",

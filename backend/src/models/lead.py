@@ -78,6 +78,23 @@ class Lead(TimestampMixin, Base):
     retired_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     retirement_reason: Mapped[Optional[str]] = mapped_column(Text)
 
+    # Portfolio identity and rollup.
+    #
+    # portfolio_signature is an order-independent hash of this lead's BBL set.
+    # Two leads sharing one manage exactly the same buildings. Duplicates are
+    # FLAGGED ONLY -- nothing merges automatically.
+    #
+    # portfolio_size holds the true BUILDING count (condo/co-op unit lots rolled
+    # up into their parent development). portfolio_size_raw preserves the
+    # pre-rollup raw TAX LOT count so the change stays reversible and the two
+    # can be compared -- every saved Smart List predates the switch.
+    portfolio_signature: Mapped[Optional[str]] = mapped_column(String(16))
+    portfolio_signature_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+    portfolio_size_raw: Mapped[Optional[int]] = mapped_column(Integer)
+    true_building_count: Mapped[Optional[int]] = mapped_column(Integer)
+
     # Revenue estimation
     estimated_monthly_revenue: Mapped[Optional[float]] = mapped_column(Float)
     estimated_annual_revenue: Mapped[Optional[float]] = mapped_column(Float)
