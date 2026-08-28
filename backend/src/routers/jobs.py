@@ -31,6 +31,7 @@ SOURCE_REFRESH_JOB_TYPES = {
     "facades",
     "pad",
     "building_coordinates",
+    "board_chairs",
 }
 APPROVAL_REQUIRED_JOB_TYPES = SOURCE_REFRESH_JOB_TYPES | {
     "enrichment",
@@ -526,7 +527,7 @@ async def get_job(job_id: int, session: AsyncSession = Depends(get_session), use
 @router.post("/{job_type}/start")
 async def start_job(
     job_type: str,
-    limit: int = Query(default=500, ge=1, le=5000),
+    limit: int = Query(default=500, ge=1, le=50000),
     dry_run: bool = Query(default=True),
     confirm_execute: bool = Query(default=False),
     cohort_filter: Optional[str] = Query(default=None),
@@ -558,6 +559,7 @@ async def start_job(
         "evictions", "energy", "facades", "pad", "scoring", "enrichment",
         "smart_lists_evaluation", "entity_resolution", "quality_checks",
         "lead_generation", "lead_reconciliation", "building_coordinates",
+        "board_chairs",
         "truth_validation", "truth_materialization",
     ]
     if job_type not in valid_types:
@@ -768,6 +770,25 @@ async def start_job(
                 job_id=job_id,
                 primary_dispatch=lambda: backfill_building_coordinates.delay(job_id=job_id, limit=limit),
                 fallback_dispatch=lambda: asyncio.create_task(asyncio.to_thread(backfill_building_coordinates.run, job_id=job_id, limit=limit)),
+            )
+            await _record_dispatch_success(dispatch_mode, fallback_used)
+            return {
+                "status": "queued",
+                "job_type": job_type,
+                "requested_job_type": original_job_type,
+                "job_id": job_id,
+                "limit": limit,
+                "dispatch_mode": dispatch_mode,
+            }
+
+        if job_type == "board_chairs":
+            from src.tasks.enrich import refresh_board_chairs_from_dos
+
+            dispatch_mode, fallback_used = await _dispatch_with_fallback(
+                job_type=job_type,
+                job_id=job_id,
+                primary_dispatch=lambda: refresh_board_chairs_from_dos.delay(job_id=job_id, limit=limit),
+                fallback_dispatch=lambda: asyncio.create_task(asyncio.to_thread(refresh_board_chairs_from_dos.run, job_id=job_id, limit=limit)),
             )
             await _record_dispatch_success(dispatch_mode, fallback_used)
             return {

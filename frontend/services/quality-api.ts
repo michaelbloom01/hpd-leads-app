@@ -37,6 +37,45 @@ export interface CoverageStats {
   with_aep: number;
 }
 
+export interface BoardChairCoverage {
+  total_buildings: number;
+  eligible_buildings: number;
+  current_exact_chair: number;
+  stale_exact_chair: number;
+  ambiguous_or_possible: number;
+  exact_entity_without_chair: number;
+  no_named_chair_match: number;
+  not_loaded: number;
+  hpd_head_officer_proxy: number;
+  hpd_head_officer_included_in_chair_coverage: false;
+  current_exact_coverage: number;
+  current_exact_all_buildings_coverage: number;
+  any_sourced_chair_coverage: number;
+  reliability_policy: Record<string, string>;
+}
+
+export interface BoardChairBenchmarkCase {
+  bbl: string;
+  address: string;
+  expected_name: string;
+  expected_title: string;
+  source_date: string;
+  source_name: string;
+  source_url: string;
+  observed_name: string | null;
+  status: 'current_match' | 'stale_match' | 'different_current_name' | 'missing_current_evidence';
+  identity_match: boolean;
+  evidence_currentness: 'current' | 'historical';
+}
+
+export interface BoardChairBenchmark {
+  total_cases: number;
+  identity_matches: number;
+  status_counts: Record<string, number>;
+  cases: BoardChairBenchmarkCase[];
+  interpretation: string;
+}
+
 export interface SourceAuditRow {
   source_name: string;
   dataset_id: string;
@@ -70,4 +109,6 @@ export const fetchQualitySummary = (): Promise<QualitySummary[]> => apiGet('/api
 export const fetchQualityHistory = (source?: string, limit = 30): Promise<QualitySummary[]> =>
   apiGet(`/api/v1/quality/history${source ? `?source=${source}&limit=${limit}` : `?limit=${limit}`}`);
 export const fetchCoverage = (): Promise<CoverageStats> => apiGet('/api/v1/quality/coverage');
+export const fetchBoardChairCoverage = (): Promise<BoardChairCoverage> => apiGet('/api/v1/quality/board-chair-coverage');
+export const fetchBoardChairBenchmark = (): Promise<BoardChairBenchmark> => apiGet('/api/v1/quality/board-chair-benchmark');
 export const fetchSourceAudit = (): Promise<SourceAuditResponse> => apiGet('/api/v1/quality/source-audit');

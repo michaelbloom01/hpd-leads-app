@@ -16,7 +16,7 @@ def test_exact_dos_chairman_is_board_head_for_coop():
         },
         is_condo_coop=True,
     )
-    assert hint == "NY DOS names chairman (exact entity match)"
+    assert hint == "NY DOS names chairman/CEO candidate (exact entity match; board title needs confirmation)"
     assert is_decision_maker is True
     assert board_role == "Board Head"
 

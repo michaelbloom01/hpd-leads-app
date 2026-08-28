@@ -12,6 +12,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.session import get_session
+from src.services.board_chair_benchmark import (
+    BOARD_CHAIR_GOLDEN_CASES,
+    evaluate_board_chair_case,
+)
 from src.services.source_audit import (
     RUNNABLE_JOB_TYPES,
     SOURCE_REGISTRY,
@@ -503,6 +507,126 @@ async def building_coverage(session: AsyncSession = Depends(get_session)):
             coverage[key] = None
             await session.rollback()
     return coverage
+
+
+@router.get("/board-chair-coverage")
+async def board_chair_coverage(session: AsyncSession = Depends(get_session)):  # noqa: B008
+    """Coverage and reliability tiers for actual board-chair evidence."""
+    row = (await session.execute(text("""
+        WITH eligible AS (
+            SELECT bbl
+            FROM buildings
+            WHERE UPPER(COALESCE(building_type, '')) LIKE '%CONDO%'
+               OR UPPER(COALESCE(building_type, '')) LIKE '%COOP%'
+               OR UPPER(COALESCE(building_type, '')) LIKE '%CO-OP%'
+               OR UPPER(COALESCE(building_class, '')) LIKE 'R%'
+               OR UPPER(COALESCE(building_class, '')) IN ('C6', 'C8', 'D0', 'D4')
+        ), cache AS (
+            SELECT
+                REPLACE(cache_key, 'officers:', '') AS bbl,
+                CAST(result AS jsonb) AS payload,
+                cached_at,
+                expires_at
+            FROM dos_cache
+            WHERE cache_key LIKE 'officers:%'
+              AND result IS NOT NULL
+        )
+        SELECT
+            (SELECT COUNT(*) FROM buildings)::int AS total_buildings,
+            COUNT(*)::int AS eligible_buildings,
+            COUNT(*) FILTER (
+                WHERE cache.payload->>'entity_match_status' = 'exact'
+                  AND NULLIF(TRIM(cache.payload->>'ceo_name'), '') IS NOT NULL
+                  AND COALESCE(cache.expires_at, cache.cached_at + INTERVAL '30 days') > NOW()
+            )::int AS current_exact_chair,
+            COUNT(*) FILTER (
+                WHERE cache.payload->>'entity_match_status' = 'exact'
+                  AND NULLIF(TRIM(cache.payload->>'ceo_name'), '') IS NOT NULL
+                  AND COALESCE(cache.expires_at, cache.cached_at + INTERVAL '30 days') <= NOW()
+            )::int AS stale_exact_chair,
+            COUNT(*) FILTER (
+                WHERE cache.payload->>'entity_match_status' IN ('possible', 'ambiguous')
+                   OR cache.payload->>'chair_status' = 'ambiguous_entity'
+            )::int AS ambiguous_or_possible,
+            COUNT(*) FILTER (
+                WHERE cache.payload->>'chair_status' = 'exact_no_chair'
+            )::int AS exact_entity_without_chair,
+            COUNT(*) FILTER (
+                WHERE cache.payload->>'chair_status' IN ('no_named_chair_match', 'no_match')
+            )::int AS no_named_chair_match,
+            COUNT(*) FILTER (WHERE cache.bbl IS NULL)::int AS not_loaded
+        FROM eligible
+        LEFT JOIN cache USING (bbl)
+    """))).first()
+    counts = dict(row._mapping) if row else {}
+    head_officer_count = int((await session.execute(text("""
+        SELECT COUNT(DISTINCT bc.bbl)
+        FROM building_contacts bc
+        JOIN buildings b ON b.bbl = bc.bbl
+        WHERE UPPER(COALESCE(bc.contact_type, '')) = 'HEADOFFICER'
+          AND (
+              UPPER(COALESCE(b.building_type, '')) LIKE '%CONDO%'
+              OR UPPER(COALESCE(b.building_type, '')) LIKE '%COOP%'
+              OR UPPER(COALESCE(b.building_type, '')) LIKE '%CO-OP%'
+              OR UPPER(COALESCE(b.building_class, '')) LIKE 'R%'
+              OR UPPER(COALESCE(b.building_class, '')) IN ('C6', 'C8', 'D0', 'D4')
+          )
+    """))).scalar() or 0)
+    eligible = int(counts.get("eligible_buildings") or 0)
+    total_buildings = int(counts.get("total_buildings") or 0)
+    current = int(counts.get("current_exact_chair") or 0)
+    sourced = current + int(counts.get("stale_exact_chair") or 0)
+    return {
+        **{key: int(value or 0) for key, value in counts.items()},
+        "hpd_head_officer_proxy": head_officer_count,
+        "hpd_head_officer_included_in_chair_coverage": False,
+        "current_exact_coverage": round(current / eligible, 4) if eligible else 0.0,
+        "current_exact_all_buildings_coverage": round(current / total_buildings, 4) if total_buildings else 0.0,
+        "any_sourced_chair_coverage": round(sourced / eligible, 4) if eligible else 0.0,
+        "reliability_policy": {
+            "current_exact_chair": "High entity-identity confidence and medium board-role confidence. DOS reports a Chairman or CEO and the cache is no older than 30 days.",
+            "stale_exact_chair": "High entity-identity confidence and medium board-role confidence at the source date. Currentness requires refresh.",
+            "ambiguous_or_possible": "Review required. Never presented as Board Head.",
+            "hpd_head_officer_proxy": "Separate HPD registration role. Excluded from board-chair coverage.",
+        },
+    }
+
+
+@router.get("/board-chair-benchmark")
+async def board_chair_benchmark(session: AsyncSession = Depends(get_session)):  # noqa: B008
+    """Compare ten public board-leadership examples with the current DOS cache."""
+    bbls = [case["bbl"] for case in BOARD_CHAIR_GOLDEN_CASES]
+    rows = (await session.execute(
+        text("""
+            SELECT REPLACE(cache_key, 'officers:', '') AS bbl, result, cached_at
+            FROM dos_cache
+            WHERE cache_key = ANY(CAST(:cache_keys AS text[]))
+        """),
+        {"cache_keys": [f"officers:{bbl}" for bbl in bbls]},
+    )).fetchall()
+    cache_by_bbl = {
+        str(row.bbl): {"result": row.result, "cached_at": row.cached_at}
+        for row in rows
+    }
+    cases = []
+    for case in BOARD_CHAIR_GOLDEN_CASES:
+        cached = cache_by_bbl.get(case["bbl"], {})
+        cases.append(evaluate_board_chair_case(
+            dict(case),
+            cached.get("result"),
+            cached.get("cached_at"),
+        ))
+    status_counts: dict[str, int] = {}
+    for case in cases:
+        status = str(case["status"])
+        status_counts[status] = status_counts.get(status, 0) + 1
+    return {
+        "total_cases": len(cases),
+        "identity_matches": sum(1 for case in cases if case["identity_match"]),
+        "status_counts": status_counts,
+        "cases": cases,
+        "interpretation": "The source proves the named role at its publication date. Evidence older than one year is historical and does not establish current leadership by itself.",
+    }
 
 
 @router.get("/source-audit")

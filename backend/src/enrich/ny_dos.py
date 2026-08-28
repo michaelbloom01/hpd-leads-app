@@ -7,8 +7,8 @@ Data source: https://data.ny.gov/Economic-Development/Active-Corporations-Beginn
 """
 import logging
 import re
-from typing import Optional, Dict, List
 from dataclasses import dataclass
+from typing import Dict, List, Optional
 
 import requests
 
@@ -73,6 +73,121 @@ class NYDOSClient:
         """Escape a string for use in SoQL queries to prevent injection."""
         # Escape single quotes by doubling them (SoQL standard)
         return value.replace("'", "''")
+
+    @staticmethod
+    def _canonical_exact_name(value: str | None) -> str:
+        """Canonical key for punctuation-tolerant, whole-name equality."""
+        normalized = re.sub(r"\s+", " ", re.sub(r"[^A-Z0-9]+", " ", (value or "").upper())).strip()
+        return re.sub(r"\bOWNER S\b", "OWNERS", normalized)
+
+    @classmethod
+    def _exact_query_variants(cls, value: str) -> list[str]:
+        """Generate punctuation-only legal-suffix variants for exact API queries."""
+        original = str(value or "").strip().upper()
+        canonical = cls._canonical_exact_name(original)
+        tokens = canonical.split()
+        variants = {original, canonical}
+        if tokens and tokens[-1] in {"INC", "CORP", "LLC", "LTD", "CO"}:
+            suffix = tokens[-1]
+            base = " ".join(tokens[:-1])
+            base_variants = {base}
+            if re.search(r"\bOWNERS\b", base):
+                base_variants.add(re.sub(r"\bOWNERS\b", "OWNER'S", base))
+            variants.update({
+                variant
+                for base_variant in base_variants
+                for variant in (
+                    f"{base_variant} {suffix}",
+                    f"{base_variant} {suffix}.",
+                    f"{base_variant}, {suffix}",
+                    f"{base_variant}, {suffix}.",
+                )
+            })
+        return sorted(variant for variant in variants if variant)
+
+    def lookup_entities_exact(
+        self,
+        names: list[str],
+        *,
+        batch_size: int = 40,
+    ) -> dict[str, list[DOSEntity]]:
+        """Fetch case-insensitive exact-name matches in batches.
+
+        Results are keyed by a punctuation-tolerant canonical name. The API query
+        remains whole-name exact, which avoids upgrading substring candidates.
+        """
+        unique_names = list(dict.fromkeys(
+            str(name).strip().upper()
+            for name in names
+            if str(name or "").strip()
+        ))
+        grouped: dict[str, list[DOSEntity]] = {
+            self._canonical_exact_name(name): [] for name in unique_names
+        }
+        safe_batch_size = max(1, min(int(batch_size or 1), 100))
+
+        query_names = list(dict.fromkeys(
+            variant
+            for name in unique_names
+            for variant in self._exact_query_variants(name)
+        ))
+        for offset in range(0, len(query_names), safe_batch_size):
+            batch = query_names[offset:offset + safe_batch_size]
+            quoted = ",".join(f"'{self._escape_soql(name)}'" for name in batch)
+            params = {
+                "$where": f"upper(current_entity_name) IN ({quoted})",
+                "$limit": max(100, len(batch) * 5),
+            }
+            response = self.session.get(NY_DOS_ENDPOINT, params=params, timeout=(15, 60))
+            response.raise_for_status()
+            for record in response.json():
+                entity = self._parse_entity(record)
+                key = self._canonical_exact_name(entity.name)
+                if key in grouped:
+                    grouped[key].append(entity)
+
+        return grouped
+
+    def lookup_chairmen_for_exact_names(
+        self,
+        names: list[str],
+        *,
+        page_size: int = 50000,
+    ) -> dict[str, list[DOSEntity]]:
+        """Scan the chairman-bearing DOS subset once, then exact-match locally."""
+        target_keys = {
+            self._canonical_exact_name(name)
+            for name in names
+            if self._canonical_exact_name(name)
+        }
+        grouped: dict[str, list[DOSEntity]] = {key: [] for key in target_keys}
+        safe_page_size = max(1000, min(int(page_size or 1000), 50000))
+        offset = 0
+        select_fields = (
+            "dos_id,current_entity_name,entity_type,jurisdiction,initial_dos_filing_date,county,"
+            "chairman_name,chairman_address_1,chairman_address_2,chairman_city,chairman_state,chairman_zip"
+        )
+
+        while True:
+            params = {
+                "$select": select_fields,
+                "$where": "chairman_name IS NOT NULL AND TRIM(chairman_name) != ''",
+                "$order": "dos_id",
+                "$limit": safe_page_size,
+                "$offset": offset,
+            }
+            response = self.session.get(NY_DOS_ENDPOINT, params=params, timeout=(30, 120))
+            response.raise_for_status()
+            records = response.json()
+            for record in records:
+                key = self._canonical_exact_name(record.get("current_entity_name"))
+                if key in grouped:
+                    grouped[key].append(self._parse_entity(record))
+            if len(records) < safe_page_size:
+                break
+            offset += safe_page_size
+
+        return grouped
     
     def lookup_entity(self, name: str, include_inactive: bool = False) -> Optional[DOSEntity]:
         """

@@ -12,7 +12,13 @@ import {
   createConfig,
   type ScoringWeights,
 } from '../services/scoring-api';
-import { fetchQualitySummary, fetchCoverage, fetchSourceAudit } from '../services/quality-api';
+import {
+  fetchBoardChairBenchmark,
+  fetchBoardChairCoverage,
+  fetchQualitySummary,
+  fetchCoverage,
+  fetchSourceAudit,
+} from '../services/quality-api';
 import {
   fetchGoldenBenchmark,
   fetchTruthActivationPacket,
@@ -215,6 +221,8 @@ const ScoringSection: React.FC = () => {
 const DataHealthSection: React.FC = () => {
   const { data: quality } = useQuery({ queryKey: ['quality-summary'], queryFn: fetchQualitySummary, staleTime: 30000 });
   const { data: coverage } = useQuery({ queryKey: ['quality-coverage'], queryFn: fetchCoverage, staleTime: 30000 });
+  const { data: boardChairCoverage } = useQuery({ queryKey: ['board-chair-coverage'], queryFn: fetchBoardChairCoverage, staleTime: 30000 });
+  const { data: boardChairBenchmark } = useQuery({ queryKey: ['board-chair-benchmark'], queryFn: fetchBoardChairBenchmark, staleTime: 30000 });
   const { data: sourceAudit } = useQuery({ queryKey: ['quality-source-audit'], queryFn: fetchSourceAudit, staleTime: 30000 });
   const { data: truthDashboard } = useQuery({ queryKey: ['truth-dashboard'], queryFn: fetchTruthDashboard, staleTime: 30000 });
   const { data: truthHealth } = useQuery({ queryKey: ['truth-health-report'], queryFn: fetchTruthHealthReport, staleTime: 60000 });
@@ -3016,6 +3024,51 @@ const DataHealthSection: React.FC = () => {
                     : 'No open review items returned.'}
                 </div>
               )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {boardChairCoverage && (
+        <div className="bg-white rounded-lg border border-gray-200 p-5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h3 className="text-sm font-medium text-gray-700">Board Chair Coverage</h3>
+              <p className="mt-1 text-xs text-gray-500">
+                Exact NY Department of State owner-entity matches for likely co-op and condo buildings.
+              </p>
+            </div>
+            <div className="text-left sm:text-right">
+              <div className="text-lg font-semibold text-gray-900">{(boardChairCoverage.current_exact_coverage * 100).toFixed(1)}%</div>
+              <div className="text-[10px] uppercase text-gray-500">of relevant buildings</div>
+              <div className="mt-0.5 text-[10px] text-gray-500">
+                {(boardChairCoverage.current_exact_all_buildings_coverage * 100).toFixed(1)}% of all listings
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {[
+              ['Eligible buildings', boardChairCoverage.eligible_buildings],
+              ['DOS chair/CEO candidate', boardChairCoverage.current_exact_chair],
+              ['DOS candidate, stale', boardChairCoverage.stale_exact_chair],
+              ['Ambiguous or possible', boardChairCoverage.ambiguous_or_possible],
+              ['Exact entity, no chair', boardChairCoverage.exact_entity_without_chair],
+              ['No named-chair match', boardChairCoverage.no_named_chair_match],
+              ['Not loaded', boardChairCoverage.not_loaded],
+            ].map(([label, value]) => (
+              <div key={label as string} className="rounded-lg bg-gray-50 px-3 py-2">
+                <div className="text-[10px] uppercase text-gray-500">{label as string}</div>
+                <div className="text-sm font-semibold text-gray-800">{(value as number).toLocaleString()}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 rounded border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+            Exact DOS matches have high entity confidence and medium board-role confidence. HPD HeadOfficer coverage is tracked separately ({boardChairCoverage.hpd_head_officer_proxy.toLocaleString()} buildings) and is excluded.
+          </div>
+          {boardChairBenchmark && (
+            <div className="mt-3 flex flex-col gap-1 border-t border-gray-100 pt-3 text-xs text-gray-600 sm:flex-row sm:items-center sm:justify-between">
+              <span>Public benchmark: {boardChairBenchmark.identity_matches} of {boardChairBenchmark.total_cases} names match the current DOS cache.</span>
+              <span>{boardChairBenchmark.status_counts.current_match ?? 0} current match</span>
             </div>
           )}
         </div>

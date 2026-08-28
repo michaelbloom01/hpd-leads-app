@@ -29,3 +29,4 @@ def test_build_dos_cache_payload_shape():
 def test_dos_entity_match_does_not_confirm_partial_name_match():
     assert _classify_dos_entity_match("PARK WEST TENANTS CORP.", "PARK WEST TENANTS CORP") == "exact"
     assert _classify_dos_entity_match("PARK WEST TENANTS CORP", "WEST TENANTS CORP") == "possible"
+    assert _classify_dos_entity_match("GOTHAM HOUSE OWNERS CORP", "GOTHAM HOUSE OWNER'S CORP.") == "exact"

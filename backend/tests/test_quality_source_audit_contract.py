@@ -70,6 +70,9 @@ def test_external_verification_sources_are_explicitly_audited():
     assert outreach["refreshable"] is False
     assert outreach["job_type"] == "outreach_feedback"
     assert "outreach_feedback" in RUNNABLE_JOB_TYPES
+    dos = next(source for source in SOURCE_REGISTRY if source["source_name"] == "ny_dos_cache")
+    assert dos["job_type"] == "board_chairs"
+    assert "board_chairs" in RUNNABLE_JOB_TYPES
 
 
 def test_source_audit_accepts_quality_aliases_for_combined_jobs():

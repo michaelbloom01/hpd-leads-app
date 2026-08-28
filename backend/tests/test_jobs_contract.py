@@ -50,6 +50,7 @@ async def test_mutating_jobs_default_to_approval_preview_without_queueing():
     user = AuthUser(user_id="u1", email="test@example.com")
     for job_type in [
         "building_coordinates",
+        "board_chairs",
         "acris",
         "enrichment",
         "scoring",

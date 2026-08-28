@@ -9,6 +9,7 @@ Each task follows the standard pattern from the plan:
 6. Write summary to data_quality_log
 7. Circuit breaker: 5 consecutive 5xx = mark source_unavailable
 """
+import json
 import logging
 import os
 import time
@@ -18,6 +19,7 @@ import requests
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+
 from src.services.building_geocode import geocode_building
 
 try:
@@ -33,6 +35,12 @@ logger = logging.getLogger(__name__)
 
 BUILDING_COORDINATE_PROGRESS_INTERVAL = 50
 BUILDING_COORDINATE_THROTTLE_SECONDS = 0.1
+BUILDING_REFRESH_BATCH_SIZE = 5000
+BUILDING_REFRESH_MIN_REGISTRATIONS = 150000
+BUILDING_REFRESH_MIN_CONTACTS = 500000
+BUILDING_REFRESH_MIN_PLUTO_ROWS = 500000
+BUILDING_REFRESH_MIN_CURRENT_BUILDINGS = 150000
+BUILDING_REFRESH_MAX_REJECT_RATIO = 0.02
 
 APP_TOKEN = os.environ.get("NYC_OPEN_DATA_APP_TOKEN", "")
 SOCRATA_BASE = "https://data.cityofnewyork.us/resource"
@@ -225,6 +233,226 @@ def _compute_bbl(boro_id, block, lot) -> str | None:
         return None
 
 
+def _normalize_pluto_bbl(value) -> str | None:
+    try:
+        normalized = str(int(float(str(value).strip())))
+    except (TypeError, ValueError):
+        return None
+    return normalized if len(normalized) == 10 else None
+
+
+def _optional_int(value) -> int | None:
+    try:
+        return int(float(str(value).strip())) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_float(value) -> float | None:
+    try:
+        return float(str(value).strip()) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _prepare_building_refresh_snapshot(
+    registrations: list[dict],
+    contacts: list[dict],
+    pluto_data: list[dict],
+) -> dict:
+    """Build the current, natural-keyed HPD snapshot before any database writes."""
+    contacts_by_reg: dict[str, list[dict]] = {}
+    for contact in contacts:
+        registration_id = str(contact.get("registrationid") or "").strip()
+        if registration_id:
+            contacts_by_reg.setdefault(registration_id, []).append(contact)
+
+    pluto_by_bbl: dict[str, dict] = {}
+    for row in pluto_data:
+        bbl = _normalize_pluto_bbl(row.get("bbl"))
+        if bbl and bbl not in pluto_by_bbl:
+            pluto_by_bbl[bbl] = row
+
+    buildings: list[dict] = []
+    current_registration_by_bbl: dict[str, str] = {}
+    contacts_by_bbl: dict[str, list[dict]] = {}
+    seen_bbls: set[str] = set()
+    seen_contact_keys: set[tuple[str, str, str, str]] = set()
+    rejected_registrations = 0
+    rejected_contacts = 0
+
+    for registration in registrations:
+        bbl = _compute_bbl(
+            registration.get("boroid"),
+            registration.get("block"),
+            registration.get("lot"),
+        )
+        if not bbl:
+            rejected_registrations += 1
+            continue
+        if bbl in seen_bbls:
+            continue
+        seen_bbls.add(bbl)
+
+        registration_id = str(registration.get("registrationid") or "").strip()
+        if not registration_id:
+            rejected_registrations += 1
+            continue
+
+        pluto = pluto_by_bbl.get(bbl, {})
+        buildings.append({
+            "bbl": bbl,
+            "bin": registration.get("buildingid"),
+            "address": f"{registration.get('housenumber', '')} {registration.get('streetname', '')}".strip(),
+            "borough": registration.get("boro"),
+            "block": registration.get("block"),
+            "lot": registration.get("lot"),
+            "zip": registration.get("zip"),
+            "bldg_class": pluto.get("bldgclass"),
+            "units": _optional_int(pluto.get("unitsres")),
+            "year_built": _optional_int(pluto.get("yearbuilt")),
+            "assessed_value": _optional_float(pluto.get("assesstot")),
+            "council": pluto.get("council"),
+            "cd": pluto.get("cd"),
+            "census": pluto.get("ct2010"),
+            "nta": None,
+        })
+        current_registration_by_bbl[bbl] = registration_id
+
+        prepared_contacts: list[dict] = []
+        for contact in contacts_by_reg.get(registration_id, []):
+            contact_id = str(contact.get("registrationcontactid") or "").strip()
+            contact_type = str(contact.get("type") or "").strip()
+            if not contact_id or not contact_type:
+                rejected_contacts += 1
+                continue
+            natural_key = (bbl, registration_id, contact_id, contact_type)
+            if natural_key in seen_contact_keys:
+                continue
+            seen_contact_keys.add(natural_key)
+            prepared_contacts.append({
+                "bbl": bbl,
+                "contact_id": contact_id,
+                "reg_id": registration_id,
+                "type": contact_type,
+                "desc": contact.get("contactdescription"),
+                "corp": contact.get("corporationname"),
+                "first": contact.get("firstname"),
+                "last": contact.get("lastname"),
+                "title": contact.get("title"),
+                "addr": f"{contact.get('businesshousenumber', '')} {contact.get('businessstreetname', '')}".strip(),
+                "city": contact.get("businesscity"),
+                "state": contact.get("businessstate"),
+                "zip": contact.get("businesszip"),
+            })
+        contacts_by_bbl[bbl] = prepared_contacts
+
+    prepared_contact_count = sum(len(rows) for rows in contacts_by_bbl.values())
+    return {
+        "buildings": buildings,
+        "contacts_by_bbl": contacts_by_bbl,
+        "current_registration_by_bbl": current_registration_by_bbl,
+        "stats": {
+            "registrations_fetched": len(registrations),
+            "contacts_fetched": len(contacts),
+            "pluto_rows_fetched": len(pluto_data),
+            "current_buildings": len(buildings),
+            "current_contacts": prepared_contact_count,
+            "pluto_bbls": len(pluto_by_bbl),
+            "rejected_registrations": rejected_registrations,
+            "rejected_contacts": rejected_contacts,
+        },
+    }
+
+
+def _validate_building_refresh_snapshot(stats: dict, *, enforce_volume_gates: bool = True) -> list[str]:
+    """Return blocking source-shape errors before the first production write."""
+    errors: list[str] = []
+    registrations = int(stats.get("registrations_fetched") or 0)
+    contacts = int(stats.get("contacts_fetched") or 0)
+    pluto_rows = int(stats.get("pluto_rows_fetched") or 0)
+    current_buildings = int(stats.get("current_buildings") or 0)
+    rejected_registrations = int(stats.get("rejected_registrations") or 0)
+    rejected_contacts = int(stats.get("rejected_contacts") or 0)
+
+    if enforce_volume_gates:
+        if registrations < BUILDING_REFRESH_MIN_REGISTRATIONS:
+            errors.append(f"registrations_below_floor:{registrations}")
+        if contacts < BUILDING_REFRESH_MIN_CONTACTS:
+            errors.append(f"contacts_below_floor:{contacts}")
+        if pluto_rows < BUILDING_REFRESH_MIN_PLUTO_ROWS:
+            errors.append(f"pluto_rows_below_floor:{pluto_rows}")
+        if current_buildings < BUILDING_REFRESH_MIN_CURRENT_BUILDINGS:
+            errors.append(f"current_buildings_below_floor:{current_buildings}")
+
+    reject_ratio = rejected_registrations / registrations if registrations else 1.0
+    if reject_ratio > BUILDING_REFRESH_MAX_REJECT_RATIO:
+        errors.append(f"registration_reject_ratio:{reject_ratio:.4f}")
+    contact_reject_ratio = rejected_contacts / contacts if contacts else 1.0
+    if contact_reject_ratio > BUILDING_REFRESH_MAX_REJECT_RATIO:
+        errors.append(f"contact_reject_ratio:{contact_reject_ratio:.4f}")
+    if current_buildings <= 0:
+        errors.append("no_current_buildings")
+    return errors
+
+
+BUILDING_UPSERT_SQL = text("""
+    INSERT INTO buildings (
+        bbl, bin, address, borough, block, lot, zip_code,
+        building_class, unit_count, year_built, assessed_value,
+        council_district, community_board, census_tract, nta,
+        created_at, updated_at
+    ) VALUES (
+        :bbl, :bin, :address, :borough, :block, :lot, :zip,
+        :bldg_class, :units, :year_built, :assessed_value,
+        :council, :cd, :census, :nta, now(), now()
+    ) ON CONFLICT (bbl) DO UPDATE SET
+        bin = COALESCE(EXCLUDED.bin, buildings.bin),
+        address = EXCLUDED.address,
+        borough = COALESCE(EXCLUDED.borough, buildings.borough),
+        block = COALESCE(EXCLUDED.block, buildings.block),
+        lot = COALESCE(EXCLUDED.lot, buildings.lot),
+        zip_code = COALESCE(EXCLUDED.zip_code, buildings.zip_code),
+        unit_count = COALESCE(EXCLUDED.unit_count, buildings.unit_count),
+        building_class = COALESCE(EXCLUDED.building_class, buildings.building_class),
+        year_built = COALESCE(EXCLUDED.year_built, buildings.year_built),
+        assessed_value = COALESCE(EXCLUDED.assessed_value, buildings.assessed_value),
+        council_district = COALESCE(EXCLUDED.council_district, buildings.council_district),
+        community_board = COALESCE(EXCLUDED.community_board, buildings.community_board),
+        census_tract = COALESCE(EXCLUDED.census_tract, buildings.census_tract),
+        updated_at = now()
+""")
+
+CONTACT_UPSERT_SQL = text("""
+    INSERT INTO building_contacts (
+        bbl, registration_contact_id, registration_id,
+        contact_type, description, corporation_name,
+        first_name, last_name, title,
+        business_address, business_city, business_state, business_zip,
+        created_at, updated_at
+    ) VALUES (
+        :bbl, :contact_id, :reg_id, :type, :desc, :corp,
+        :first, :last, :title, :addr, :city, :state, :zip, now(), now()
+    ) ON CONFLICT (bbl, registration_id, registration_contact_id, contact_type)
+    DO UPDATE SET
+        description = EXCLUDED.description,
+        corporation_name = EXCLUDED.corporation_name,
+        first_name = EXCLUDED.first_name,
+        last_name = EXCLUDED.last_name,
+        title = EXCLUDED.title,
+        business_address = EXCLUDED.business_address,
+        business_city = EXCLUDED.business_city,
+        business_state = EXCLUDED.business_state,
+        business_zip = EXCLUDED.business_zip,
+        updated_at = now()
+""")
+
+CLEAR_BATCH_CONTACTS_SQL = text("""
+    DELETE FROM building_contacts
+    WHERE bbl = ANY(CAST(:bbls AS text[]))
+""")
+
+
 @celery_app.task(bind=True, name="src.tasks.ingest.backfill_building_coordinates")
 def backfill_building_coordinates(self, *args, job_id: Optional[int] = None, limit: int = 1000):
     """Persist coordinates/provenance for buildings missing map geometry."""
@@ -379,35 +607,23 @@ def backfill_building_coordinates(self, *args, job_id: Optional[int] = None, lim
 
 @celery_app.task(bind=True, name="src.tasks.ingest.ingest_buildings_from_hpd")
 def ingest_buildings_from_hpd(self, job_id: Optional[int] = None):
-    """Phase 1A: Backfill buildings table from HPD registrations + contacts + PLUTO."""
+    """Refresh current HPD registrations, contacts, and PLUTO fields in safe batches."""
     session = _get_pg_session()
-    if job_id is None:
-        job_id = _create_job(session, "buildings", "buildings")
-    else:
-        session.execute(
-            text("""
-                UPDATE ingestion_jobs
-                SET source = 'buildings',
-                    status = 'running',
-                    started_at = COALESCE(started_at, now()),
-                    total = NULL,
-                    processed = 0,
-                    succeeded = 0,
-                    failed = 0,
-                    error = NULL,
-                    updated_at = now()
-                WHERE id = :job_id
-            """),
-            {"job_id": job_id},
-        )
+    job_id = _ensure_or_create_job(session, job_id, "buildings", "buildings")
     session.commit()
+
+    processed = 0
+    succeeded = 0
+    failed = 0
+    total = 0
+    prior_contact_rows_replaced = 0
 
     try:
         logger.info("Fetching HPD registrations...")
         registrations = _socrata_fetch(DATASETS["hpd_registrations"], {
             "$select": "boroid,block,lot,buildingid,registrationid,housenumber,"
                        "streetname,zip,boro,lastregistrationdate,registrationenddate",
-            "$order": "lastregistrationdate DESC",
+            "$order": "lastregistrationdate DESC,registrationid DESC",
         })
         logger.info(f"Fetched {len(registrations)} registrations")
 
@@ -417,145 +633,138 @@ def ingest_buildings_from_hpd(self, job_id: Optional[int] = None):
                        "contactdescription,corporationname,firstname,lastname,title,"
                        "businesshousenumber,businessstreetname,businessapartment,"
                        "businesscity,businessstate,businesszip",
+            "$order": "registrationcontactid ASC",
         })
-        contacts_by_reg = {}
-        for c in contacts:
-            rid = c.get("registrationid")
-            if rid:
-                contacts_by_reg.setdefault(rid, []).append(c)
-        logger.info(f"Fetched {len(contacts)} contacts for {len(contacts_by_reg)} registrations")
+        logger.info(f"Fetched {len(contacts)} contacts")
 
         logger.info("Fetching PLUTO for geographic fields...")
         # _socrata_fetch paginates until exhaustion via $offset/$limit loop;
         # this retrieves the full PLUTO dataset, not just one 50k page.
         pluto_data = _socrata_fetch(DATASETS["pluto"], {
             "$select": "bbl,cd,council,ct2010,assesstot,unitsres,yearbuilt,bldgclass",
+            "$order": "bbl ASC",
             "$limit": 50000,
         })
-        pluto_by_bbl = {str(p.get("bbl", "")).strip(): p for p in pluto_data if p.get("bbl")}
         logger.info(f"Fetched {len(pluto_data)} PLUTO records")
 
-        inserted = 0
-        matched = 0
-        rejected = 0
-        buildings_seen = set()
-
-        for reg in registrations:
-            bbl = _compute_bbl(
-                reg.get("boroid"), reg.get("block"), reg.get("lot")
+        snapshot = _prepare_building_refresh_snapshot(registrations, contacts, pluto_data)
+        stats = snapshot["stats"]
+        validation_errors = _validate_building_refresh_snapshot(stats)
+        if validation_errors:
+            raise RuntimeError(
+                "Building refresh stopped before writes: " + ", ".join(validation_errors)
             )
-            if not bbl or bbl in buildings_seen:
-                if not bbl:
-                    rejected += 1
-                continue
-            buildings_seen.add(bbl)
-            matched += 1
 
-            pluto = pluto_by_bbl.get(bbl, {})
-            address = f"{reg.get('housenumber', '')} {reg.get('streetname', '')}".strip()
+        buildings = snapshot["buildings"]
+        contacts_by_bbl = snapshot["contacts_by_bbl"]
+        total = len(buildings)
+        session.execute(
+            text("""
+                UPDATE ingestion_jobs
+                SET total = :total,
+                    config = COALESCE(config, '{}'::jsonb) || CAST(:snapshot AS jsonb),
+                    updated_at = now()
+                WHERE id = :job_id
+            """),
+            {"job_id": job_id, "total": total, "snapshot": json.dumps({"source_snapshot": stats})},
+        )
+        session.commit()
 
+        for offset in range(0, total, BUILDING_REFRESH_BATCH_SIZE):
+            building_batch = buildings[offset:offset + BUILDING_REFRESH_BATCH_SIZE]
+            batch_bbls = [row["bbl"] for row in building_batch]
+            contact_batch = [
+                contact
+                for bbl in batch_bbls
+                for contact in contacts_by_bbl.get(bbl, [])
+            ]
+
+            session.execute(BUILDING_UPSERT_SQL, building_batch)
+            replaced_result = session.execute(CLEAR_BATCH_CONTACTS_SQL, {"bbls": batch_bbls})
+            prior_contact_rows_replaced += max(int(replaced_result.rowcount or 0), 0)
+            if contact_batch:
+                session.execute(CONTACT_UPSERT_SQL, contact_batch)
+
+            processed += len(building_batch)
+            succeeded += len(building_batch)
             session.execute(
                 text("""
-                    INSERT INTO buildings (
-                        bbl, bin, address, borough, block, lot, zip_code,
-                        building_class, unit_count, year_built, assessed_value,
-                        council_district, community_board, census_tract, nta,
-                        created_at, updated_at
-                    ) VALUES (
-                        :bbl, :bin, :address, :borough, :block, :lot, :zip,
-                        :bldg_class, :units, :year_built, :assessed_value,
-                        :council, :cd, :census, :nta, now(), now()
-                    ) ON CONFLICT (bbl) DO UPDATE SET
-                        address = EXCLUDED.address,
-                        assessed_value = EXCLUDED.assessed_value,
-                        council_district = EXCLUDED.council_district,
-                        community_board = EXCLUDED.community_board,
-                        updated_at = now()
+                    UPDATE ingestion_jobs
+                    SET processed = :processed, succeeded = :succeeded,
+                        failed = :failed, updated_at = now()
+                    WHERE id = :job_id
                 """),
                 {
-                    "bbl": bbl,
-                    "bin": reg.get("buildingid"),
-                    "address": address,
-                    "borough": reg.get("boro"),
-                    "block": reg.get("block"),
-                    "lot": reg.get("lot"),
-                    "zip": reg.get("zip"),
-                    "bldg_class": pluto.get("bldgclass"),
-                    "units": int(pluto["unitsres"]) if pluto.get("unitsres") else None,
-                    "year_built": int(pluto["yearbuilt"]) if pluto.get("yearbuilt") else None,
-                    "assessed_value": float(pluto["assesstot"]) if pluto.get("assesstot") else None,
-                    "council": pluto.get("council"),
-                    "cd": pluto.get("cd"),
-                    "census": pluto.get("ct2010"),
-                    "nta": None,
+                    "job_id": job_id,
+                    "processed": processed,
+                    "succeeded": succeeded,
+                    "failed": failed,
                 },
             )
-            inserted += 1
+            session.commit()
+            logger.info("Building refresh progress: %s/%s", processed, total)
 
-            reg_id = reg.get("registrationid")
-            reg_contacts = contacts_by_reg.get(reg_id, [])
-            for c in reg_contacts:
-                session.execute(
-                    text("""
-                        INSERT INTO building_contacts (
-                            bbl, registration_contact_id, registration_id,
-                            contact_type, description, corporation_name,
-                            first_name, last_name, title,
-                            business_address, business_city, business_state, business_zip,
-                            created_at, updated_at
-                        ) VALUES (
-                            :bbl, :contact_id, :reg_id, :type, :desc, :corp,
-                            :first, :last, :title,
-                            :addr, :city, :state, :zip, now(), now()
-                        ) ON CONFLICT DO NOTHING
-                    """),
-                    {
-                        "bbl": bbl,
-                        "contact_id": c.get("registrationcontactid"),
-                        "reg_id": reg_id,
-                        "type": c.get("type"),
-                        "desc": c.get("contactdescription"),
-                        "corp": c.get("corporationname"),
-                        "first": c.get("firstname"),
-                        "last": c.get("lastname"),
-                        "title": c.get("title"),
-                        "addr": f"{c.get('businesshousenumber', '')} {c.get('businessstreetname', '')}".strip(),
-                        "city": c.get("businesscity"),
-                        "state": c.get("businessstate"),
-                        "zip": c.get("businesszip"),
-                    },
-                )
-
-            if inserted % 5000 == 0:
-                session.execute(
-                    text("""
-                        UPDATE ingestion_jobs
-                        SET processed = :processed, succeeded = :succeeded, failed = :failed, updated_at = now()
-                        WHERE id = :job_id
-                    """),
-                    {"job_id": job_id, "processed": inserted, "succeeded": inserted, "failed": rejected},
-                )
-                session.commit()
-                logger.info(f"Progress: {inserted} buildings inserted")
-
-        session.commit()
-        _log_quality(session, "hpd_buildings", job_id, len(registrations),
-                     matched, rejected, inserted)
-        _finish_job(session, job_id, "completed", len(registrations), inserted, rejected)
+        quality_notes = json.dumps({
+            "mode": "current_snapshot",
+            "batch_size": BUILDING_REFRESH_BATCH_SIZE,
+            "prior_contact_rows_replaced": prior_contact_rows_replaced,
+            **stats,
+        })
+        _log_quality(
+            session,
+            "hpd_buildings",
+            job_id,
+            int(stats["registrations_fetched"]),
+            int(stats["current_buildings"]),
+            int(stats["rejected_registrations"]),
+            succeeded,
+            notes=quality_notes,
+        )
+        _log_quality(
+            session,
+            "hpd_contacts",
+            job_id,
+            int(stats["contacts_fetched"]),
+            int(stats["current_contacts"]),
+            int(stats["rejected_contacts"]),
+            int(stats["current_contacts"]),
+            notes=quality_notes,
+        )
+        _log_quality(
+            session,
+            "pluto",
+            job_id,
+            int(stats["pluto_rows_fetched"]),
+            int(stats["pluto_bbls"]),
+            0,
+            succeeded,
+            notes=quality_notes,
+        )
+        _finish_job(session, job_id, "completed", total, succeeded, failed)
         session.commit()
         logger.info(
             "Buildings backfill follow-up jobs are approval-gated; scoring, lead_generation, and "
             "building_coordinates were not auto-queued. Start each job explicitly with dry_run=false "
             "and confirm_execute=true after reviewing the preview."
         )
-        logger.info(f"Buildings backfill complete: {inserted} inserted, {rejected} rejected")
-        return {"inserted": inserted, "rejected": rejected}
+        logger.info("Building refresh complete: %s buildings, %s current contacts", succeeded, stats["current_contacts"])
+        return {
+            "processed": processed,
+            "succeeded": succeeded,
+            "failed": failed,
+            "source_records_rejected": int(stats["rejected_registrations"]) + int(stats["rejected_contacts"]),
+            "current_contacts": int(stats["current_contacts"]),
+            "prior_contact_rows_replaced": prior_contact_rows_replaced,
+        }
 
-    except Exception as e:
-        _finish_job(session, job_id, "failed", 0, 0, 0, str(e))
+    except Exception as exc:
+        session.rollback()
+        failed = max(total - succeeded, 0)
+        _finish_job(session, job_id, "failed", total, succeeded, failed, str(exc))
         session.commit()
-        session.close()
         raise
+    finally:
+        session.close()
 
 
 @celery_app.task(bind=True, name="src.tasks.ingest.ingest_hpd_complaints")

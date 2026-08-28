@@ -6,6 +6,8 @@ import SettingsPage from './SettingsPage';
 
 const fetchQualitySummaryMock = vi.fn();
 const fetchCoverageMock = vi.fn();
+const fetchBoardChairCoverageMock = vi.fn();
+const fetchBoardChairBenchmarkMock = vi.fn();
 const fetchSourceAuditMock = vi.fn();
 const fetchTruthDashboardMock = vi.fn();
 const fetchTruthHealthReportMock = vi.fn();
@@ -34,6 +36,8 @@ vi.mock('react-hot-toast', () => ({
 vi.mock('../services/quality-api', () => ({
   fetchQualitySummary: (...args: unknown[]) => fetchQualitySummaryMock(...args),
   fetchCoverage: (...args: unknown[]) => fetchCoverageMock(...args),
+  fetchBoardChairCoverage: (...args: unknown[]) => fetchBoardChairCoverageMock(...args),
+  fetchBoardChairBenchmark: (...args: unknown[]) => fetchBoardChairBenchmarkMock(...args),
   fetchSourceAudit: (...args: unknown[]) => fetchSourceAuditMock(...args),
 }));
 
@@ -80,6 +84,8 @@ describe('SettingsPage truth health', () => {
     vi.clearAllMocks();
     fetchQualitySummaryMock.mockResolvedValue(null);
     fetchCoverageMock.mockResolvedValue(null);
+    fetchBoardChairCoverageMock.mockResolvedValue(null);
+    fetchBoardChairBenchmarkMock.mockResolvedValue(null);
     fetchSourceAuditMock.mockResolvedValue({
       summary: {
         total_sources: 0,

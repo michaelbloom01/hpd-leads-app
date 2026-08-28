@@ -13,7 +13,7 @@ RUNNABLE_JOB_TYPES = {
     "buildings", "hpd_complaints", "acris", "hpd_violations",
     "dob_permits", "hpd_litigation", "emergency_repairs", "aep",
     "evictions", "energy", "facades", "pad", "scoring", "enrichment",
-    "building_coordinates", "truth_validation", "outreach_feedback",
+    "building_coordinates", "board_chairs", "truth_validation", "outreach_feedback",
 }
 
 SOURCE_REGISTRY = [
@@ -32,7 +32,7 @@ SOURCE_REGISTRY = [
     {"source_name": "energy_grades", "dataset_id": "355w-xvp2", "table_name": "energy_grades", "job_type": "energy", "ui_surface": "churn_only"},
     {"source_name": "facade_inspections", "dataset_id": "xubg-57si", "table_name": "facade_inspections", "job_type": "facades", "ui_surface": "churn_only"},
     {"source_name": "pad", "dataset_id": "bc8t-ecyu", "table_name": "pad_addresses", "job_type": "pad", "ui_surface": "join_crosswalk"},
-    {"source_name": "ny_dos_cache", "dataset_id": "ny_dos_api", "table_name": "dos_cache", "job_type": "enrichment", "ui_surface": "contact_roster+building_detail", "observed_at_column": "cached_at", "record_count_column": "cache_key", "stale_after_days": 30},
+    {"source_name": "ny_dos_cache", "dataset_id": "ny_dos_api", "table_name": "dos_cache", "job_type": "board_chairs", "ui_surface": "contact_roster+building_detail+data_health", "observed_at_column": "cached_at", "record_count_column": "cache_key", "stale_after_days": 30},
     {"source_name": "google_places", "dataset_id": "google_places_api", "table_name": "enrichment_results", "job_type": "enrichment", "ui_surface": "lead_detail_contacts", "observed_at_column": "fetched_at", "record_count_column": "id", "where_sql": "source = 'google_places'", "stale_after_days": 30},
     {"source_name": "hunter", "dataset_id": "hunter_api", "table_name": "enrichment_results", "job_type": "enrichment", "ui_surface": "lead_detail_contacts", "observed_at_column": "fetched_at", "record_count_column": "id", "where_sql": "source IN ('hunter', 'hunter_domain', 'hunter_person')", "stale_after_days": 30},
     {"source_name": "company_websites", "dataset_id": "web_crawl", "table_name": "enrichment_results", "job_type": "enrichment", "ui_surface": "lead_detail_contacts", "observed_at_column": "fetched_at", "record_count_column": "id", "where_sql": "source IN ('web_crawl', 'company_website')", "stale_after_days": 30},

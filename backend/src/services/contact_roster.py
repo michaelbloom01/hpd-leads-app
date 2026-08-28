@@ -107,7 +107,8 @@ def _detect_board_role(role: Optional[str], title: Optional[str]) -> Optional[st
 
 
 def _canonical_entity_name(value: str | None) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"[^A-Z0-9]+", " ", (value or "").upper())).strip()
+    normalized = re.sub(r"\s+", " ", re.sub(r"[^A-Z0-9]+", " ", (value or "").upper())).strip()
+    return re.sub(r"\bOWNER S\b", "OWNERS", normalized)
 
 
 def _dos_entity_match_status(payload: dict[str, Any]) -> str:
@@ -128,8 +129,8 @@ def _classify_dos_chairman(
 ) -> tuple[str, bool, str | None]:
     match_status = _dos_entity_match_status(payload)
     if is_condo_coop and match_status == "exact":
-        return "NY DOS names chairman (exact entity match)", True, "Board Head"
-    return "NY DOS chairman record (entity match needs review)", False, None
+        return "NY DOS names chairman/CEO candidate (exact entity match; board title needs confirmation)", True, "Board Head"
+    return "NY DOS chairman/CEO candidate (entity match needs review)", False, None
 
 
 def _is_condo_or_coop(building_type: Optional[str], building_class: Optional[str]) -> bool:
@@ -446,7 +447,7 @@ async def get_building_contacts(
             contacts.append(
                 {
                     "name": ceo_name,
-                    "role": "DOS Chairman (Biennial)",
+                    "role": "DOS Chairman/CEO (Biennial)",
                     "source": "NY DOS Snapshot",
                     "source_record_id": payload.get("dos_id"),
                     "as_of_date": snapshot_as_of,
@@ -643,7 +644,7 @@ def get_building_contacts_sync(
             contacts.append(
                 {
                     "name": ceo_name,
-                    "role": "DOS Chairman (Biennial)",
+                    "role": "DOS Chairman/CEO (Biennial)",
                     "source": "NY DOS Snapshot",
                     "source_record_id": payload.get("dos_id"),
                     "as_of_date": snapshot_as_of,
