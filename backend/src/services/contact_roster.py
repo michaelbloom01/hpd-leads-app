@@ -106,7 +106,7 @@ def _detect_board_role(role: Optional[str], title: Optional[str]) -> Optional[st
     return None
 
 
-def _canonical_entity_name(value: Optional[str]) -> str:
+def _canonical_entity_name(value: str | None) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^A-Z0-9]+", " ", (value or "").upper())).strip()
 
 
@@ -125,7 +125,7 @@ def _classify_dos_chairman(
     payload: dict[str, Any],
     *,
     is_condo_coop: bool,
-) -> tuple[str, bool, Optional[str]]:
+) -> tuple[str, bool, str | None]:
     match_status = _dos_entity_match_status(payload)
     if is_condo_coop and match_status == "exact":
         return "NY DOS names chairman (exact entity match)", True, "Board Head"
