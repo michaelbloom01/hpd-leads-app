@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -20,6 +21,20 @@ except ImportError:
     celery_app = _FakeCelery()
 
 logger = logging.getLogger(__name__)
+
+
+def _canonical_entity_name(value: str | None) -> str:
+    """Normalize case, punctuation, and spacing for a strict entity-name comparison."""
+    return re.sub(r"\s+", " ", re.sub(r"[^A-Z0-9]+", " ", (value or "").upper())).strip()
+
+
+def _classify_dos_entity_match(lookup_name: str | None, entity_name: str | None) -> str:
+    """Classify the selected DOS record without treating substring matches as confirmed."""
+    lookup_key = _canonical_entity_name(lookup_name)
+    entity_key = _canonical_entity_name(entity_name)
+    if lookup_key and lookup_key == entity_key:
+        return "exact"
+    return "possible" if lookup_key and entity_key else "unknown"
 
 
 def _job_status_from_counts(succeeded: int, failed: int) -> str:
@@ -168,10 +183,12 @@ def run_enrichment_job(self, job_id: int, limit: int = 500, lead_ids: list[str] 
 
 
 def _build_dos_cache_payload(corporate_owner_name: str, dos_entity: Any, officers: list[dict[str, Any]]) -> dict[str, Any]:
+    entity_name = getattr(dos_entity, "name", None)
     return {
         "lookup_name": corporate_owner_name,
         "dos_id": getattr(dos_entity, "dos_id", None),
-        "entity_name": getattr(dos_entity, "name", None),
+        "entity_name": entity_name,
+        "entity_match_status": _classify_dos_entity_match(corporate_owner_name, entity_name),
         "entity_type": getattr(dos_entity, "entity_type", None),
         "officers": officers or [],
         "ceo_name": getattr(dos_entity, "ceo_name", None),

@@ -1,10 +1,37 @@
 from datetime import datetime, timezone
 
 from src.services.contact_roster import (
+    _classify_dos_chairman,
     _classify_officer_confidence,
     _dedupe_contacts,
     _get_dos_cache_payload_from_row,
 )
+
+
+def test_exact_dos_chairman_is_board_head_for_coop():
+    hint, is_decision_maker, board_role = _classify_dos_chairman(
+        {
+            "lookup_name": "PARK WEST TENANTS CORP.",
+            "entity_name": "PARK WEST TENANTS CORP",
+        },
+        is_condo_coop=True,
+    )
+    assert hint == "NY DOS names chairman (exact entity match)"
+    assert is_decision_maker is True
+    assert board_role == "Board Head"
+
+
+def test_possible_dos_entity_match_does_not_become_board_head():
+    hint, is_decision_maker, board_role = _classify_dos_chairman(
+        {
+            "lookup_name": "PARK WEST TENANTS CORP",
+            "entity_name": "WEST TENANTS CORP",
+        },
+        is_condo_coop=True,
+    )
+    assert "needs review" in hint
+    assert is_decision_maker is False
+    assert board_role is None
 
 
 def test_classify_officer_marks_resident_board_member():

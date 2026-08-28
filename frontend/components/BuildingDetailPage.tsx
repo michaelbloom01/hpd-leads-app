@@ -215,7 +215,7 @@ const BuildingDetailPage: React.FC = () => {
     return bTime - aTime;
   });
   const boardLeaders = sortedContacts.filter((c: BuildingContactEntry) =>
-    c.confidence_hint === 'Likely board member (resident)' || c.role === 'DOS Chairman (Biennial)')
+    c.board_role === 'Board Head')
     .slice(0, 3);
   const showContactsCard =
     dosStatus !== 'loaded' ||
@@ -444,11 +444,9 @@ const BuildingDetailPage: React.FC = () => {
                   <div key={`${leader.name}-${idx}`} className="rounded border border-slate-200 bg-white px-3 py-2">
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-slate-900">{leader.name}</span>
-                      {leader.confidence_hint === 'Likely board member (resident)' ? (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">Resident board officer</span>
-                      ) : (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">DOS Chairman</span>
-                      )}
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">
+                        {leader.board_role}
+                      </span>
                     </div>
                     <div className="text-xs text-slate-600 mt-1">
                       {leader.source_url ? (

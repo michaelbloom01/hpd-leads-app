@@ -1,4 +1,4 @@
-from src.tasks.enrich import _build_dos_cache_payload
+from src.tasks.enrich import _build_dos_cache_payload, _classify_dos_entity_match
 
 
 class _FakeEntity:
@@ -19,7 +19,13 @@ def test_build_dos_cache_payload_shape():
     assert payload["lookup_name"] == "TEST OWNER LLC"
     assert payload["dos_id"] == "12345"
     assert payload["entity_name"] == "TEST OWNER LLC"
+    assert payload["entity_match_status"] == "exact"
     assert payload["ceo_name"] == "John Doe"
     assert isinstance(payload["officers"], list)
     assert payload["officers"][0]["filing_num"] == "F-1"
     assert payload["snapshot_as_of"]
+
+
+def test_dos_entity_match_does_not_confirm_partial_name_match():
+    assert _classify_dos_entity_match("PARK WEST TENANTS CORP.", "PARK WEST TENANTS CORP") == "exact"
+    assert _classify_dos_entity_match("PARK WEST TENANTS CORP", "WEST TENANTS CORP") == "possible"

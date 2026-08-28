@@ -96,11 +96,40 @@ def _detect_board_role(role: Optional[str], title: Optional[str]) -> Optional[st
     text_value = f"{role_upper} {title_upper}".strip()
     if not text_value:
         return None
-    if "HEADOFFICER" in text_value:
+    # HPD's HeadOfficer is a registration role, not proof of a co-op or condo board role.
+    if "HEADOFFICER" in role_upper:
+        return None
+    if re.search(r"\b(PRESIDENT|CHAIR|CHAIRMAN)\b", text_value):
         return "Board Head"
-    if re.search(r"\b(PRESIDENT|CHAIR|CHAIRMAN|BOARD|TREASURER|SECRETARY|VICE PRESIDENT|VP)\b", text_value):
+    if re.search(r"\b(BOARD|TREASURER|SECRETARY|VICE PRESIDENT|VP)\b", text_value):
         return "Board Officer"
     return None
+
+
+def _canonical_entity_name(value: Optional[str]) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^A-Z0-9]+", " ", (value or "").upper())).strip()
+
+
+def _dos_entity_match_status(payload: dict[str, Any]) -> str:
+    stored_status = str(payload.get("entity_match_status") or "").strip().lower()
+    if stored_status in {"exact", "possible", "unknown"}:
+        return stored_status
+    lookup_key = _canonical_entity_name(payload.get("lookup_name"))
+    entity_key = _canonical_entity_name(payload.get("entity_name"))
+    if lookup_key and lookup_key == entity_key:
+        return "exact"
+    return "possible" if lookup_key and entity_key else "unknown"
+
+
+def _classify_dos_chairman(
+    payload: dict[str, Any],
+    *,
+    is_condo_coop: bool,
+) -> tuple[str, bool, Optional[str]]:
+    match_status = _dos_entity_match_status(payload)
+    if is_condo_coop and match_status == "exact":
+        return "NY DOS names chairman (exact entity match)", True, "Board Head"
+    return "NY DOS chairman record (entity match needs review)", False, None
 
 
 def _is_condo_or_coop(building_type: Optional[str], building_class: Optional[str]) -> bool:
@@ -410,6 +439,10 @@ async def get_building_contacts(
         ceo_name = payload.get("ceo_name")
         if ceo_name:
             snapshot_as_of = _coerce_iso(payload.get("snapshot_as_of")) or last_refreshed_at
+            confidence_hint, is_decision_maker, board_role = _classify_dos_chairman(
+                payload,
+                is_condo_coop=is_condo_coop,
+            )
             contacts.append(
                 {
                     "name": ceo_name,
@@ -420,10 +453,10 @@ async def get_building_contacts(
                     "publication_date": snapshot_as_of,
                     "snapshot_as_of": snapshot_as_of,
                     "address": payload.get("ceo_address"),
-                    "confidence_hint": None,
-                    "is_decision_maker": True,
+                    "confidence_hint": confidence_hint,
+                    "is_decision_maker": is_decision_maker,
                     "source_url": _dos_entity_url(payload.get("dos_id")),
-                    "board_role": _detect_board_role("DOS Chairman", "Chairman"),
+                    "board_role": board_role,
                 }
             )
 
@@ -603,6 +636,10 @@ def get_building_contacts_sync(
         ceo_name = payload.get("ceo_name")
         if ceo_name:
             snapshot_as_of = _coerce_iso(payload.get("snapshot_as_of")) or last_refreshed_at
+            confidence_hint, is_decision_maker, board_role = _classify_dos_chairman(
+                payload,
+                is_condo_coop=is_condo_coop,
+            )
             contacts.append(
                 {
                     "name": ceo_name,
@@ -613,10 +650,10 @@ def get_building_contacts_sync(
                     "publication_date": snapshot_as_of,
                     "snapshot_as_of": snapshot_as_of,
                     "address": payload.get("ceo_address"),
-                    "confidence_hint": None,
-                    "is_decision_maker": True,
+                    "confidence_hint": confidence_hint,
+                    "is_decision_maker": is_decision_maker,
                     "source_url": _dos_entity_url(payload.get("dos_id")),
-                    "board_role": _detect_board_role("DOS Chairman", "Chairman"),
+                    "board_role": board_role,
                 }
             )
 

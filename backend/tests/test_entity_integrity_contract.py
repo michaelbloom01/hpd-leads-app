@@ -14,9 +14,12 @@ def test_normalize_bbl_digits_handles_decimal_and_short_values():
     assert _normalize_bbl_digits("3-01085-0001") == "3010850001"
 
 
-def test_detect_board_role_flags_head_officer_and_chair_titles():
-    assert _detect_board_role("HeadOfficer", None) == "Board Head"
-    assert _detect_board_role("DOS Officer", "Board President") == "Board Officer"
+def test_detect_board_role_requires_an_explicit_board_title():
+    assert _detect_board_role("HeadOfficer", None) is None
+    assert _detect_board_role("HeadOfficer", "President") is None
+    assert _detect_board_role("DOS Officer", "Board President") == "Board Head"
+    assert _detect_board_role("DOS Chairman", "Chairman") == "Board Head"
+    assert _detect_board_role("DOS Officer", "Treasurer") == "Board Officer"
     assert _detect_board_role("Agent", None) is None
 
 
