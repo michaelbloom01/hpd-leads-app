@@ -525,8 +525,7 @@ async def board_chair_coverage(session: AsyncSession = Depends(get_session)):  #
             SELECT
                 REPLACE(cache_key, 'officers:', '') AS bbl,
                 CAST(result AS jsonb) AS payload,
-                cached_at,
-                expires_at
+                cached_at
             FROM dos_cache
             WHERE cache_key LIKE 'officers:%'
               AND result IS NOT NULL
@@ -537,12 +536,12 @@ async def board_chair_coverage(session: AsyncSession = Depends(get_session)):  #
             COUNT(*) FILTER (
                 WHERE cache.payload->>'entity_match_status' = 'exact'
                   AND NULLIF(TRIM(cache.payload->>'ceo_name'), '') IS NOT NULL
-                  AND COALESCE(cache.expires_at, cache.cached_at + INTERVAL '30 days') > NOW()
+                  AND cache.cached_at + INTERVAL '30 days' > NOW()
             )::int AS current_exact_chair,
             COUNT(*) FILTER (
                 WHERE cache.payload->>'entity_match_status' = 'exact'
                   AND NULLIF(TRIM(cache.payload->>'ceo_name'), '') IS NOT NULL
-                  AND COALESCE(cache.expires_at, cache.cached_at + INTERVAL '30 days') <= NOW()
+                  AND cache.cached_at + INTERVAL '30 days' <= NOW()
             )::int AS stale_exact_chair,
             COUNT(*) FILTER (
                 WHERE cache.payload->>'entity_match_status' IN ('possible', 'ambiguous')

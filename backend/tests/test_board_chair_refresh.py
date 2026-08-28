@@ -49,8 +49,11 @@ class _Result:
 class _AsyncSession:
     def __init__(self, results):
         self.results = list(results)
+        self.statements = []
 
-    async def execute(self, *_args, **_kwargs):
+    async def execute(self, *args, **_kwargs):
+        if args:
+            self.statements.append(str(args[0]))
         return self.results.pop(0)
 
 
@@ -155,6 +158,7 @@ async def test_board_chair_coverage_reports_relevant_and_all_listing_denominator
     assert result["current_exact_coverage"] == 0.1902
     assert result["current_exact_all_buildings_coverage"] == 0.0167
     assert result["hpd_head_officer_included_in_chair_coverage"] is False
+    assert "expires_at" not in session.statements[0]
 
 
 @pytest.mark.anyio
