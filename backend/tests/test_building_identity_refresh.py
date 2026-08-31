@@ -273,6 +273,8 @@ class _PreviewSession:
         assert sql.strip().startswith("SELECT")
         if "to_regclass" in sql:
             return _Result(scalar=True)
+        if "information_schema.columns" in sql:
+            return _Result(rows=_contact_schema_rows())
         if "SELECT bbl, bin" in sql:
             return _Result(rows=[{"bbl": "3025217501", "bin": "822087"}])
         if "count(*)" in sql:
@@ -280,6 +282,17 @@ class _PreviewSession:
         if "hpd_registration_snapshots" in sql:
             return _Result()
         raise AssertionError(sql)
+
+
+def _contact_schema_rows():
+    from src.models.contacts import BuildingContact
+
+    return [
+        {"column_name": name, "data_type": "character varying" if getattr(column.type, "length", None) else "text",
+         "character_maximum_length": getattr(column.type, "length", None)}
+        for name in ingest.CONTACT_TEXT_PARAMETER_COLUMNS.values()
+        for column in [BuildingContact.__table__.c[name]]
+    ]
 
 
 def test_preview_reports_exact_diff_without_any_business_write(monkeypatch):
@@ -321,3 +334,80 @@ def test_publication_code_has_one_complete_generation_boundary():
     assert "CLEAR_BATCH_CONTACTS_SQL" not in source
     assert "_persist_building_identity_snapshot" in promotion
     assert "hpd_refresh_rollback_rows" in promotion
+
+
+def test_full_region_text_and_raw_source_survive_without_truncation(monkeypatch):
+    contact = {**_green_contacts()[0], "businessstate": "OFFICE", "businesszip": "112221234"}
+    snapshot = ingest._prepare_building_refresh_snapshot(_green_rows()[:1], [contact], [])
+    assert snapshot["contacts_by_bbl"]["3025217501"][0]["state"] == "OFFICE"
+    assert snapshot["registration_snapshots"][0]["raw_payload"]["contacts"][0]["businessstate"] == "OFFICE"
+    for name in ("source_contact_text_profile", "projected_contact_text_profile"):
+        profile = snapshot["stats"][name]
+        assert profile["rows"] == 1
+        assert profile["columns"]["business_state"]["max_length"] == 6
+        assert profile["columns"]["business_state"]["length_counts"] == {6: 1}
+    monkeypatch.setattr(ingest, "_validate_building_refresh_snapshot", lambda _stats: [])
+    assert ingest.preview_building_refresh(_PreviewSession(), snapshot)["ready_to_execute"] is True
+
+
+def test_preview_blocks_legacy_region_limit_before_business_writes(monkeypatch):
+    class LegacySchemaSession(_PreviewSession):
+        def execute(self, statement, params=None):
+            if "information_schema.columns" in str(statement):
+                rows = _contact_schema_rows()
+                for row in rows:
+                    if row["column_name"] == "business_state":
+                        row.update(data_type="character varying", character_maximum_length=5)
+                return _Result(rows=rows)
+            return super().execute(statement, params)
+
+    snapshot = ingest._prepare_building_refresh_snapshot(
+        _green_rows()[:1], [{**_green_contacts()[0], "businessstate": "OFFICE"}], [],
+    )
+    monkeypatch.setattr(ingest, "_validate_building_refresh_snapshot", lambda _stats: [])
+    preview = ingest.preview_building_refresh(LegacySchemaSession(), snapshot)
+    assert preview["ready_to_execute"] is False
+    assert preview["business_rows_written"] == 0
+    assert "contact_column_too_short:business_state:5<6" in preview["validation_errors"]
+    state = next(row for row in preview["contact_schema_preflight"]["columns"] if row["column"] == "business_state")
+    assert state["over_limit_rows"] == 1
+
+
+@pytest.mark.parametrize("parameter,column", ingest.CONTACT_TEXT_PARAMETER_COLUMNS.items())
+def test_contact_preflight_checks_every_projected_bounded_field(parameter, column):
+    class SchemaSession(_PreviewSession):
+        def execute(self, statement, params=None):
+            assert "information_schema.columns" in str(statement)
+            rows = _contact_schema_rows()
+            for row in rows:
+                if row["column_name"] == column:
+                    row.update(data_type="character varying", character_maximum_length=5)
+            return _Result(rows=rows)
+
+    contact = dict(ingest._HPDContactParams("", {}))
+    contact[parameter] = "abcdef"
+    profile = ingest._new_contact_text_profile()
+    ingest._profile_contact_text_row(profile, contact)
+    result = ingest._contact_schema_preflight(SchemaSession(), profile)
+    assert result["validation_errors"] == [f"contact_column_too_short:{column}:5<6"]
+
+
+def test_contact_preflight_rejects_missing_profile_and_embedded_nul():
+    assert ingest._contact_schema_preflight(_PreviewSession(), None)["validation_errors"] == ["contact_projection_profile_required"]
+    profile = ingest._new_contact_text_profile()
+    ingest._profile_contact_text_row(profile, ingest._HPDContactParams("", {"businessstate": "N\x00Y"}))
+    assert ingest._contact_schema_preflight(_PreviewSession(), profile)["validation_errors"] == ["contact_column_contains_nul:business_state"]
+
+
+def test_preview_recomputes_older_cached_projection_profile_without_claiming_raw_profile(monkeypatch):
+    snapshot = ingest._prepare_building_refresh_snapshot(_green_rows(), _green_contacts(), [])
+    del snapshot["stats"]["projected_contact_text_profile"]
+    del snapshot["stats"]["source_contact_text_profile"]
+    monkeypatch.setattr(ingest, "_validate_building_refresh_snapshot", lambda _stats: [])
+    preview = ingest.preview_building_refresh(_PreviewSession(), snapshot)
+    assert preview["ready_to_execute"] is True
+    assert preview["contact_schema_preflight"]["rows_profiled"] == 4
+    assert "source_contact_text_profile" not in snapshot["stats"]
+    snapshot["stats"]["current_contacts"] += 1
+    preview = ingest.preview_building_refresh(_PreviewSession(), snapshot)
+    assert "contact_projection_profile_row_count_mismatch" in preview["validation_errors"]

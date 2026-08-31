@@ -335,6 +335,72 @@ class _HPDContactParams(Mapping):
         return len(self.keys_in_order)
 
 
+CONTACT_TEXT_PARAMETER_COLUMNS = {
+    "bbl": "bbl", "contact_id": "registration_contact_id", "reg_id": "registration_id",
+    "type": "contact_type", "first": "first_name", "last": "last_name", "title": "title",
+    "city": "business_city", "state": "business_state", "zip": "business_zip",
+}
+
+
+def _new_contact_text_profile() -> dict:
+    return {
+        "rows": 0,
+        "columns": {
+            column: {"max_length": 0, "length_counts": {}, "nul_rows": 0}
+            for column in CONTACT_TEXT_PARAMETER_COLUMNS.values()
+        },
+    }
+
+
+def _profile_contact_text_row(profile: dict, contact: Mapping) -> None:
+    """Profile every bounded contact projection without copying source values."""
+    profile["rows"] += 1
+    for parameter, column in CONTACT_TEXT_PARAMETER_COLUMNS.items():
+        value = contact[parameter]
+        value = "" if value is None else str(value)
+        field = profile["columns"][column]
+        length = len(value)
+        field["max_length"] = max(field["max_length"], length)
+        field["length_counts"][length] = field["length_counts"].get(length, 0) + 1
+        field["nul_rows"] += "\x00" in value
+
+
+def _contact_schema_preflight(session: Session, profile: dict | None) -> dict:
+    """Compare the complete projected source against the actual deployed schema."""
+    if not profile or set(profile.get("columns", {})) != set(CONTACT_TEXT_PARAMETER_COLUMNS.values()):
+        return {"columns": [], "validation_errors": ["contact_projection_profile_required"]}
+    schema = {
+        row["column_name"]: row for row in session.execute(text("""
+            SELECT column_name, data_type, character_maximum_length
+            FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='building_contacts'
+                AND column_name = ANY(CAST(:columns AS text[]))
+        """), {"columns": list(CONTACT_TEXT_PARAMETER_COLUMNS.values())}).mappings()
+    }
+    errors, columns = [], []
+    for column, observed in profile["columns"].items():
+        actual = schema.get(column)
+        limit = actual["character_maximum_length"] if actual else None
+        over_limit_rows = sum(
+            count for length, count in observed["length_counts"].items()
+            if limit is not None and int(length) > limit
+        )
+        columns.append({
+            "column": column, "max_source_length": observed["max_length"],
+            "schema_max_length": limit, "over_limit_rows": over_limit_rows,
+            "nul_rows": observed["nul_rows"], "present": actual is not None,
+        })
+        if not actual:
+            errors.append(f"contact_column_missing:{column}")
+        elif actual["data_type"] not in {"text", "character varying", "character"}:
+            errors.append(f"contact_column_not_text:{column}")
+        elif over_limit_rows:
+            errors.append(f"contact_column_too_short:{column}:{limit}<{observed['max_length']}")
+        if observed["nul_rows"]:
+            errors.append(f"contact_column_contains_nul:{column}")
+    return {"rows_profiled": profile["rows"], "columns": columns, "validation_errors": errors}
+
+
 def _prepare_building_refresh_snapshot(
     registrations: list[dict],
     contacts: list[dict],
@@ -352,7 +418,9 @@ def _prepare_building_refresh_snapshot(
     seen_contact_payloads: set[str] = set()
     conflicting_contact_registrations: set[str] = set()
     raw_contact_rows_by_reg: dict[str, int] = {}
+    source_contact_text_profile = _new_contact_text_profile()
     for contact in contacts:
+        _profile_contact_text_row(source_contact_text_profile, _HPDContactParams("", contact))
         registration_id = str(contact.get("registrationid") or "").strip()
         if registration_id:
             raw_contact_rows_by_reg[registration_id] = raw_contact_rows_by_reg.get(registration_id, 0) + 1
@@ -480,6 +548,7 @@ def _prepare_building_refresh_snapshot(
     seen_bbls: set[str] = set()
     seen_contact_keys: set[tuple[str, str, str, str]] = set()
     rejected_contacts = sum(raw_contact_rows_by_reg[reg_id] for reg_id in conflicting_contact_registrations)
+    projected_contact_text_profile = _new_contact_text_profile()
 
     for row in unique_snapshots:
         if not row["reasons"]:
@@ -541,7 +610,9 @@ def _prepare_building_refresh_snapshot(
             if natural_key in seen_contact_keys:
                 continue
             seen_contact_keys.add(natural_key)
-            prepared_contacts.append(_HPDContactParams(bbl, contact))
+            prepared = _HPDContactParams(bbl, contact)
+            prepared_contacts.append(prepared)
+            _profile_contact_text_row(projected_contact_text_profile, prepared)
     prepared_contact_count = sum(len(rows) for rows in contacts_by_bbl.values())
     identity_quarantine_count = len(quarantine)
     for registration_id in sorted(conflicting_contact_registrations):
@@ -574,6 +645,8 @@ def _prepare_building_refresh_snapshot(
             "duplicate_contact_payloads": len(contacts) - unique_contact_payloads,
             "missing_bins": missing_bins,
             "current_contacts": prepared_contact_count,
+            "source_contact_text_profile": source_contact_text_profile,
+            "projected_contact_text_profile": projected_contact_text_profile,
             "pluto_bbls": len(pluto_by_bbl),
             "rejected_registrations": rejected_registrations,
             "rejected_contacts": rejected_contacts,
@@ -773,6 +846,19 @@ def preview_building_refresh(session: Session, snapshot: dict) -> dict:
                         "source_bin": candidate, "source_hpd_building_id": candidate_hpd_id,
                     })
     validation_errors = _validate_building_refresh_snapshot(snapshot["stats"])
+    contact_profile = snapshot["stats"].get("projected_contact_text_profile")
+    if not contact_profile:
+        # Older reviewed local caches retain every projected contact, allowing
+        # the new schema gate to run without another external source fetch.
+        contact_profile = _new_contact_text_profile()
+        for contacts in snapshot["contacts_by_bbl"].values():
+            for contact in contacts:
+                _profile_contact_text_row(contact_profile, contact)
+        snapshot["stats"]["projected_contact_text_profile"] = contact_profile
+    contact_schema = _contact_schema_preflight(session, contact_profile)
+    validation_errors.extend(contact_schema["validation_errors"])
+    if contact_profile["rows"] != snapshot["stats"]["current_contacts"]:
+        validation_errors.append("contact_projection_profile_row_count_mismatch")
     if diff["persisted_identity_conflicts"]:
         validation_errors.append("persisted_identity_conflicts_require_review")
     if not schema_ready:
@@ -780,6 +866,7 @@ def preview_building_refresh(session: Session, snapshot: dict) -> dict:
     return {
         "dry_run": True, "business_rows_written": 0, "source_snapshot": snapshot["stats"],
         "diff": diff, "validation_errors": validation_errors,
+        "contact_schema_preflight": contact_schema,
         "ready_to_execute": not validation_errors,
         "rollback": {
             "required": "Verify a restorable database backup before execute; retain run-scoped before-images.",

@@ -28,7 +28,7 @@ class BuildingContact(TimestampMixin, Base):
     title: Mapped[Optional[str]] = mapped_column(String(100))
     business_address: Mapped[Optional[str]] = mapped_column(Text)
     business_city: Mapped[Optional[str]] = mapped_column(String(100))
-    business_state: Mapped[Optional[str]] = mapped_column(String(5))
+    business_state: Mapped[str | None] = mapped_column(Text)
     business_zip: Mapped[Optional[str]] = mapped_column(String(10))
 
     building = relationship("Building", back_populates="contacts")

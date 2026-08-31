@@ -226,3 +226,22 @@ def test_real_postgres_hashed_contact_keys_preserve_exact_scope_and_null_semanti
     for predicate in (original_predicate, ingest.CONTACT_MISSING_CURRENT_KEY_SQL):
         obsolete = set(database.execute(text(prefix + ingest.CONTACT_REFRESH_SCOPE_SQL + predicate), params).scalars())
         assert obsolete == expected
+
+
+def test_real_postgres_full_source_region_text_survives_projection_and_evidence(database, monkeypatch):
+    contacts = _green_contacts()
+    contacts[0].update(businessstate="OFFICE", businesszip="112221234")
+    snapshot = ingest._prepare_building_refresh_snapshot(_green_rows(), contacts, [])
+    snapshot["stats"]["source_fingerprint"] = "c" * 64
+    monkeypatch.setattr(ingest, "fetch_building_refresh_snapshot", lambda: snapshot)
+    ingest.ingest_buildings_from_hpd.run(
+        dry_run=False, confirm_execute=True, expected_source_fingerprint="c" * 64,
+    )
+    assert database.execute(text("""
+        SELECT business_state,business_zip FROM building_contacts
+        WHERE bbl='3025217501' AND registration_contact_id='9000'
+    """)).one() == ("OFFICE", "112221234")
+    evidence = database.execute(text("""
+        SELECT raw_payload FROM hpd_registration_snapshots WHERE registration_id='378111'
+    """)).scalar_one()
+    assert evidence["contacts"][0]["businessstate"] == "OFFICE"

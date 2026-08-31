@@ -69,10 +69,11 @@ def test_verified_lineage_is_current_only_when_required_tables_exist(revision):
 
 
 @pytest.mark.parametrize("missing_table", REQUIRED_TRUTH_TABLES)
-def test_verified_descendant_never_bypasses_table_presence(missing_table):
+@pytest.mark.parametrize("revision", sorted(VERIFIED_TRUTH_ALEMBIC_DESCENDANTS))
+def test_verified_descendant_never_bypasses_table_presence(missing_table, revision):
     status = asyncio.run(
         load_truth_schema_status(
-            ReadOnlySchemaSession(["012_compliance"], [missing_table])
+            ReadOnlySchemaSession([revision], [missing_table])
         )
     )
     assert status["migration_current"] is True
@@ -126,9 +127,31 @@ def test_verified_descendants_are_actual_descendants_in_repository():
     assert not truth_revision_includes_expected("999_future")
 
 
-def test_recognized_descendant_does_not_activate_truth_business_use():
+def test_region_widening_is_narrow_and_downgrade_preserves_long_values(monkeypatch):
+    import sqlalchemy as sa
+
+    scripts = ScriptDirectory(str(Path(__file__).resolve().parents[1] / "alembic"))
+    migration = scripts.get_revision("013_contact_region_text").module
+    assert migration.down_revision == "012_compliance"
+    calls = []
+    monkeypatch.setattr(migration.op, "alter_column", lambda *args, **kwargs: calls.append((args, kwargs)))
+    monkeypatch.setattr(migration.op, "execute", lambda sql: calls.append(str(sql)))
+    migration.upgrade()
+    assert len(calls) == 1
+    assert calls[0][0] == ("building_contacts", "business_state")
+    assert isinstance(calls[0][1]["type_"], sa.Text)
+    calls.clear()
+    migration.downgrade()
+    assert "length(business_state) > 5" in calls[0]
+    assert "RAISE EXCEPTION" in calls[0]
+    assert calls[1][0] == ("building_contacts", "business_state")
+    assert calls[1][1]["type_"].length == 5
+
+
+@pytest.mark.parametrize("revision", sorted(VERIFIED_TRUTH_ALEMBIC_DESCENDANTS))
+def test_recognized_descendant_does_not_activate_truth_business_use(revision):
     schema = asyncio.run(
-        load_truth_schema_status(ReadOnlySchemaSession(["012_compliance"]))
+        load_truth_schema_status(ReadOnlySchemaSession([revision]))
     )
     checklist = build_activation_checklist(
         schema_status=schema,

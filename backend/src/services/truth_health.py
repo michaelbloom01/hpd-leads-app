@@ -29,6 +29,7 @@ EXPECTED_TRUTH_ALEMBIC_REVISION = "010_truth_manifest"
 VERIFIED_TRUTH_ALEMBIC_DESCENDANTS = frozenset({
     "011_building_identity",
     "012_compliance",
+    "013_contact_region_text",
 })
 REQUIRED_TRUTH_TABLES = [
     "truth_claims",
