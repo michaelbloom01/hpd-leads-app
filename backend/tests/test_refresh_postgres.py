@@ -1,6 +1,7 @@
 """Opt-in real PostgreSQL regression tests against the disposable CI database."""
 
 import asyncio
+import json
 import os
 
 import pytest
@@ -177,3 +178,51 @@ def test_real_postgres_registration_rollover_retires_only_exact_prior_hpd_contac
     assert (None, "BoardHead") in current
     assert database.execute(text("SELECT count(*) FROM building_parcel_links WHERE is_current")).scalar_one() == 4
     assert database.execute(text("SELECT count(*) FROM hpd_registration_snapshots WHERE is_current")).scalar_one() == 4
+
+
+@pytest.mark.parametrize("incoming,expected", [
+    ([], {1, 2, 3}),
+    ([{}], {1, 2, 3}),
+    ([{"bbl": "3025217501", "registration_id": "378111", "contact_id": "9000", "contact_type": "Agent"}], {2, 3}),
+    ([{"bbl": "3025217501", "registration_id": "378111", "contact_id": "9000", "contact_type": "Agent"}] * 2, {2, 3}),
+    ([{"bbl": "3025217501", "registration_id": "378111", "contact_id": "9000", "contact_type": "HeadOfficer"}], {1, 2}),
+    ([{"bbl": "3025217501", "registration_id": None, "contact_id": "9000", "contact_type": "Agent"},
+      {"bbl": "3025217501", "registration_id": "378111", "contact_id": None, "contact_type": "Agent"},
+      {"bbl": "3025217501", "registration_id": "378111", "contact_id": "9000", "contact_type": None},
+      {"bbl": None, "registration_id": "378111", "contact_id": "9000", "contact_type": "Agent"}], {1, 2, 3}),
+])
+def test_real_postgres_hashed_contact_keys_preserve_exact_scope_and_null_semantics(database, incoming, expected):
+    base = {"bbl": "3025217501", "registration_id": "378111", "registration_contact_id": "9000", "contact_type": "Agent"}
+    existing = [
+        {"id": 1, **base},
+        {"id": 2, **base, "registration_contact_id": "9001"},
+        {"id": 3, **base, "contact_type": "HeadOfficer"},
+        {"id": 4, **base, "bbl": "3025217502"},
+        {"id": 5, **base, "registration_id": "777777"},
+        {"id": 6, **base, "registration_contact_id": None},
+        {"id": 7, **base, "registration_id": None},
+        {"id": 8, **base, "contact_type": "BoardHead"},
+        {"id": 9, **base, "contact_type": None},
+    ]
+    prefix = """
+        WITH bc AS (
+            SELECT * FROM jsonb_to_recordset(CAST(:existing AS jsonb))
+            AS c(id integer,bbl text,registration_id text,registration_contact_id text,contact_type text)
+        ) SELECT id FROM bc WHERE
+    """
+    original_predicate = """
+        AND NOT EXISTS (
+            SELECT 1 FROM jsonb_to_recordset(CAST(:current_keys AS jsonb))
+            AS k(bbl text,registration_id text,contact_id text,contact_type text)
+            WHERE k.bbl=bc.bbl AND k.registration_id=bc.registration_id
+                AND k.contact_id=bc.registration_contact_id AND k.contact_type=bc.contact_type
+        )
+    """
+    params = {
+        "existing": json.dumps(existing), "current_keys": json.dumps(incoming),
+        "bbls": ["3025217501"], "contact_types": list(ingest.HPD_SOURCE_CONTACT_TYPES),
+        "scope": json.dumps([{"bbl": "3025217501", "registration_id": "378111"}]),
+    }
+    for predicate in (original_predicate, ingest.CONTACT_MISSING_CURRENT_KEY_SQL):
+        obsolete = set(database.execute(text(prefix + ingest.CONTACT_REFRESH_SCOPE_SQL + predicate), params).scalars())
+        assert obsolete == expected

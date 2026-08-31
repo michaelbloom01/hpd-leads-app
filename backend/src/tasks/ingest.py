@@ -678,6 +678,19 @@ CONTACT_REFRESH_SCOPE_SQL = """
     )
 """
 
+# Scope requires all four persisted key fields to be non-null. JSONB arrays
+# preserve exact field boundaries and turn nullable incoming fields into JSON
+# nulls, so the subquery cannot introduce SQL NULL poisoning. PostgreSQL can
+# hash these scalar keys once instead of rescanning the source per contact.
+CONTACT_MISSING_CURRENT_KEY_SQL = """
+    AND jsonb_build_array(bc.bbl,bc.registration_id,bc.registration_contact_id,bc.contact_type)
+        NOT IN (
+            SELECT jsonb_build_array(k.bbl,k.registration_id,k.contact_id,k.contact_type)
+            FROM jsonb_to_recordset(CAST(:current_keys AS jsonb))
+            AS k(bbl text,registration_id text,contact_id text,contact_type text)
+        )
+"""
+
 
 def _contact_refresh_scope(snapshot: dict, bbls: list[str]) -> list[dict]:
     return [
@@ -1144,14 +1157,10 @@ def ingest_buildings_from_hpd(
                 session.execute(CONTACT_UPSERT_SQL, contact_batch)
             current_keys = [{"bbl": row["bbl"], "registration_id": row["reg_id"],
                              "contact_id": row["contact_id"], "contact_type": row["type"]} for row in contact_batch]
-            replaced_result = session.execute(text("DELETE FROM building_contacts bc WHERE " + CONTACT_REFRESH_SCOPE_SQL + """
-                AND NOT EXISTS (
-                    SELECT 1 FROM jsonb_to_recordset(CAST(:current_keys AS jsonb))
-                    AS k(bbl text,registration_id text,contact_id text,contact_type text)
-                    WHERE k.bbl=bc.bbl AND k.registration_id=bc.registration_id
-                        AND k.contact_id=bc.registration_contact_id AND k.contact_type=bc.contact_type
-                )
-            """), {**scope_params, "current_keys": json.dumps(current_keys)})
+            replaced_result = session.execute(
+                text("DELETE FROM building_contacts bc WHERE " + CONTACT_REFRESH_SCOPE_SQL + CONTACT_MISSING_CURRENT_KEY_SQL),
+                {**scope_params, "current_keys": json.dumps(current_keys)},
+            )
             prior_contact_rows_replaced += max(int(replaced_result.rowcount or 0), 0)
             session.execute(text("""
                 INSERT INTO hpd_refresh_rollback_rows
