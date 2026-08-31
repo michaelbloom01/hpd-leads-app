@@ -123,6 +123,20 @@ describe('CompliancePanel evidence and identity safety', () => {
     expect(screen.queryByText('Source refresh needed')).not.toBeInTheDocument();
   });
 
+  it('preserves both mapping and source-age warnings when both need attention', async () => {
+    const data = response();
+    data.stale = true;
+    data.coverage.status = 'partial';
+    data.coverage.unmapped_parcel_count = 93;
+    data.buildings[0].source_checks = [{ source_system: 'dob_safety', status: 'checked', records_count: 1, source_updated_at: '2026-01-01T12:00:00Z', observed_at: '2026-01-02T12:00:00Z', stale: true }];
+    data.source_coverage = [{ source_system: 'dob_safety', status: 'partial', checked_building_count: 4, physical_building_count: 4, records_count: 4, active_records_count: 4, open_complaints_count: 0, source_updated_at: '2026-01-01T12:00:00Z', observed_at: '2026-01-02T12:00:00Z', stale: true }];
+    fetchComplianceMock.mockResolvedValue(data);
+    renderPanel('portfolio', 'lead-1');
+    expect(await screen.findByText('More identities to map')).toBeInTheDocument();
+    expect(screen.getByText('Source refresh needed')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Source-specific coverage' })).getByText(/Scope incomplete · Refresh needed/)).toBeInTheDocument();
+  });
+
   it('keeps missing balances distinct from zero and labels a known subtotal', async () => {
     const data = response();
     data.buildings[1].reported_balance_cents = null;

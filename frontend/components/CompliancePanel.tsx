@@ -239,6 +239,14 @@ const CompliancePanel: React.FC<Props> = ({ scope, scopeId }) => {
   }, [data?.buildings]);
   const coverageStatus = data?.coverage.status || 'not_checked';
   const staleBalance = data?.buildings.some(balanceIsStale);
+  const sourceNeedsRefresh = (sourceSystem?: string) => {
+    const checks = data?.buildings.flatMap(building => building.source_checks || [])
+      .filter(check => !sourceSystem || check.source_system === sourceSystem) || [];
+    if (checks.length > 0) return checks.some(check => check.stale);
+    return Boolean(!data?.coverage.unmapped_parcel_count && (sourceSystem
+      ? data?.source_coverage?.find(source => source.source_system === sourceSystem)?.stale
+      : data?.stale));
+  };
   const unavailableMessage = data && (!data.enabled || ['schema_unavailable', 'identity_unavailable'].includes(coverageStatus))
     ? UNAVAILABLE_MESSAGES[data.enabled ? coverageStatus : 'disabled'] : null;
 
@@ -263,7 +271,8 @@ const CompliancePanel: React.FC<Props> = ({ scope, scopeId }) => {
     {data ? <>
       <div className="flex flex-wrap gap-2 text-xs">
         <span className={`rounded border px-2 py-1 ${coverageStatus === 'complete' && !data.stale ? 'border-gray-200 bg-gray-50 text-gray-700' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>{COVERAGE_LABELS[coverageStatus] || 'Coverage unverified'}</span>
-        {data.enabled && data.identity_ready && data.stale ? <span className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-900">{data.coverage.unmapped_parcel_count ? 'More identities to map' : 'Source refresh needed'}</span> : null}
+        {data.enabled && data.identity_ready && data.coverage.unmapped_parcel_count ? <span className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-900">More identities to map</span> : null}
+        {data.enabled && data.identity_ready && sourceNeedsRefresh() ? <span className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-900">Source refresh needed</span> : null}
       </div>
       {unavailableMessage ? <p className="rounded-lg bg-gray-50 p-4 text-sm text-gray-600">{unavailableMessage}</p> : <>
         {data.coverage.scope_parcel_count !== undefined ? <p className={`rounded-lg p-3 text-sm ${data.coverage.unmapped_parcel_count ? 'bg-amber-50 text-amber-900' : 'bg-gray-50 text-gray-600'}`}>
@@ -291,7 +300,7 @@ const CompliancePanel: React.FC<Props> = ({ scope, scopeId }) => {
           {data.source_coverage.map(source => <div key={source.source_system} className="rounded-lg border border-gray-200 p-3 text-xs text-gray-600">
             <p className="font-semibold text-gray-900">{sourceLabel(source.source_system)}</p>
             <p className="mt-1">{source.checked_building_count} of {source.physical_building_count} mapped buildings checked · {source.records_count} records</p>
-            <p className="mt-1">{COVERAGE_LABELS[source.status] || source.status.replace(/_/g, ' ')}{source.stale ? data.coverage.unmapped_parcel_count ? ' · Scope incomplete; check source dates' : ' · Refresh needed' : ''}</p>
+            <p className="mt-1">{COVERAGE_LABELS[source.status] || source.status.replace(/_/g, ' ')}{data.coverage.unmapped_parcel_count ? ' · Scope incomplete' : ''}{sourceNeedsRefresh(source.source_system) ? ' · Refresh needed' : ''}</p>
             <p className="mt-1">Source updated {dateLabel(source.source_updated_at)} · Observed {dateLabel(source.observed_at)}</p>
           </div>)}
         </section> : null}
