@@ -15,7 +15,9 @@ import logging
 import os
 import re
 import time
+from collections.abc import Mapping
 from datetime import date, datetime, timezone
+from typing import ClassVar
 
 import requests
 from sqlalchemy import create_engine, text
@@ -75,7 +77,8 @@ def _get_pg_session() -> Session:
 
 
 def _socrata_fetch(
-    dataset_id: str, params: dict, max_retries: int = 3, *, row_filter=None, fetch_stats: dict | None = None,
+    dataset_id: str, params: dict, max_retries: int = 3, *, row_filter=None,
+    fetch_stats: dict | None = None, validate_source_row_ids: bool = False,
 ) -> list[dict]:
     """Fetch from Socrata with pagination, retries, and circuit breaker logic."""
     url = f"{SOCRATA_BASE}/{dataset_id}.json"
@@ -85,6 +88,7 @@ def _socrata_fetch(
 
     all_records = []
     content_hashes: list[bytes] = []
+    source_row_ids: set[str] = set()
     offset = params.get("$offset", 0)
     limit = params.get("$limit", 10000)
     consecutive_failures = 0
@@ -121,6 +125,13 @@ def _socrata_fetch(
         batch = resp.json()
         if not batch:
             break
+        if validate_source_row_ids:
+            for row in batch:
+                # Transient pagination proof only. Never a durable identity join key.
+                source_row_id = row.pop("__refresh_row_id", None)
+                if not source_row_id or source_row_id in source_row_ids:
+                    raise RuntimeError(f"Missing or duplicated source row in {dataset_id}")
+                source_row_ids.add(source_row_id)
         if fetch_stats is not None:
             fetch_stats["records_fetched"] = fetch_stats.get("records_fetched", 0) + len(batch)
             content_hashes.extend(bytes.fromhex(_payload_hash(row)) for row in batch)
@@ -134,6 +145,9 @@ def _socrata_fetch(
         for row_hash in sorted(content_hashes):
             digest.update(row_hash)
         fetch_stats["content_digest"] = digest.hexdigest()
+        if validate_source_row_ids:
+            fetch_stats["unique_source_rows"] = len(source_row_ids)
+            fetch_stats["source_row_key_digest"] = hashlib.sha256("\n".join(sorted(source_row_ids)).encode()).hexdigest()
     return all_records
 
 
@@ -292,6 +306,35 @@ def _registration_rank(row: dict) -> tuple:
     )
 
 
+class _HPDContactParams(Mapping):
+    """Lightweight read view; allocate SQL parameter dictionaries one batch at a time."""
+
+    __slots__ = ("bbl", "source")
+    fields: ClassVar[dict[str, str]] = {
+        "contact_id": "registrationcontactid", "reg_id": "registrationid", "type": "type",
+        "desc": "contactdescription", "corp": "corporationname", "first": "firstname",
+        "last": "lastname", "title": "title", "city": "businesscity", "state": "businessstate", "zip": "businesszip",
+    }
+    keys_in_order = ("bbl", *fields, "addr")
+
+    def __init__(self, bbl: str, source: dict):
+        self.bbl, self.source = bbl, source
+
+    def __getitem__(self, key):
+        if key == "bbl":
+            return self.bbl
+        if key == "addr":
+            return f"{self.source.get('businesshousenumber', '')} {self.source.get('businessstreetname', '')}".strip()
+        value = self.source.get(self.fields[key])
+        return str(value or "").strip() if key in {"contact_id", "reg_id", "type"} else value
+
+    def __iter__(self):
+        return iter(self.keys_in_order)
+
+    def __len__(self):
+        return len(self.keys_in_order)
+
+
 def _prepare_building_refresh_snapshot(
     registrations: list[dict],
     contacts: list[dict],
@@ -305,10 +348,28 @@ def _prepare_building_refresh_snapshot(
     BuildingID occupy separate namespaces. Rejected identities retain raw evidence.
     """
     contacts_by_reg: dict[str, list[dict]] = {}
+    contact_hash_by_key: dict[tuple, str] = {}
+    seen_contact_payloads: set[str] = set()
+    conflicting_contact_registrations: set[str] = set()
+    raw_contact_rows_by_reg: dict[str, int] = {}
     for contact in contacts:
         registration_id = str(contact.get("registrationid") or "").strip()
         if registration_id:
+            raw_contact_rows_by_reg[registration_id] = raw_contact_rows_by_reg.get(registration_id, 0) + 1
+            key = (registration_id, str(contact.get("registrationcontactid") or ""), str(contact.get("type") or ""))
+            contact_hash = _payload_hash(contact)
+            if key in contact_hash_by_key and contact_hash_by_key[key] != contact_hash:
+                conflicting_contact_registrations.add(registration_id)
+            contact_hash_by_key[key] = contact_hash
+            if contact_hash in seen_contact_payloads:
+                continue
+            seen_contact_payloads.add(contact_hash)
             contacts_by_reg.setdefault(registration_id, []).append(contact)
+    for registration_id, rows in contacts_by_reg.items():
+        contacts_by_reg[registration_id] = sorted(rows, key=lambda item: json.dumps(item, sort_keys=True))
+    unique_contact_payloads = len(seen_contact_payloads)
+    # Hash bookkeeping has completed; the raw evidence is retained in contacts_by_reg.
+    del contact_hash_by_key, seen_contact_payloads
 
     pluto_by_bbl: dict[str, dict] = {}
     for row in pluto_data:
@@ -331,15 +392,15 @@ def _prepare_building_refresh_snapshot(
         reasons = []
         if not bbl:
             reasons.append("invalid_bbl")
-        if not reg_id or not reg_id.isdigit() or len(reg_id) > 20:
+        if not reg_id or not reg_id.isdigit() or int(reg_id) <= 0 or len(reg_id) > 20:
             reasons.append("invalid_registration_id")
-        if not hpd_id or not hpd_id.isdigit() or len(hpd_id) > 20:
+        if not hpd_id or not hpd_id.isdigit() or int(hpd_id) <= 0 or len(hpd_id) > 20:
             reasons.append("invalid_hpd_building_id")
         if not re.fullmatch(r"[1-5][0-9]{6}", source_bin):
             reasons.append("missing_bin" if not source_bin else "invalid_bin")
         elif bbl and source_bin[0] != bbl[0]:
             reasons.append("bin_borough_conflict")
-        raw_contacts = sorted(contacts_by_reg.get(reg_id, []), key=lambda item: json.dumps(item, sort_keys=True))
+        raw_contacts = contacts_by_reg.get(reg_id, [])
         payload = {"registration": registration, "contacts": raw_contacts}
         row = {
             "registration_id": reg_id if reg_id and len(reg_id) <= 20 else "unknown",
@@ -418,11 +479,12 @@ def _prepare_building_refresh_snapshot(
     contacts_by_bbl: dict[str, list[dict]] = {}
     seen_bbls: set[str] = set()
     seen_contact_keys: set[tuple[str, str, str, str]] = set()
-    rejected_contacts = 0
+    rejected_contacts = sum(raw_contact_rows_by_reg[reg_id] for reg_id in conflicting_contact_registrations)
 
     for row in unique_snapshots:
         if not row["reasons"]:
-            replacement_registration_ids_by_bbl.setdefault(row["bbl"], []).append(row["registration_id"])
+            if row["registration_id"] not in conflicting_contact_registrations:
+                replacement_registration_ids_by_bbl.setdefault(row["bbl"], []).append(row["registration_id"])
             link = {
                 "bin": row["bin"], "bbl": row["bbl"], "source_record_key": row["registration_id"],
                 "source_url": row["source_url"], "effective_from": row["last_registration_date"],
@@ -467,6 +529,8 @@ def _prepare_building_refresh_snapshot(
         current_registrations_by_bbl.setdefault(bbl, []).append(registration_id)
 
         prepared_contacts = contacts_by_bbl.setdefault(bbl, [])
+        if registration_id in conflicting_contact_registrations:
+            continue
         for contact in contacts_by_reg.get(registration_id, []):
             contact_id = str(contact.get("registrationcontactid") or "").strip()
             contact_type = str(contact.get("type") or "").strip()
@@ -477,22 +541,15 @@ def _prepare_building_refresh_snapshot(
             if natural_key in seen_contact_keys:
                 continue
             seen_contact_keys.add(natural_key)
-            prepared_contacts.append({
-                "bbl": bbl,
-                "contact_id": contact_id,
-                "reg_id": registration_id,
-                "type": contact_type,
-                "desc": contact.get("contactdescription"),
-                "corp": contact.get("corporationname"),
-                "first": contact.get("firstname"),
-                "last": contact.get("lastname"),
-                "title": contact.get("title"),
-                "addr": f"{contact.get('businesshousenumber', '')} {contact.get('businessstreetname', '')}".strip(),
-                "city": contact.get("businesscity"),
-                "state": contact.get("businessstate"),
-                "zip": contact.get("businesszip"),
-            })
+            prepared_contacts.append(_HPDContactParams(bbl, contact))
     prepared_contact_count = sum(len(rows) for rows in contacts_by_bbl.values())
+    identity_quarantine_count = len(quarantine)
+    for registration_id in sorted(conflicting_contact_registrations):
+        payload = {"registration_id": registration_id, "contacts": contacts_by_reg[registration_id]}
+        quarantine.append({
+            "source_record_key": f"contacts:{registration_id}", "payload_hash": _payload_hash(payload),
+            "reason": "contact_payload_conflict", "raw_payload": payload,
+        })
     return {
         "buildings": buildings,
         "physical_buildings": physical_buildings,
@@ -512,7 +569,9 @@ def _prepare_building_refresh_snapshot(
             "multi_bin_parcels": sum(len(rows) > 1 for rows in current_registrations_by_bbl.values()),
             "registration_versions": len(unique_snapshots),
             "historical_registrations": sum(not row["is_current"] and not row["reasons"] for row in unique_snapshots),
-            "quarantined_identities": len(quarantine),
+            "quarantined_identities": identity_quarantine_count,
+            "quarantined_contact_registrations": len(conflicting_contact_registrations),
+            "duplicate_contact_payloads": len(contacts) - unique_contact_payloads,
             "missing_bins": missing_bins,
             "current_contacts": prepared_contact_count,
             "pluto_bbls": len(pluto_by_bbl),
@@ -721,21 +780,22 @@ def fetch_building_refresh_snapshot() -> dict:
     before = {name: _source_snapshot_stamp(DATASETS[name]) for name in names}
     registration_fetch_stats: dict = {}
     registrations = _socrata_fetch(DATASETS["hpd_registrations"], {
-        "$select": "boroid,block,lot,bin,buildingid,registrationid,housenumber,streetname,zip,boro,lastregistrationdate,registrationenddate",
-        "$order": "registrationid ASC,buildingid ASC",
-    }, fetch_stats=registration_fetch_stats)
+        "$select": ":id as __refresh_row_id,boroid,block,lot,bin,buildingid,registrationid,housenumber,streetname,zip,boro,lastregistrationdate,registrationenddate",
+        "$order": "registrationid ASC,buildingid ASC,:id ASC",
+    }, fetch_stats=registration_fetch_stats, validate_source_row_ids=True)
     contact_fetch_stats: dict = {}
     contacts = _socrata_fetch(DATASETS["hpd_contacts"], {
-        "$select": "registrationcontactid,registrationid,type,contactdescription,corporationname,firstname,lastname,title,businesshousenumber,businessstreetname,businessapartment,businesscity,businessstate,businesszip",
-        "$order": "registrationcontactid ASC",
-    }, fetch_stats=contact_fetch_stats)
+        "$select": ":id as __refresh_row_id,registrationcontactid,registrationid,type,contactdescription,corporationname,firstname,lastname,title,businesshousenumber,businessstreetname,businessapartment,businesscity,businessstate,businesszip",
+        "$order": "registrationcontactid ASC,:id ASC",
+    }, fetch_stats=contact_fetch_stats, validate_source_row_ids=True)
     relevant_bbls = {_compute_bbl(row.get("boroid"), row.get("block"), row.get("lot")) for row in registrations}
     pluto_fetch_stats: dict = {}
     # Inspect every source row for completeness, retain only relevant parcel fields.
     pluto_data = _socrata_fetch(DATASETS["pluto"], {
-        "$select": "bbl,cd,council,ct2010,assesstot,unitsres,yearbuilt,bldgclass",
-        "$order": "bbl ASC", "$limit": 50000,
-    }, row_filter=lambda row: _normalize_pluto_bbl(row.get("bbl")) in relevant_bbls, fetch_stats=pluto_fetch_stats)
+        "$select": ":id as __refresh_row_id,bbl,cd,council,ct2010,assesstot,unitsres,yearbuilt,bldgclass",
+        "$order": "bbl ASC,:id ASC", "$limit": 50000,
+    }, row_filter=lambda row: _normalize_pluto_bbl(row.get("bbl")) in relevant_bbls,
+       fetch_stats=pluto_fetch_stats, validate_source_row_ids=True)
     after = {name: _source_snapshot_stamp(DATASETS[name]) for name in names}
     for name, rows in zip(names, (registrations, contacts, pluto_data)):
         fetched_count = pluto_fetch_stats.get("records_fetched", 0) if name == "pluto" else len(rows)
@@ -755,7 +815,14 @@ def fetch_building_refresh_snapshot() -> dict:
         "pluto": pluto_fetch_stats["content_digest"],
     }
     snapshot["stats"]["source_content_digests"] = source_digests
-    snapshot["stats"]["source_fingerprint"] = _payload_hash({"stamps": before, "content_digests": source_digests})
+    row_key_digests = {
+        name: stats["source_row_key_digest"]
+        for name, stats in zip(names, (registration_fetch_stats, contact_fetch_stats, pluto_fetch_stats))
+    }
+    snapshot["stats"]["source_row_key_digests"] = row_key_digests
+    snapshot["stats"]["source_fingerprint"] = _payload_hash({
+        "stamps": before, "content_digests": source_digests, "row_key_digests": row_key_digests,
+    })
     return snapshot
 
 
@@ -1034,7 +1101,7 @@ def ingest_buildings_from_hpd(
             building_batch = buildings[offset:offset + BUILDING_REFRESH_BATCH_SIZE]
             batch_bbls = [row["bbl"] for row in building_batch]
             contact_batch = [
-                contact
+                dict(contact)
                 for bbl in batch_bbls
                 for contact in contacts_by_bbl.get(bbl, [])
             ]

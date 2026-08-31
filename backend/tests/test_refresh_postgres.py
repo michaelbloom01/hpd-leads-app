@@ -1,5 +1,6 @@
 """Opt-in real PostgreSQL regression tests against the disposable CI database."""
 
+import asyncio
 import os
 
 import pytest
@@ -8,8 +9,10 @@ from sqlalchemy.orm import Session
 
 from src.db.session import get_compatible_sync_url
 from src.routers.quality import SUCCESSFUL_BUILDING_REFRESH_SQL
+from src.services.compliance import load_compliance, publish_snapshot
 from src.tasks import ingest
 from tests.test_building_identity_refresh import _green_contacts, _green_rows
+from tests.test_compliance_intelligence import snapshot as compliance_snapshot
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("RUN_POSTGRES_INTEGRATION") != "1",
@@ -105,9 +108,46 @@ def test_real_postgres_previews_and_failed_attempts_cannot_freshen_data(database
             ('buildings', 'buildings', 'completed', now()-interval '10 days', now()-interval '10 days', 0, '{}', now(), now()),
             ('buildings_preview', 'buildings', 'completed', now(), now(), 0, '{}', now(), now()),
             ('buildings', 'buildings', 'failed', now(), now(), 1, '{}', now(), now()),
-            ('buildings', 'buildings', 'completed', now(), now(), 0, '{"dry_run":true}', now(), now())
+            ('buildings', 'buildings', 'completed', now(), now(), 0, jsonb_build_object('dry_run', true), now(), now())
     """))
     row = database.execute(SUCCESSFUL_BUILDING_REFRESH_SQL).mappings().one()
     from datetime import datetime, timezone
 
     assert (datetime.now(timezone.utc) - row["finished_at"]).days == 10
+
+
+def test_real_postgres_compliance_publish_and_all_scope_reads(database, monkeypatch):
+    monkeypatch.setenv("COMPLIANCE_INTELLIGENCE_ENABLED", "true")
+    ingest.ingest_buildings_from_hpd.run(
+        dry_run=False, confirm_execute=True, expected_source_fingerprint="a" * 64,
+    )
+    database.execute(text("""
+        INSERT INTO leads (lead_id, company_name, created_at, updated_at)
+        VALUES ('pg-smoke-pm', 'Synthetic test manager', now(), now())
+    """))
+    database.execute(text("""
+        INSERT INTO building_management
+            (bbl, lead_id, role, is_current, created_at, updated_at)
+        VALUES ('3025217501', 'pg-smoke-pm', 'Agent', true, now(), now())
+    """))
+    with Session(database, join_transaction_mode="create_savepoint") as session:
+        first = publish_snapshot(session, compliance_snapshot(), run_id="pg-smoke-1")
+        second = publish_snapshot(session, compliance_snapshot(), run_id="pg-smoke-2")
+        assert first["inserted"] == 4
+        assert second["unchanged"] == 4
+        assert database.execute(text("SELECT count(*) FROM compliance_observations")).scalar_one() == 4
+
+        class ReadAdapter:
+            async def execute(self, statement, params=None):
+                return session.execute(statement, params)
+
+        for scope_type, scope_id, count in (
+            ("parcel", "3025217501", 4),
+            ("portfolio", "pg-smoke-pm", 4),
+            ("building", "3348179", 1),
+        ):
+            response = asyncio.run(load_compliance(ReadAdapter(), scope_type=scope_type, scope_id=scope_id))
+            assert response["coverage"]["status"] == "complete"
+            assert response["coverage"]["physical_building_count"] == count
+            assert response["coverage"]["active_records_count"] == count
+            assert response["reported_balance_cents"] is None

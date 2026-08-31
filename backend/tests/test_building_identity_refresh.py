@@ -82,6 +82,20 @@ def test_duplicate_registration_and_contact_payloads_are_idempotent():
     assert len(snapshot["registration_snapshots"]) == 1
     assert len(snapshot["physical_buildings"]) == 1
     assert len(snapshot["contacts_by_bbl"]["3025217501"]) == 1
+    assert len(snapshot["registration_snapshots"][0]["raw_payload"]["contacts"]) == 1
+    assert snapshot["stats"]["duplicate_contact_payloads"] == 1
+
+
+def test_conflicting_contact_payloads_preserve_existing_registration_contact_scope():
+    contacts = _green_contacts()
+    contacts.append({**contacts[0], "corporationname": "Conflicting manager"})
+    snapshot = ingest._prepare_building_refresh_snapshot(_green_rows(), contacts, [])
+    assert snapshot["stats"]["quarantined_contact_registrations"] == 1
+    assert snapshot["stats"]["quarantined_identities"] == 0
+    assert snapshot["stats"]["current_contacts"] == 3
+    assert "378111" not in snapshot["replacement_registration_ids_by_bbl"]["3025217501"]
+    assert any(row["source_record_key"] == "contacts:378111" for row in snapshot["quarantine"])
+    assert len(snapshot["registration_snapshots"][0]["raw_payload"]["contacts"]) == 2
 
 
 @pytest.mark.parametrize("overrides,reason", [
@@ -90,6 +104,7 @@ def test_duplicate_registration_and_contact_payloads_are_idempotent():
     ({"bin": ""}, "missing_bin"),
     ({"block": "0"}, "invalid_bbl"),
     ({"buildingid": ""}, "invalid_hpd_building_id"),
+    ({"registrationid": "0"}, "invalid_registration_id"),
 ])
 def test_invalid_identity_is_quarantined_with_raw_evidence(overrides, reason):
     raw = {**_green_rows()[0], **overrides}
@@ -205,6 +220,29 @@ def test_fetch_digest_binds_full_content_and_is_independent_of_row_order(monkeyp
     ingest._socrata_fetch("test", {"$limit": 10}, fetch_stats=changed)
     assert changed["records_fetched"] == first["records_fetched"]
     assert changed["content_digest"] != first["content_digest"]
+
+
+def test_transient_source_row_ids_detect_duplicate_pages_and_never_become_durable_keys(monkeypatch):
+    records = [{"__refresh_row_id": "row-1", "value": "same"}, {"__refresh_row_id": "row-2", "value": "same"}]
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return [dict(row) for row in records]
+
+    monkeypatch.setattr(ingest.requests, "get", lambda *args, **kwargs: Response())
+    stats = {}
+    rows = ingest._socrata_fetch("test", {"$limit": 10}, fetch_stats=stats, validate_source_row_ids=True)
+    assert rows == [{"value": "same"}, {"value": "same"}]
+    assert stats["unique_source_rows"] == 2
+    assert len(stats["source_row_key_digest"]) == 64
+    records[1]["__refresh_row_id"] = "row-1"
+    with pytest.raises(RuntimeError, match="duplicated source row"):
+        ingest._socrata_fetch("test", {"$limit": 10}, fetch_stats={}, validate_source_row_ids=True)
 
 
 def test_execute_requires_confirmation_and_reviewed_fingerprint():

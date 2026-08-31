@@ -5,7 +5,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
@@ -88,7 +88,7 @@ def _job_request_signature(
     confirm_execute: bool,
     cohort_filter: Optional[str],
     sources: Optional[list[str]] = None,
-    bins: Optional[list[str]] = None,
+    bins: list[str] | None = None,
 ) -> dict[str, object]:
     return {
         "job_type": job_type,
@@ -123,8 +123,8 @@ def _build_job_config(
     confirm_execute: bool,
     cohort_filter: Optional[str],
     sources: Optional[list[str]] = None,
-    bins: Optional[list[str]] = None,
-    expected_source_fingerprint: Optional[str] = None,
+    bins: list[str] | None = None,
+    expected_source_fingerprint: str | None = None,
     existing_config: Optional[dict] = None,
 ) -> dict:
     config = dict(existing_config or {})
@@ -159,8 +159,8 @@ def _approval_preview_response(
     confirm_execute: bool,
     operation: str = "job_execution",
     sources: Optional[list[str]] = None,
-    bins: Optional[list[str]] = None,
-    expected_source_fingerprint: Optional[str] = None,
+    bins: list[str] | None = None,
+    expected_source_fingerprint: str | None = None,
 ) -> dict[str, object]:
     source_query = "".join(f"&source={source}" for source in (sources or []))
     bin_query = "".join(f"&bin={bin_value}" for bin_value in (bins or []))
@@ -576,8 +576,8 @@ async def start_job(
     confirm_execute: bool = Query(default=False),
     cohort_filter: Optional[str] = Query(default=None),
     source: Optional[list[str]] = Query(default=None, description="Optional repeatable truth_materialization source filter."),
-    bins: Optional[list[str]] = Query(default=None, alias="bin", description="Repeatable exact DOB BINs for bounded compliance jobs, maximum 100."),
-    expected_source_fingerprint: Optional[str] = Query(default=None, description="SHA-256 fingerprint from the reviewed full buildings_preview result."),
+    bins: Annotated[list[str] | None, Query(alias="bin", description="Repeatable exact DOB BINs for bounded compliance jobs, maximum 100.")] = None,
+    expected_source_fingerprint: Annotated[str | None, Query(description="SHA-256 fingerprint from the reviewed full buildings_preview result.")] = None,
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
@@ -591,9 +591,8 @@ async def start_job(
     job_type = JOB_TYPE_ALIASES.get(job_type, job_type)
     selected_bins = _normalize_pilot_bins(bins)
     expected_source_fingerprint = expected_source_fingerprint if isinstance(expected_source_fingerprint, str) else None
-    if expected_source_fingerprint:
-        if job_type != "buildings" or not re.fullmatch(r"[a-f0-9]{64}", expected_source_fingerprint):
-            raise HTTPException(422, "expected_source_fingerprint must be the SHA-256 from a reviewed buildings preview")
+    if expected_source_fingerprint and (job_type != "buildings" or not re.fullmatch(r"[a-f0-9]{64}", expected_source_fingerprint)):
+        raise HTTPException(422, "expected_source_fingerprint must be the SHA-256 from a reviewed buildings preview")
     if job_type == "buildings" and not dry_run and not expected_source_fingerprint:
         raise HTTPException(422, "Building refresh execution requires expected_source_fingerprint from a reviewed full buildings_preview")
     if selected_bins and job_type not in {"dob_safety", "dob_safety_preview"}:

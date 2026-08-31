@@ -134,6 +134,18 @@ def test_source_refresh_plan_groups_gaps_by_job_and_preserves_approval_gate():
     assert len(plan["items"][1]["sources"]) == 2
     assert plan["items"][1]["preview_endpoint"] == "/api/v1/jobs/buildings/start"
     assert plan["items"][1]["execute_endpoint"] == "/api/v1/jobs/buildings/start?dry_run=false&confirm_execute=true"
+    assert plan["items"][1]["required_parameters"] == ["expected_source_fingerprint"]
+    assert plan["items"][1]["source_preview_endpoint"] == "/api/v1/jobs/buildings_preview/start?dry_run=true"
+
+
+def test_compliance_refresh_plan_requires_explicit_pilot_scope():
+    plan = build_source_refresh_plan({"critical_gaps": [{
+        "source_name": "dob_safety", "job_type": "dob_safety", "status": "no_recent_ingest",
+    }]})
+    assert plan["items"][0]["required_parameters"] == ["bin"]
+    assert plan["items"][0]["source_preview_endpoint"] == "/api/v1/jobs/dob_safety_preview/start?dry_run=true"
+    source = next(item for item in SOURCE_REGISTRY if item["source_name"] == "dob_safety")
+    assert source["coverage_scope"] == "explicit BIN pilot"
 
 
 def test_source_refresh_plan_excludes_non_refreshable_feedback_streams():
