@@ -7,6 +7,19 @@ from .base import Base, TimestampMixin
 
 from .auth import User
 from .building import Building, BuildingManagement
+from .building_identity import (
+    BuildingIdentityQuarantine,
+    BuildingParcelLink,
+    HPDRefreshRollbackRow,
+    HPDRegistrationSnapshot,
+    PhysicalBuilding,
+)
+from .compliance import (
+    ComplianceBalanceObservation,
+    ComplianceObservation,
+    ComplianceRecord,
+    ComplianceSourceCheck,
+)
 from .contacts import BuildingContact, EnrichmentResult
 from .entity import (
     CanonicalEntity,
@@ -63,6 +76,15 @@ __all__ = [
     # Core entities
     "Building",
     "BuildingManagement",
+    "PhysicalBuilding",
+    "BuildingParcelLink",
+    "HPDRegistrationSnapshot",
+    "BuildingIdentityQuarantine",
+    "HPDRefreshRollbackRow",
+    "ComplianceRecord",
+    "ComplianceObservation",
+    "ComplianceSourceCheck",
+    "ComplianceBalanceObservation",
     "Lead",
     "CanonicalEntity",
     "CanonicalEntityAlias",

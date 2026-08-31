@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -32,7 +33,9 @@ SOURCE_REFRESH_JOB_TYPES = {
     "pad",
     "building_coordinates",
     "board_chairs",
+    "dob_safety",
 }
+READ_ONLY_PREVIEW_JOB_TYPES = {"buildings_preview", "dob_safety_preview"}
 APPROVAL_REQUIRED_JOB_TYPES = SOURCE_REFRESH_JOB_TYPES | {
     "enrichment",
     "scoring",
@@ -61,6 +64,22 @@ def _parse_config(raw: object) -> dict:
     return {}
 
 
+def _normalize_pilot_bins(value: object) -> list[str]:
+    """Validate bounded physical-building scope without accepting parcel/HPD IDs."""
+    if not isinstance(value, list):
+        return []
+    if len(value) > 100:
+        raise HTTPException(422, "Compliance jobs accept at most 100 BIN values")
+    normalized = []
+    for raw in value:
+        candidate = str(raw).strip()
+        if not re.fullmatch(r"[1-5][0-9]{6}", candidate):
+            raise HTTPException(422, "Each bin must be a seven-digit NYC DOB BIN")
+        if candidate not in normalized:
+            normalized.append(candidate)
+    return sorted(normalized)
+
+
 def _job_request_signature(
     *,
     job_type: str,
@@ -69,6 +88,7 @@ def _job_request_signature(
     confirm_execute: bool,
     cohort_filter: Optional[str],
     sources: Optional[list[str]] = None,
+    bins: Optional[list[str]] = None,
 ) -> dict[str, object]:
     return {
         "job_type": job_type,
@@ -77,6 +97,7 @@ def _job_request_signature(
         "confirm_execute": bool(confirm_execute),
         "cohort_filter": cohort_filter,
         "sources": sources or [],
+        "bins": bins or [],
     }
 
 
@@ -89,6 +110,7 @@ def _extract_signature_from_config(job_type: str, config: dict) -> dict[str, obj
         "confirm_execute": bool(request.get("confirm_execute", config.get("confirm_execute", False))),
         "cohort_filter": request.get("cohort_filter", config.get("cohort_filter")),
         "sources": request.get("sources", config.get("sources", [])) or [],
+        "bins": request.get("bins", config.get("bins", [])) or [],
     }
 
 
@@ -101,6 +123,8 @@ def _build_job_config(
     confirm_execute: bool,
     cohort_filter: Optional[str],
     sources: Optional[list[str]] = None,
+    bins: Optional[list[str]] = None,
+    expected_source_fingerprint: Optional[str] = None,
     existing_config: Optional[dict] = None,
 ) -> dict:
     config = dict(existing_config or {})
@@ -112,6 +136,8 @@ def _build_job_config(
         "confirm_execute": bool(confirm_execute),
         "cohort_filter": cohort_filter,
         "sources": sources or [],
+        "bins": bins or [],
+        "expected_source_fingerprint": expected_source_fingerprint,
     }
     config["dispatch"] = {
         "state": "created",
@@ -133,8 +159,17 @@ def _approval_preview_response(
     confirm_execute: bool,
     operation: str = "job_execution",
     sources: Optional[list[str]] = None,
+    bins: Optional[list[str]] = None,
+    expected_source_fingerprint: Optional[str] = None,
 ) -> dict[str, object]:
     source_query = "".join(f"&source={source}" for source in (sources or []))
+    bin_query = "".join(f"&bin={bin_value}" for bin_value in (bins or []))
+    fingerprint_query = f"&expected_source_fingerprint={expected_source_fingerprint}" if expected_source_fingerprint else ""
+    required_parameters = []
+    if job_type == "dob_safety" and not bins:
+        required_parameters.append("bin")
+    if job_type == "buildings" and not expected_source_fingerprint:
+        required_parameters.append("expected_source_fingerprint")
     return {
         "status": "approval_required",
         "job_type": job_type,
@@ -155,8 +190,11 @@ def _approval_preview_response(
                 "ingestion_jobs",
                 "job-specific output tables",
             ],
-            "required_execute_query": f"/api/v1/jobs/{job_type}/start?dry_run=false&confirm_execute=true&limit={limit}{source_query}",
+            "required_execute_query": f"/api/v1/jobs/{job_type}/start?dry_run=false&confirm_execute=true&limit={limit}{source_query}{bin_query}{fingerprint_query}",
             "sources": sources or [],
+            "bins": bins or [],
+            "required_parameters": required_parameters,
+            "source_preview_query": "/api/v1/jobs/buildings_preview/start?dry_run=true" if job_type == "buildings" else None,
         },
         "rollback_strategy": "No job was queued. To execute, rerun with dry_run=false and confirm_execute=true after reviewing the preview.",
     }
@@ -172,7 +210,7 @@ async def _persist_job_record(
     finish: bool = False,
 ) -> None:
     sets = [
-        "config = CAST(:config AS JSONB)",
+        "config = COALESCE(CAST(config AS JSONB), '{}'::jsonb) || CAST(:config AS JSONB)",
         "updated_at = now()",
     ]
     params: dict[str, object] = {
@@ -217,7 +255,13 @@ async def _find_equivalent_inflight_job(
     ).fetchall()
     for row in rows:
         config = _parse_config(row[2])
-        if not config or "request" not in config or _extract_signature_from_config(job_type, config) == signature:
+        existing_signature = _extract_signature_from_config(job_type, config)
+        overlapping_scope = job_type in {"buildings", "buildings_preview"}
+        if job_type in {"dob_safety", "dob_safety_preview"}:
+            existing_bins = set(existing_signature["bins"])
+            requested_bins = set(signature.get("bins") or [])
+            overlapping_scope = not existing_bins or bool(existing_bins & requested_bins)
+        if overlapping_scope or not config or "request" not in config or existing_signature == signature:
             return {
                 "job_id": int(row[0]),
                 "status": _normalize_status(str(row[1])),
@@ -532,6 +576,8 @@ async def start_job(
     confirm_execute: bool = Query(default=False),
     cohort_filter: Optional[str] = Query(default=None),
     source: Optional[list[str]] = Query(default=None, description="Optional repeatable truth_materialization source filter."),
+    bins: Optional[list[str]] = Query(default=None, alias="bin", description="Repeatable exact DOB BINs for bounded compliance jobs, maximum 100."),
+    expected_source_fingerprint: Optional[str] = Query(default=None, description="SHA-256 fingerprint from the reviewed full buildings_preview result."),
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
@@ -543,6 +589,23 @@ async def start_job(
     selected_sources: list[str] = []
     original_job_type = job_type
     job_type = JOB_TYPE_ALIASES.get(job_type, job_type)
+    selected_bins = _normalize_pilot_bins(bins)
+    expected_source_fingerprint = expected_source_fingerprint if isinstance(expected_source_fingerprint, str) else None
+    if expected_source_fingerprint:
+        if job_type != "buildings" or not re.fullmatch(r"[a-f0-9]{64}", expected_source_fingerprint):
+            raise HTTPException(422, "expected_source_fingerprint must be the SHA-256 from a reviewed buildings preview")
+    if job_type == "buildings" and not dry_run and not expected_source_fingerprint:
+        raise HTTPException(422, "Building refresh execution requires expected_source_fingerprint from a reviewed full buildings_preview")
+    if selected_bins and job_type not in {"dob_safety", "dob_safety_preview"}:
+        raise HTTPException(400, "bin filters are only supported for compliance jobs")
+    if job_type in READ_ONLY_PREVIEW_JOB_TYPES:
+        if not dry_run or confirm_execute:
+            raise HTTPException(400, "Preview jobs require dry_run=true and confirm_execute=false")
+        config_preview_only = True
+    else:
+        config_preview_only = False
+    if job_type in {"dob_safety", "dob_safety_preview"} and (not dry_run or config_preview_only) and not selected_bins:
+        raise HTTPException(422, "Compliance ingestion requires an explicit pilot list of 1-100 DOB BINs")
     if source_filters and job_type != "truth_materialization":
         raise HTTPException(400, "source filters are only supported for truth_materialization jobs")
     if source_filters and job_type == "truth_materialization":
@@ -560,6 +623,7 @@ async def start_job(
         "smart_lists_evaluation", "entity_resolution", "quality_checks",
         "lead_generation", "lead_reconciliation", "building_coordinates",
         "board_chairs",
+        "buildings_preview", "dob_safety", "dob_safety_preview",
         "truth_validation", "truth_materialization",
     ]
     if job_type not in valid_types:
@@ -573,7 +637,17 @@ async def start_job(
         confirm_execute=confirm_execute,
         cohort_filter=cohort_filter,
         sources=selected_sources,
+        bins=selected_bins,
+        expected_source_fingerprint=expected_source_fingerprint,
     )
+    if config_preview_only:
+        config_payload.update({
+            "mode": "preview",
+            "dry_run": True,
+            "confirm_execute": False,
+            "write_permitted": False,
+            "business_data_mutations_planned": 0,
+        })
     if job_type == "entity_resolution":
         if not dry_run:
             if not confirm_execute:
@@ -621,6 +695,8 @@ async def start_job(
                 confirm_execute=confirm_execute,
                 operation="source_refresh" if job_type in SOURCE_REFRESH_JOB_TYPES else "job_execution",
                 sources=selected_sources,
+                bins=selected_bins,
+                expected_source_fingerprint=expected_source_fingerprint,
             )
         if not confirm_execute:
             raise HTTPException(400, f"{job_type} execution requires confirm_execute=true")
@@ -668,6 +744,7 @@ async def start_job(
         confirm_execute=confirm_execute,
         cohort_filter=cohort_filter,
         sources=selected_sources,
+        bins=selected_bins,
     )
     duplicate_job = await _find_equivalent_inflight_job(
         session,
@@ -743,14 +820,20 @@ async def start_job(
                 "dispatch_mode": dispatch_mode,
             }
 
-        if job_type == "buildings":
+        if job_type in {"buildings", "buildings_preview"}:
             from src.tasks.ingest import ingest_buildings_from_hpd
 
+            task_kwargs = {
+                "job_id": job_id,
+                "dry_run": config_preview_only,
+                "confirm_execute": not config_preview_only,
+                "expected_source_fingerprint": expected_source_fingerprint,
+            }
             dispatch_mode, fallback_used = await _dispatch_with_fallback(
                 job_type=job_type,
                 job_id=job_id,
-                primary_dispatch=lambda: ingest_buildings_from_hpd.delay(job_id=job_id),
-                fallback_dispatch=lambda: asyncio.create_task(asyncio.to_thread(ingest_buildings_from_hpd.run, job_id=job_id)),
+                primary_dispatch=lambda: ingest_buildings_from_hpd.delay(**task_kwargs),
+                fallback_dispatch=lambda: asyncio.create_task(asyncio.to_thread(ingest_buildings_from_hpd.run, **task_kwargs)),
             )
             await _record_dispatch_success(dispatch_mode, fallback_used)
             return {
@@ -759,6 +842,33 @@ async def start_job(
                 "requested_job_type": original_job_type,
                 "job_id": job_id,
                 "limit": limit,
+                "dispatch_mode": dispatch_mode,
+                "dry_run": config_preview_only,
+            }
+
+        if job_type in {"dob_safety", "dob_safety_preview"}:
+            from src.tasks.compliance import ingest_dob_safety
+
+            task_kwargs = {
+                "job_id": job_id,
+                "bins": selected_bins,
+                "dry_run": config_preview_only,
+                "confirm_execute": not config_preview_only,
+            }
+            dispatch_mode, fallback_used = await _dispatch_with_fallback(
+                job_type=job_type,
+                job_id=job_id,
+                primary_dispatch=lambda: ingest_dob_safety.delay(**task_kwargs),
+                fallback_dispatch=lambda: asyncio.create_task(asyncio.to_thread(ingest_dob_safety.run, **task_kwargs)),
+            )
+            await _record_dispatch_success(dispatch_mode, fallback_used)
+            return {
+                "status": "queued",
+                "job_type": job_type,
+                "requested_job_type": original_job_type,
+                "job_id": job_id,
+                "bins": selected_bins,
+                "dry_run": config_preview_only,
                 "dispatch_mode": dispatch_mode,
             }
 

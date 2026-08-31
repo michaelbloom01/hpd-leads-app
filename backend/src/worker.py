@@ -15,6 +15,7 @@ app = Celery(
     include=[
         "src.tasks.enrich",
         "src.tasks.ingest",
+        "src.tasks.compliance",
         "src.tasks.score",
         "src.tasks.smart_lists",
         "src.tasks.quality_checks",
@@ -38,4 +39,3 @@ app.conf.update(
 
 # Keep compatibility with Celery's module attribute discovery.
 celery = app
-

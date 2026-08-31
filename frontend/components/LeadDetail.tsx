@@ -7,6 +7,7 @@ import { fetchLeadTruthSummary, type LeadTruthSummary } from '../services/truth-
 import { PIPELINE_STAGES, OUTREACH_STATUSES, OUTREACH_METHODS, OUTREACH_OUTCOMES, formatCurrency } from '../utils/format';
 import { getLeadDisplayName } from '../utils/leads';
 import { assessContactConfidence } from '../utils/contactConfidence';
+import CompliancePanel from './CompliancePanel';
 import {
   formatClaimSubtitle,
   formatClaimTitle,
@@ -21,7 +22,7 @@ import {
 // Lazy-load map to avoid large initial bundle
 const PortfolioMap = lazy(() => import('./PortfolioMap'));
 
-type TabId = 'overview' | 'truth' | 'contacts' | 'pipeline' | 'buildings' | 'dd';
+type TabId = 'overview' | 'truth' | 'contacts' | 'pipeline' | 'buildings' | 'compliance' | 'dd';
 type EnrichmentPreviewState = {
   status?: string;
   message?: string;
@@ -561,6 +562,7 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
     { id: 'overview', label: 'Overview' },
     { id: 'buildings', label: `Portfolio (${visibleBuildingCount})` },
     { id: 'contacts', label: 'Contacts' },
+    { id: 'compliance', label: 'Compliance' },
     { id: 'pipeline', label: 'Outreach' },
     { id: 'truth', label: 'Sources' },
   ];
@@ -1595,6 +1597,10 @@ const LeadDetail: React.FC<Props> = ({ lead, onClose, onLeadUpdated }) => {
                 )}
               </div>
             </>
+          )}
+
+          {activeTab === 'compliance' && (
+            <CompliancePanel scope="portfolio" scopeId={enrichedLead.lead_id} />
           )}
 
           {/* TAB: DUE DILIGENCE */}

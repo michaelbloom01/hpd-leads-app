@@ -52,6 +52,7 @@ from src.routers.export_v1 import router as export_v1_router
 from src.routers.smart_lists import router as smart_lists_router
 from src.routers.building_lists import router as building_lists_router
 from src.routers.truth import router as truth_router
+from src.routers.compliance import router as compliance_router
 
 # Optional routers loaded conditionally.
 _optional_routers = []
@@ -196,6 +197,7 @@ app.include_router(export_v1_router)
 app.include_router(smart_lists_router)
 app.include_router(building_lists_router)
 app.include_router(truth_router)
+app.include_router(compliance_router)
 for r in _optional_routers:
     app.include_router(r)
 

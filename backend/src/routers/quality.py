@@ -28,6 +28,20 @@ from src.services.truth_health import is_truth_schema_current, load_truth_schema
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/quality", tags=["data-quality"])
 
+SUCCESSFUL_BUILDING_REFRESH_SQL = text("""
+    SELECT id, status, started_at, finished_at, succeeded, failed
+    FROM ingestion_jobs
+    WHERE (source IN ('hpd_buildings', 'buildings') OR job_type IN ('buildings', 'ingest'))
+      AND job_type NOT LIKE '%preview%'
+      AND status IN ('completed', 'succeeded')
+      AND finished_at IS NOT NULL
+      AND COALESCE(failed, 0) = 0
+      AND COALESCE(config->>'dry_run', config->'request'->>'dry_run', 'false') != 'true'
+      AND COALESCE(config->>'mode', '') NOT IN ('preview', 'dry_run')
+    ORDER BY finished_at DESC, id DESC
+    LIMIT 1
+""")
+
 __all__ = [
     "RUNNABLE_JOB_TYPES",
     "SOURCE_REGISTRY",
@@ -145,13 +159,8 @@ async def data_health(session: AsyncSession = Depends(get_session)):
     if total_buildings > 0:
         coverage_pct = round(buildings_with_signals / total_buildings * 100, 1)
 
-    refresh_row = await session.execute(text("""
-        SELECT id, status, started_at, finished_at, succeeded, failed
-        FROM ingestion_jobs
-        WHERE source IN ('hpd_buildings', 'buildings') OR job_type IN ('buildings', 'ingest')
-        ORDER BY started_at DESC NULLS LAST
-        LIMIT 1
-    """))
+    # A completed preview or failed attempt cannot advance published-data age.
+    refresh_row = await session.execute(SUCCESSFUL_BUILDING_REFRESH_SQL)
     refresh = refresh_row.first()
     last_refresh = None
     data_age_days = None

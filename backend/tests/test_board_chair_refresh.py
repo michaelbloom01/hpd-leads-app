@@ -59,12 +59,12 @@ class _AsyncSession:
 
 def test_building_snapshot_keeps_latest_registration_and_current_contacts():
     registrations = [
-        {"boroid": "3", "block": "1068", "lot": "37", "registrationid": "new", "housenumber": "9", "streetname": "PROSPECT PARK WEST"},
-        {"boroid": "3", "block": "1068", "lot": "37", "registrationid": "old", "housenumber": "9", "streetname": "PROSPECT PARK WEST"},
+        {"boroid": "3", "block": "1068", "lot": "37", "bin": "3024538", "buildingid": "278101", "registrationid": "200", "lastregistrationdate": "2026-07-09", "housenumber": "9", "streetname": "PROSPECT PARK WEST"},
+        {"boroid": "3", "block": "1068", "lot": "37", "bin": "3024538", "buildingid": "278101", "registrationid": "100", "lastregistrationdate": "2025-07-09", "housenumber": "9", "streetname": "PROSPECT PARK WEST"},
     ]
     contacts = [
-        {"registrationid": "new", "registrationcontactid": "1", "type": "CorporateOwner", "corporationname": "Park West Tenants Corp."},
-        {"registrationid": "old", "registrationcontactid": "2", "type": "HeadOfficer", "firstname": "Chris", "lastname": "Swensen"},
+        {"registrationid": "200", "registrationcontactid": "1", "type": "CorporateOwner", "corporationname": "Park West Tenants Corp."},
+        {"registrationid": "100", "registrationcontactid": "2", "type": "HeadOfficer", "firstname": "Chris", "lastname": "Swensen"},
     ]
     snapshot = _prepare_building_refresh_snapshot(
         registrations,
@@ -75,7 +75,7 @@ def test_building_snapshot_keeps_latest_registration_and_current_contacts():
     assert len(snapshot["buildings"]) == 1
     assert snapshot["buildings"][0]["bbl"] == "3010680037"
     assert snapshot["buildings"][0]["bldg_class"] == "D4"
-    assert snapshot["current_registration_by_bbl"]["3010680037"] == "new"
+    assert snapshot["current_registration_by_bbl"]["3010680037"] == "200"
     assert [row["contact_id"] for row in snapshot["contacts_by_bbl"]["3010680037"]] == ["1"]
 
 

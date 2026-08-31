@@ -3,6 +3,12 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import BuildingDetailPage from './BuildingDetailPage';
+const fetchComplianceMock = vi.fn();
+
+vi.mock('../services/compliance-api', async importOriginal => ({
+  ...await importOriginal<typeof import('../services/compliance-api')>(),
+  fetchCompliance: (...args: unknown[]) => fetchComplianceMock(...args),
+}));
 
 const fetchBuildingDetailMock = vi.fn();
 const fetchBuildingTimelineMock = vi.fn();
@@ -48,6 +54,7 @@ describe('BuildingDetailPage truth confidence', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    fetchComplianceMock.mockResolvedValue({ enabled: false, coverage: { status: 'disabled' }, buildings: [], warnings: [], provenance: [] });
     fetchBuildingDetailMock.mockResolvedValue({
       bbl: '1000000001',
       address: '100 Example Ave',
@@ -118,6 +125,8 @@ describe('BuildingDetailPage truth confidence', () => {
     );
 
     expect(await screen.findByText('Evidence Check')).toBeInTheDocument();
+    expect(await screen.findByText('Pilot paused')).toBeInTheDocument();
+    expect(fetchComplianceMock).toHaveBeenCalledWith('parcels', '1000000001', expect.any(AbortSignal));
     expect((await screen.findAllByText('82%')).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('Needs review')).toBeInTheDocument();
     expect(screen.getByText('Outreach-ready')).toBeInTheDocument();

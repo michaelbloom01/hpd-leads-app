@@ -22,6 +22,7 @@ import {
   visibleTruthClaims,
 } from '../utils/truthDisplay';
 import { toast } from 'react-hot-toast';
+import CompliancePanel from './CompliancePanel';
 
 const PortfolioMap = lazy(() => import('./PortfolioMap'));
 
@@ -603,6 +604,10 @@ const BuildingDetailPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      <div className="rounded-xl border border-gray-200 bg-white p-4 sm:p-5">
+        <CompliancePanel scope="parcels" scopeId={building.bbl} />
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Score Breakdown */}

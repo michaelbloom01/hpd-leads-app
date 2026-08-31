@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import LeadDetail from './LeadDetail';
 
@@ -15,6 +16,12 @@ const downloadPortfolioContactsWorkbookMock = vi.fn();
 const fetchBuildingsMock = vi.fn();
 const addBuildingToPipelineMock = vi.fn();
 const fetchLeadTruthSummaryMock = vi.fn();
+const fetchComplianceMock = vi.fn();
+
+vi.mock('../services/compliance-api', async importOriginal => ({
+  ...await importOriginal<typeof import('../services/compliance-api')>(),
+  fetchCompliance: (...args: unknown[]) => fetchComplianceMock(...args),
+}));
 
 vi.mock('react-hot-toast', () => ({
   toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }),
@@ -75,10 +82,13 @@ const lead = {
 } as const;
 
 function renderLeadDetail() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
-    <MemoryRouter>
-      <LeadDetail lead={lead as any} onClose={vi.fn()} onLeadUpdated={vi.fn()} />
-    </MemoryRouter>,
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <LeadDetail lead={lead as any} onClose={vi.fn()} onLeadUpdated={vi.fn()} />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -97,6 +107,7 @@ describe('LeadDetail outreach evidence safety', () => {
       sibling_leads: [],
     });
     fetchLeadTruthSummaryMock.mockResolvedValue(null);
+    fetchComplianceMock.mockResolvedValue({ enabled: false, coverage: { status: 'disabled' }, buildings: [], warnings: [], provenance: [] });
     fetchBuildingsMock.mockResolvedValue({ buildings: [] });
     fetchLeadContactsMock.mockResolvedValue({ buildings: [] });
     downloadPortfolioContactsWorkbookMock.mockResolvedValue({
@@ -109,6 +120,17 @@ describe('LeadDetail outreach evidence safety', () => {
     addOutreachAttemptMock.mockResolvedValue({ status: 'ok', attempt: {} });
     enrichLeadAllMock.mockResolvedValue({ status: 'approval_required', message: 'Preview only' });
     estimateLeadRevenueMock.mockResolvedValue(lead);
+  });
+
+  it('embeds compliance in the company workflow and fetches only when opened', async () => {
+    renderLeadDetail();
+    const tab = await screen.findByRole('button', { name: 'Compliance' });
+    expect(fetchComplianceMock).not.toHaveBeenCalled();
+    fireEvent.click(tab);
+    expect(await screen.findByText('Pilot paused')).toBeInTheDocument();
+    expect(fetchComplianceMock).toHaveBeenCalledWith('portfolio', 'lead-1', expect.any(AbortSignal));
+    fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+    expect(screen.getByText('What To Do Next')).toBeInTheDocument();
   });
 
   it('opens email templates without recording false sent-email outreach evidence', async () => {
