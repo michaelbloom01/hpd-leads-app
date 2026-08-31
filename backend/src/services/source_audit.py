@@ -13,7 +13,7 @@ RUNNABLE_JOB_TYPES = {
     "dob_permits", "hpd_litigation", "emergency_repairs", "aep",
     "evictions", "energy", "facades", "pad", "scoring", "enrichment",
     "building_coordinates", "board_chairs", "truth_validation", "outreach_feedback",
-    "dob_safety", "dob_complaints", "dob_violations", "dob_ecb",
+    "dob_safety", "dob_complaints", "dob_violations", "dob_ecb", "oath_ecb",
 }
 
 SOURCE_REGISTRY = [
@@ -29,6 +29,7 @@ SOURCE_REGISTRY = [
     {"source_name": "dob_complaints", "dataset_id": "eabe-havv", "table_name": "compliance_records", "job_type": "dob_complaints", "ui_surface": "lead_compliance+building_compliance", "stale_after_days": 3, "coverage_scope": "explicit BIN pilot", "required_parameters": ["bin"]},
     {"source_name": "dob_violations", "dataset_id": "3h2n-5cm9", "table_name": "compliance_records", "job_type": "dob_violations", "ui_surface": "lead_compliance+building_compliance", "stale_after_days": 3, "coverage_scope": "explicit BIN pilot", "required_parameters": ["bin"]},
     {"source_name": "dob_ecb", "dataset_id": "6bgk-3dad", "table_name": "compliance_records", "job_type": "dob_ecb", "ui_surface": "lead_compliance+building_compliance", "stale_after_days": 3, "coverage_scope": "explicit BIN pilot", "required_parameters": ["bin"]},
+    {"source_name": "oath_ecb", "dataset_id": "jz4z-kudi", "table_name": "compliance_records", "job_type": "oath_ecb", "ui_surface": "lead_compliance+building_compliance", "stale_after_days": 3, "coverage_scope": "exact OATH tickets derived from explicit DOB ECB BIN pilot", "required_parameters": ["bin"]},
     {"source_name": "hpd_litigation", "dataset_id": "59kj-x8nc", "table_name": "hpd_litigation", "job_type": "hpd_litigation", "ui_surface": "building_timeline+churn"},
     {"source_name": "emergency_repairs", "dataset_id": "24cj-meh5", "table_name": "emergency_repairs", "job_type": "emergency_repairs", "ui_surface": "churn_only"},
     {"source_name": "aep_designations", "dataset_id": "hcir-3275", "table_name": "aep_designations", "job_type": "aep", "ui_surface": "churn_only"},
@@ -173,7 +174,7 @@ def build_source_refresh_plan(source_audit: dict[str, Any]) -> dict[str, Any]:
         item["job_start_endpoint"] = None if item["blocked"] else f"/api/v1/jobs/{item['job_type']}/start"
         item["preview_endpoint"] = None if item["blocked"] else f"/api/v1/jobs/{item['job_type']}/start"
         item["execute_endpoint"] = None if item["blocked"] else f"/api/v1/jobs/{item['job_type']}/start?dry_run=false&confirm_execute=true"
-        if item["job_type"] in {"dob_safety", "dob_complaints", "dob_violations", "dob_ecb"} and not item["blocked"]:
+        if item["job_type"] in {"dob_safety", "dob_complaints", "dob_violations", "dob_ecb", "oath_ecb"} and not item["blocked"]:
             item["recommended_action"] = f"Select 1-25 exact DOB BINs, run {item['job_type']}_preview, then execute the reviewed pilot scope."
             item["source_preview_endpoint"] = f"/api/v1/jobs/{item['job_type']}_preview/start?dry_run=true"
             item["required_parameters"] = ["bin"]

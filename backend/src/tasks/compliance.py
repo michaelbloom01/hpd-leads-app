@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from sqlalchemy import text
 
-from src.ingest import dob_complaints, dob_ecb, dob_violations
+from src.ingest import dob_complaints, dob_ecb, dob_violations, oath_ecb
 from src.ingest.dob_safety import (
     SOURCE_SYSTEM,
     DOBSafetyClient,
@@ -94,6 +94,26 @@ def ingest_dob_ecb(
         source_system=dob_ecb.SOURCE_SYSTEM,
         client=dob_ecb.DOBECBClient(),
         normalizer=dob_ecb.normalize_record,
+        job_id=job_id,
+        bins=bins,
+        dry_run=dry_run,
+        confirm_execute=confirm_execute,
+    )
+
+
+@celery_app.task(bind=True, name="src.tasks.compliance.ingest_oath_ecb")
+def ingest_oath_ecb(
+    self,
+    job_id: int | None = None,
+    bins: list[str] | None = None,
+    dry_run: bool = True,
+    confirm_execute: bool = False,
+):
+    bins = oath_ecb.validate_bins(bins)
+    return _ingest_source(
+        source_system=oath_ecb.SOURCE_SYSTEM,
+        client=oath_ecb.OATHFromDOBECBClient(),
+        normalizer=oath_ecb.normalize_record,
         job_id=job_id,
         bins=bins,
         dry_run=dry_run,

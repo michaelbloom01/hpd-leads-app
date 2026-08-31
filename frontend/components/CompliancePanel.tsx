@@ -29,6 +29,12 @@ export function formatComplianceMoney(cents: number | null | undefined): string 
   }).format(cents / 100);
 }
 
+function formatSignedComplianceMoney(cents: number | null | undefined): string {
+  if (cents == null || !Number.isSafeInteger(cents)) return 'Unavailable';
+  const amount = formatComplianceMoney(Math.abs(cents));
+  return cents < 0 ? `${amount} credit or adjustment` : amount;
+}
+
 function dateLabel(value: string | null | undefined): string {
   if (!value) return 'Unavailable';
   const date = new Date(value);
@@ -37,7 +43,7 @@ function dateLabel(value: string | null | undefined): string {
 }
 
 function sourceLabel(value: string): string {
-  return ({ dob_safety: 'DOB Safety', dob_complaints: 'DOB complaints', dob_violations: 'Legacy DOB violations', dob_ecb: 'DOB ECB', dob_unpaid_violations: 'DOB unpaid-violation ledger' } as Record<string, string>)[value]
+  return ({ dob_safety: 'DOB Safety', dob_complaints: 'DOB complaints', dob_violations: 'Legacy DOB violations', dob_ecb: 'DOB ECB', oath_ecb: 'OATH case status', dob_unpaid_violations: 'DOB unpaid-violation ledger' } as Record<string, string>)[value]
     || value.replace(/_/g, ' ');
 }
 
@@ -85,6 +91,7 @@ function Field({ label, children, wide = false }: { label: string; children: Rea
 function RecordDetails({ record, evidence }: { record: ComplianceRecord; evidence: boolean }) {
   const complaint = record.record_type === 'complaint';
   const ecb = record.source_system === 'dob_ecb';
+  const oath = record.source_system === 'oath_ecb';
   return <article className="border-t border-gray-200 pt-4 first:border-0 first:pt-0">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h4 className="text-sm font-semibold text-gray-900">{complaint ? `Complaint: ${record.complaint_category_label || record.complaint_category || 'Category unavailable'}` : record.device_type || record.category || 'DOB compliance record'}</h4>
@@ -113,6 +120,19 @@ function RecordDetails({ record, evidence }: { record: ComplianceRecord; evidenc
           <Field label="ECB balance due">{record.balance_due_cents == null ? 'Unavailable' : formatComplianceMoney(record.balance_due_cents)}</Field>
           <Field label="Portfolio subtotal">Excluded pending ECB/OATH duplicate review</Field>
         </> : null}
+        {oath ? <>
+          <Field label="Linked DOB ECB ticket">{record.linked_dob_ecb_violation_number || 'Unavailable'}</Field>
+          <Field label="Hearing date">{dateLabel(record.hearing_date)}</Field>
+          <Field label="Hearing status">{record.hearing_status || 'Unavailable'}</Field>
+          <Field label="Hearing result">{record.hearing_result || 'Unavailable'}</Field>
+          <Field label="Compliance status">{record.compliance_status || 'Unavailable'}</Field>
+          <Field label="Judgment docketed">{dateLabel(record.judgment_docketed_date)}</Field>
+          <Field label="Penalty imposed">{record.penalty_imposed_cents == null ? 'Unavailable' : formatComplianceMoney(record.penalty_imposed_cents)}</Field>
+          <Field label="Paid amount">{record.amount_paid_cents == null ? 'Unavailable' : formatComplianceMoney(record.amount_paid_cents)}</Field>
+          <Field label="Late fees or added penalties">{record.additional_penalties_cents == null ? 'Unavailable' : formatComplianceMoney(record.additional_penalties_cents)}</Field>
+          <Field label="OATH balance or credit">{formatSignedComplianceMoney(record.oath_balance_due_cents)}</Field>
+          <Field label="Portfolio subtotal">Excluded pending cross-source duplicate review</Field>
+        </> : null}
       </>}
       {record.description ? <Field label="Source remarks" wide>{record.description}</Field> : null}
       {evidence ? <>
@@ -136,7 +156,7 @@ function BuildingDetails({ building, evidence }: { building: ComplianceBuilding;
   const [visibleCount, setVisibleCount] = useState(10);
   const hasBalance = building.reported_balance_cents != null;
   const staleBalance = balanceIsStale(building);
-  const active = building.records.filter(record => record.status?.toLowerCase() === 'active');
+  const active = building.records.filter(record => record.record_type === 'violation' && record.status?.toLowerCase() === 'active');
   const complaints = building.records.filter(record => record.record_type === 'complaint');
   const selectedRecords = recordFilter === 'active' ? active : recordFilter === 'complaint' ? complaints : building.records;
   return <div className="space-y-4 p-4">

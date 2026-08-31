@@ -37,6 +37,7 @@ SOURCE_REFRESH_JOB_TYPES = {
     "dob_complaints",
     "dob_violations",
     "dob_ecb",
+    "oath_ecb",
     "hpd_identity_pilot",
 }
 READ_ONLY_PREVIEW_JOB_TYPES = {
@@ -45,6 +46,7 @@ READ_ONLY_PREVIEW_JOB_TYPES = {
     "dob_complaints_preview",
     "dob_violations_preview",
     "dob_ecb_preview",
+    "oath_ecb_preview",
     "hpd_identity_pilot_preview",
 }
 BOUNDED_PILOT_JOB_TYPES = {
@@ -56,6 +58,8 @@ BOUNDED_PILOT_JOB_TYPES = {
     "dob_violations_preview",
     "dob_ecb",
     "dob_ecb_preview",
+    "oath_ecb",
+    "oath_ecb_preview",
     "hpd_identity_pilot",
     "hpd_identity_pilot_preview",
 }
@@ -227,6 +231,7 @@ def _approval_preview_response(
                     "dob_complaints",
                     "dob_violations",
                     "dob_ecb",
+                    "oath_ecb",
                 }
                 else None
             ),
@@ -663,6 +668,7 @@ async def start_job(
         "dob_complaints", "dob_complaints_preview",
         "dob_violations", "dob_violations_preview",
         "dob_ecb", "dob_ecb_preview",
+        "oath_ecb", "oath_ecb_preview",
         "hpd_identity_pilot", "hpd_identity_pilot_preview",
         "truth_validation", "truth_materialization",
     ]
@@ -897,6 +903,8 @@ async def start_job(
                 )
             elif job_type.startswith("dob_ecb"):
                 from src.tasks.compliance import ingest_dob_ecb as pilot_task
+            elif job_type.startswith("oath_ecb"):
+                from src.tasks.compliance import ingest_oath_ecb as pilot_task
             else:
                 from src.tasks.compliance import ingest_dob_safety as pilot_task
 

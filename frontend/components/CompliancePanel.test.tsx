@@ -116,6 +116,33 @@ describe('CompliancePanel evidence and identity safety', () => {
     expect(screen.getByText('$20,000')).toBeInTheDocument();
   });
 
+  it('shows exact-ticket OATH judgment evidence and labels signed credits safely', async () => {
+    const data = response();
+    data.buildings[0].records.push({
+      ...data.buildings[0].records[0],
+      id: 'oath-record', source_system: 'oath_ecb', source_record_key: '035299129H',
+      record_type: 'case_evidence', category: 'OATH_ECB_CASE', device_type: 'OATH case status',
+      status: 'resolved', linked_dob_ecb_violation_number: '35299129H',
+      hearing_date: '2018-10-18', hearing_status: 'PAID IN FULL', hearing_result: 'IN VIOLATION',
+      compliance_status: 'All Terms Met', judgment_docketed_date: '2019-01-31',
+      penalty_imposed_cents: 250000, amount_paid_cents: 255200,
+      additional_penalties_cents: 0, oath_balance_due_cents: -5309,
+      oath_balance_character: 'credit_or_adjustment',
+      monetary_rollup_status: 'record_only_exact_oath_ticket_evidence',
+      identity_status: 'linked_via_exact_ticket',
+    });
+    fetchComplianceMock.mockResolvedValue(data);
+    renderPanel();
+    fireEvent.click(await screen.findByRole('button', { name: 'All records (2)' }));
+    expect(screen.getByText('035299129H')).toBeInTheDocument();
+    expect(screen.getByText('35299129H')).toBeInTheDocument();
+    expect(screen.getByText('Judgment docketed')).toBeInTheDocument();
+    expect(screen.getByText('Jan 31, 2019')).toBeInTheDocument();
+    expect(screen.getByText('$53.09 credit or adjustment')).toBeInTheDocument();
+    expect(screen.getByText('Excluded pending cross-source duplicate review')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Active at source (1)' })).toBeInTheDocument();
+  });
+
   it('loads long saved histories in batches and resets the batch on filter change', async () => {
     const data = response();
     data.buildings[0].records = Array.from({ length: 12 }, (_, index) => ({ ...data.buildings[0].records[0], id: `record-${index}`, source_record_key: `RECORD-${index}`, status: 'CLOSED' }));

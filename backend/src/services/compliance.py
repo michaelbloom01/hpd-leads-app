@@ -9,7 +9,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from src.ingest import dob_complaints, dob_ecb, dob_violations
+from src.ingest import dob_complaints, dob_ecb, dob_violations, oath_ecb
 from src.ingest.dob_safety import (
     DATASET_URL,
     SOURCE_SYSTEM,
@@ -44,6 +44,11 @@ SOURCE_CONFIG = {
         "url": dob_ecb.DATASET_URL,
         "normalize": dob_ecb.normalize_record,
         "validate_bins": dob_ecb.validate_bins,
+    },
+    oath_ecb.SOURCE_SYSTEM: {
+        "url": oath_ecb.DATASET_URL,
+        "normalize": oath_ecb.normalize_record,
+        "validate_bins": oath_ecb.validate_bins,
     },
 }
 SCHEMA_TABLES = (
@@ -264,6 +269,8 @@ def build_response(
                 value.update(dob_violations.violation_details(raw_payload))
             elif value.get("source_system") == dob_ecb.SOURCE_SYSTEM:
                 value.update(dob_ecb.ecb_details(raw_payload))
+            elif value.get("source_system") == oath_ecb.SOURCE_SYSTEM:
+                value.update(oath_ecb.oath_details(raw_payload))
             record_check = check_map.get(
                 (value.get("source_system", SOURCE_SYSTEM), bin_value)
             )

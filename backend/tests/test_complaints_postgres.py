@@ -72,7 +72,7 @@ def test_postgres_complaints_publish_idempotently_with_independent_checks(
         )
         assert response["coverage"]["checked_building_count"] == 1
         assert response["reported_balance_cents"] is None
-        assert len(response["buildings"][0]["source_checks"]) == 4
+        assert len(response["buildings"][0]["source_checks"]) == 5
         registration = response["buildings"][0]["hpd_registration"]
         assert registration["registration_id"] == "378111"
         assert registration["source_url"].startswith("https://data.cityofnewyork.us/")
@@ -118,6 +118,7 @@ def test_postgres_portfolio_retains_94_parcel_denominator_with_four_mapped_bins(
         assert coverage["dob_complaints"]["status"] == "partial"
         assert coverage["dob_violations"]["status"] == "not_checked"
         assert coverage["dob_ecb"]["status"] == "not_checked"
+        assert coverage["oath_ecb"]["status"] == "not_checked"
         assert response["source_coverage"][1]["records_count"] == 0
         assert response["source_coverage"][1]["checked_building_count"] == 4
 

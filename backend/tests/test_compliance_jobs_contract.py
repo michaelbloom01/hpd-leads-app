@@ -136,7 +136,16 @@ async def test_building_default_gate_explains_actual_source_preview():
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("job_type", ["dob_complaints_preview", "dob_violations_preview", "dob_ecb_preview", "hpd_identity_pilot_preview"])
+@pytest.mark.parametrize(
+    "job_type",
+    [
+        "dob_complaints_preview",
+        "dob_violations_preview",
+        "dob_ecb_preview",
+        "oath_ecb_preview",
+        "hpd_identity_pilot_preview",
+    ],
+)
 async def test_new_pilot_previews_dispatch_bounded_scope(monkeypatch, job_type):
     dispatched = []
     task = SimpleNamespace(delay=lambda **kwargs: dispatched.append(kwargs))
@@ -146,8 +155,10 @@ async def test_new_pilot_previews_dispatch_bounded_scope(monkeypatch, job_type):
         monkeypatch.setitem(sys.modules, "src.tasks.compliance", SimpleNamespace(ingest_dob_complaints=task))
     elif job_type.startswith("dob_violations"):
         monkeypatch.setitem(sys.modules, "src.tasks.compliance", SimpleNamespace(ingest_dob_violations=task))
-    else:
+    elif job_type.startswith("dob_ecb"):
         monkeypatch.setitem(sys.modules, "src.tasks.compliance", SimpleNamespace(ingest_dob_ecb=task))
+    else:
+        monkeypatch.setitem(sys.modules, "src.tasks.compliance", SimpleNamespace(ingest_oath_ecb=task))
     response = await jobs.start_job(job_type=job_type, limit=25, bins=["3348179"], session=Session(), user=AuthUser(user_id="u1", email="test@example.com"))
     assert response["status"] == "queued"
     assert dispatched[0]["bins"] == ["3348179"]

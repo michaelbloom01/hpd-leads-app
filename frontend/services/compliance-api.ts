@@ -46,6 +46,17 @@ export interface ComplianceRecord {
   amount_paid_cents?: number | null;
   balance_due_cents?: number | null;
   monetary_rollup_status?: string | null;
+  oath_ticket_number?: string | null;
+  linked_dob_ecb_violation_number?: string | null;
+  issuing_agency?: string | null;
+  hearing_result?: string | null;
+  compliance_status?: string | null;
+  decision_date?: string | null;
+  judgment_docketed_date?: string | null;
+  additional_penalties_cents?: number | null;
+  total_violation_amount_cents?: number | null;
+  oath_balance_due_cents?: number | null;
+  oath_balance_character?: 'unknown' | 'amount_due' | 'credit_or_adjustment' | 'zero' | null;
 }
 
 export interface ComplianceSourceCoverage {
@@ -164,6 +175,10 @@ function validMoney(value: unknown): boolean {
   return value === null || validCount(value);
 }
 
+function validSignedMoney(value: unknown): boolean {
+  return value === null || typeof value === 'number' && Number.isSafeInteger(value);
+}
+
 function nullableText(value: unknown): boolean {
   return value === null || typeof value === 'string';
 }
@@ -194,6 +209,9 @@ function validResponse(value: unknown): value is ComplianceResponse {
       && typeof record.observed_at === 'string'
       && typeof record.record_type === 'string'
       && ['complaint_number', 'complaint_category', 'complaint_category_label', 'received_date', 'inspection_date', 'disposition_date', 'disposition_code', 'disposition_code_label', 'source_run_date', 'category_codebook_url', 'category_codebook_revision', 'disposition_codebook_url', 'disposition_codebook_revision'].every(key => record[key] === undefined || nullableText(record[key]))
+      && ['ecb_violation_number', 'dob_violation_number', 'served_date', 'hearing_date', 'hearing_status', 'certification_status', 'severity', 'respondent_name', 'monetary_rollup_status', 'oath_ticket_number', 'linked_dob_ecb_violation_number', 'issuing_agency', 'hearing_result', 'compliance_status', 'decision_date', 'judgment_docketed_date', 'oath_balance_character'].every(key => record[key] === undefined || nullableText(record[key]))
+      && ['penalty_imposed_cents', 'amount_paid_cents', 'balance_due_cents', 'additional_penalties_cents', 'total_violation_amount_cents'].every(key => record[key] === undefined || validMoney(record[key]))
+      && (record.oath_balance_due_cents === undefined || validSignedMoney(record.oath_balance_due_cents))
       && (record.date_parse_warnings === undefined || Array.isArray(record.date_parse_warnings) && record.date_parse_warnings.every(item => typeof item === 'string'))
       && typeof record.stale === 'boolean')
     && (building.source_checks === undefined || Array.isArray(building.source_checks) && building.source_checks.every(check => isObject(check)

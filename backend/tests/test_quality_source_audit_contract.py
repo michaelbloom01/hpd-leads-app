@@ -20,12 +20,19 @@ def test_compliance_sources_are_registered_as_bounded_refreshes():
     by_name = {source["source_name"]: source for source in SOURCE_REGISTRY}
     assert {
         name: (by_name[name]["dataset_id"], by_name[name]["required_parameters"])
-        for name in ("dob_safety", "dob_complaints", "dob_violations", "dob_ecb")
+        for name in (
+            "dob_safety",
+            "dob_complaints",
+            "dob_violations",
+            "dob_ecb",
+            "oath_ecb",
+        )
     } == {
         "dob_safety": ("855j-jady", ["bin"]),
         "dob_complaints": ("eabe-havv", ["bin"]),
         "dob_violations": ("3h2n-5cm9", ["bin"]),
         "dob_ecb": ("6bgk-3dad", ["bin"]),
+        "oath_ecb": ("jz4z-kudi", ["bin"]),
     }
 
 
