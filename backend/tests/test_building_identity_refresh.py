@@ -296,6 +296,22 @@ def test_preview_reports_exact_diff_without_any_business_write(monkeypatch):
     assert preview["ready_to_execute"] is True
 
 
+def test_preview_retires_prior_registration_contacts_only_with_exact_stored_identity(monkeypatch):
+    class Session(_PreviewSession):
+        def execute(self, statement, params=None):
+            if "FROM hpd_registration_snapshots" in str(statement):
+                return _Result(rows=[{
+                    "hpd_building_id": "822087", "bin": "3348179", "bbl": "3025217501", "registration_id": "123456",
+                }])
+            return super().execute(statement, params)
+
+    snapshot = ingest._prepare_building_refresh_snapshot(_green_rows(), _green_contacts(), [])
+    monkeypatch.setattr(ingest, "_validate_building_refresh_snapshot", lambda stats: [])
+    preview = ingest.preview_building_refresh(Session(), snapshot)
+    assert preview["diff"]["historical_registration_scopes_added"] == 1
+    assert "123456" in snapshot["replacement_registration_ids_by_bbl"]["3025217501"]
+
+
 def test_publication_code_has_one_complete_generation_boundary():
     import inspect
 

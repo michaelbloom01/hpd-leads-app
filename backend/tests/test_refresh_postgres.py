@@ -151,3 +151,29 @@ def test_real_postgres_compliance_publish_and_all_scope_reads(database, monkeypa
             assert response["coverage"]["physical_building_count"] == count
             assert response["coverage"]["active_records_count"] == count
             assert response["reported_balance_cents"] is None
+
+
+def test_real_postgres_registration_rollover_retires_only_exact_prior_hpd_contacts(database, monkeypatch):
+    ingest.ingest_buildings_from_hpd.run(
+        dry_run=False, confirm_execute=True, expected_source_fingerprint="a" * 64,
+    )
+    rows = [{**row, "registrationid": str(500001 + index)} for index, row in enumerate(_green_rows())]
+    contacts = [
+        {**row, "registrationid": str(500001 + index), "registrationcontactid": str(19000 + index)}
+        for index, row in enumerate(_green_contacts())
+    ]
+    refreshed = ingest._prepare_building_refresh_snapshot(rows, contacts, [])
+    refreshed["stats"]["source_fingerprint"] = "b" * 64
+    monkeypatch.setattr(ingest, "fetch_building_refresh_snapshot", lambda: refreshed)
+    ingest.ingest_buildings_from_hpd.run(
+        dry_run=False, confirm_execute=True, expected_source_fingerprint="b" * 64,
+    )
+    current = database.execute(text("""
+        SELECT registration_contact_id, contact_type FROM building_contacts
+        WHERE bbl = '3025217501'
+    """)).all()
+    assert len(current) == 6
+    assert {row[0] for row in current} == {None, "7777", "19000", "19001", "19002", "19003"}
+    assert (None, "BoardHead") in current
+    assert database.execute(text("SELECT count(*) FROM building_parcel_links WHERE is_current")).scalar_one() == 4
+    assert database.execute(text("SELECT count(*) FROM hpd_registration_snapshots WHERE is_current")).scalar_one() == 4

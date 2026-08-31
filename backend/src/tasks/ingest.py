@@ -693,6 +693,7 @@ def preview_building_refresh(session: Session, snapshot: dict) -> dict:
         "existing_parcels": 0, "new_parcels": 0, "legacy_bin_corrections": 0,
         "hpd_contact_rows_to_replace": 0, "hpd_contact_rows_to_insert": snapshot["stats"]["current_contacts"],
         "persisted_identity_conflicts": 0, "identity_conflict_samples": [],
+        "historical_registration_scopes_added": 0, "preserved_prior_lot_contact_scopes": 0,
         "bin_correction_samples": [], "quarantine_samples": [
             {"source_record_key": row["source_record_key"], "reason": row["reason"]}
             for row in snapshot["quarantine"][:20]
@@ -705,6 +706,25 @@ def preview_building_refresh(session: Session, snapshot: dict) -> dict:
         FROM unnest(ARRAY['physical_buildings','building_parcel_links','hpd_registration_snapshots',
                          'building_identity_quarantine','hpd_refresh_rollback_rows']) AS t(name)
     """)).scalar())
+    existing_identity_rows = list(session.execute(text("""
+        SELECT DISTINCT hpd_building_id, bin, bbl, registration_id FROM hpd_registration_snapshots
+        WHERE is_current = true AND identity_status = 'official_hpd'
+    """)).mappings()) if schema_ready else []
+    current_source_by_hpd = {
+        row["hpd_building_id"]: row for row in snapshot["registration_snapshots"]
+        if row["is_current"] and row["registration_id"] in snapshot["replacement_registration_ids_by_bbl"].get(row["bbl"], [])
+    }
+    for previous in existing_identity_rows:
+        current = current_source_by_hpd.get(previous["hpd_building_id"])
+        if not current or current["bin"] != previous["bin"]:
+            continue
+        if current["bbl"] != previous["bbl"]:
+            diff["preserved_prior_lot_contact_scopes"] += 1
+            continue
+        scoped_ids = snapshot["replacement_registration_ids_by_bbl"].setdefault(current["bbl"], [])
+        if previous["registration_id"] not in scoped_ids:
+            scoped_ids.append(previous["registration_id"])
+            diff["historical_registration_scopes_added"] += 1
     for offset in range(0, len(buildings), BUILDING_REFRESH_BATCH_SIZE):
         batch = buildings[offset:offset + BUILDING_REFRESH_BATCH_SIZE]
         bbls = [row["bbl"] for row in batch]
@@ -728,12 +748,8 @@ def preview_building_refresh(session: Session, snapshot: dict) -> dict:
             text("SELECT count(*) FROM building_contacts bc WHERE " + CONTACT_REFRESH_SCOPE_SQL), scope_params,
         ).scalar() or 0)
     if schema_ready:
-        rows = session.execute(text("""
-            SELECT DISTINCT hpd_building_id, bin FROM hpd_registration_snapshots
-            WHERE is_current = true AND identity_status = 'official_hpd'
-        """)).mappings()
         accepted_by_bin = {bin_value: hpd_id for hpd_id, bin_value in accepted_identity.items()}
-        for row in rows:
+        for row in existing_identity_rows:
             candidate = accepted_identity.get(row["hpd_building_id"])
             candidate_hpd_id = accepted_by_bin.get(row["bin"])
             if (candidate and candidate != row["bin"]) or (candidate_hpd_id and candidate_hpd_id != row["hpd_building_id"]):

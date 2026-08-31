@@ -149,6 +149,28 @@ def test_four_buildings_one_parcel_and_null_balances():
     )
 
 
+@pytest.mark.parametrize("scope_type", ["portfolio", "parcel", "building"])
+def test_saved_management_membership_warning_is_portfolio_only(scope_type):
+    inputs = response_inputs()
+    inputs["scope"] = {"type": scope_type, "id": "test-scope"}
+    result = build_response(**inputs)
+    membership_warnings = [
+        warning
+        for warning in result["warnings"]
+        if "saved management links marked current" in warning
+    ]
+    assert bool(membership_warnings) is (scope_type == "portfolio")
+    if scope_type == "portfolio":
+        assert (
+            "Verify company membership separately after an HPD source refresh"
+            in membership_warnings[0]
+        )
+        assert (
+            "Management at the violation date remains unverified"
+            in membership_warnings[0]
+        )
+
+
 def test_four_category_balances_total_twenty_thousand():
     inputs = response_inputs()
     inputs["balances"] = [balance(row[1]) for row in GREEN]

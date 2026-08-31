@@ -291,7 +291,7 @@ def build_response(
         )
     if scope["type"] == "portfolio":
         warnings.append(
-            "Portfolio membership follows current HPD registration links. It does not establish who managed a building when a violation arose."
+            "Portfolio scope uses saved management links marked current. Verify company membership separately after an HPD source refresh. Management at the violation date remains unverified."
         )
     if reported_total > 9_007_199_254_740_991:
         warnings.append(
