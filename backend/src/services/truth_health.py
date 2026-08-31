@@ -16,7 +16,6 @@ from src.services.truth_adjudication import load_claim_adjudication_preview
 from src.services.truth_materialization import materialize_truth_claims
 from src.services.truth_program import GOLDEN_CASE_SEEDS, preview_adversarial_validation
 
-
 DEFAULT_TRUST_THRESHOLDS: dict[str, int | float] = {
     "minimum_claim_count": 1,
     "maximum_conflicting_claim_ratio": 0.05,
@@ -25,6 +24,12 @@ DEFAULT_TRUST_THRESHOLDS: dict[str, int | float] = {
     "minimum_evaluable_golden_cases": 1,
 }
 EXPECTED_TRUTH_ALEMBIC_REVISION = "010_truth_manifest"
+# These additive descendants retain the required truth schema. Extend only after
+# reviewing the migration lineage and asserting it in test_truth_schema_lineage.
+VERIFIED_TRUTH_ALEMBIC_DESCENDANTS = frozenset({
+    "011_building_identity",
+    "012_compliance",
+})
 REQUIRED_TRUTH_TABLES = [
     "truth_claims",
     "truth_evidence",
@@ -38,6 +43,11 @@ REQUIRED_TRUTH_TABLES = [
 
 def is_truth_schema_current(schema_status: dict[str, Any] | None) -> bool:
     return bool(schema_status and schema_status.get("ready") and schema_status.get("migration_current"))
+
+
+def truth_revision_includes_expected(revision: str | None) -> bool:
+    """Recognize the required migration and explicitly verified descendants."""
+    return revision == EXPECTED_TRUTH_ALEMBIC_REVISION or revision in VERIFIED_TRUTH_ALEMBIC_DESCENDANTS
 
 
 ACTIONABILITY_MEANINGS = {
@@ -248,18 +258,25 @@ async def load_truth_schema_status(session: AsyncSession) -> dict[str, Any]:
         text("SELECT to_regclass('alembic_version') IS NOT NULL AS exists")
     )).first()
     alembic_table_exists = bool(alembic_table_row.exists) if alembic_table_row else False
-    current_revision = None
+    current_revisions: list[str] = []
     if alembic_table_exists:
-        revision_row = (await session.execute(
-            text("SELECT version_num FROM alembic_version ORDER BY version_num DESC LIMIT 1")
-        )).first()
-        current_revision = str(revision_row.version_num) if revision_row and revision_row.version_num else None
+        revision_rows = await session.execute(
+            text("SELECT version_num FROM alembic_version ORDER BY version_num")
+        )
+        current_revisions = [str(row.version_num) for row in revision_rows if row.version_num]
+    # A branch/multiple-head state needs lineage review instead of selecting one
+    # lexicographically and silently ignoring an unverified migration branch.
+    current_revision = current_revisions[0] if len(current_revisions) == 1 else None
 
     missing_tables = [table_name for table_name, exists in table_status.items() if not exists]
     truth_tables_ready = not missing_tables
-    expected_revision_applied = current_revision == EXPECTED_TRUTH_ALEMBIC_REVISION
-    if expected_revision_applied:
+    expected_revision_applied = truth_revision_includes_expected(current_revision)
+    if current_revision == EXPECTED_TRUTH_ALEMBIC_REVISION:
         revision_status = "expected"
+    elif expected_revision_applied:
+        revision_status = "verified_descendant"
+    elif len(current_revisions) > 1:
+        revision_status = "multiple_heads_require_review"
     elif truth_tables_ready:
         revision_status = "schema_present_revision_differs"
     else:
@@ -268,6 +285,7 @@ async def load_truth_schema_status(session: AsyncSession) -> dict[str, Any]:
         "ready": truth_tables_ready,
         "expected_revision": EXPECTED_TRUTH_ALEMBIC_REVISION,
         "current_revision": current_revision,
+        "current_revisions": current_revisions,
         "migration_current": expected_revision_applied,
         "expected_revision_applied": expected_revision_applied,
         "truth_tables_ready": truth_tables_ready,

@@ -14,8 +14,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.db.session import get_session_factory, shutdown_engine  # noqa: E402
-from src.services.truth_health import EXPECTED_TRUTH_ALEMBIC_REVISION, load_truth_schema_status  # noqa: E402
+from src.db.session import get_session_factory, shutdown_engine
+from src.services.truth_health import (
+    EXPECTED_TRUTH_ALEMBIC_REVISION,
+    load_truth_schema_status,
+    truth_revision_includes_expected,
+)
 
 
 def _run_alembic(*args: str) -> dict[str, Any]:
@@ -60,10 +64,26 @@ def build_preflight_result(
     ready_to_apply = (
         not schema_status.get("ready")
         and schema_status.get("current_revision") == "008_lead_lineage"
-        and EXPECTED_TRUTH_ALEMBIC_REVISION in head_revisions
+        and current_result.get("ok") is True
+        and current_revisions == ["008_lead_lineage"]
+        and heads_result.get("ok") is True
+        and len(head_revisions) == 1
+        and truth_revision_includes_expected(head_revisions[0])
         and sql_result.get("ok") is True
         and rollback_sql_result.get("ok") is True
     )
+    rollback_strategy = (
+        "If the additive truth-confidence migration must be backed out before production use, "
+        f"run the generated Alembic downgrade from {EXPECTED_TRUTH_ALEMBIC_REVISION} to 008_lead_lineage. "
+        "The downgrade drops only the additive truth program tables in dependency order."
+    )
+    current_revision = schema_status.get("current_revision")
+    if current_revision != EXPECTED_TRUTH_ALEMBIC_REVISION and truth_revision_includes_expected(current_revision):
+        rollback_strategy = (
+            f"The generated rollback SQL covers only {EXPECTED_TRUTH_ALEMBIC_REVISION} to 008_lead_lineage. "
+            f"The current revision {current_revision} includes later migrations. "
+            "Review their separate rollback and evidence-retention plans before any downgrade."
+        )
     return {
         "dry_run": True,
         "mutations_planned": 0,
@@ -92,11 +112,7 @@ def build_preflight_result(
             "preview_first_20_lines": rollback_sql_preview,
             "stderr": rollback_sql_result["stderr"],
         },
-        "rollback_strategy": (
-            "If the additive truth-confidence migration must be backed out before production use, "
-            f"run the generated Alembic downgrade from {EXPECTED_TRUTH_ALEMBIC_REVISION} to 008_lead_lineage. "
-            "The downgrade drops only the additive truth program tables in dependency order."
-        ),
+        "rollback_strategy": rollback_strategy,
         "approval_required": True,
         "approval_reason": f"Applying Alembic upgrade through {EXPECTED_TRUTH_ALEMBIC_REVISION} creates truth-confidence tables in the configured database.",
     }
