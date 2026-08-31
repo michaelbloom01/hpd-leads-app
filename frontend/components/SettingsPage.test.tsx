@@ -2512,6 +2512,25 @@ describe('SettingsPage truth health', () => {
     expect(screen.getAllByText('blocked').length).toBeGreaterThan(0);
   });
 
+  it('separates named candidates, legacy classifications and current board-role proof', async () => {
+    fetchBoardChairCoverageMock.mockResolvedValue({
+      eligible_buildings: 15733, cached_with_ceo_name: 5, cached_eligible_buildings: 5,
+      current_exact_chair: 1, stale_exact_chair: 0, ambiguous_or_possible: 0,
+      exact_entity_without_chair: 0, no_named_chair_match: 0, not_loaded: 15728,
+      unclassified_cached: 4, unclassified_cached_with_ceo_name: 4, outcomes_reconcile: true,
+      hpd_head_officer_proxy: 15275, candidate_availability: { eligible_building_coverage: 0.0003 },
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><SettingsPage /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Data Health' }));
+    expect(await screen.findByText('5 named candidates')).toBeInTheDocument();
+    expect(screen.getByText('0.03% of relevant buildings')).toBeInTheDocument();
+    expect(screen.getByText('Current board-role coverage: unmeasured')).toBeInTheDocument();
+    expect(screen.getByText('Needs classification')).toBeInTheDocument();
+    expect(screen.getByText(/5 cached results; 4 names still need classification/)).toBeInTheDocument();
+    expect(screen.queryByText(/Coverage counts require reconciliation/)).not.toBeInTheDocument();
+  });
+
   it('keeps source refresh controls in preview mode by default', async () => {
     const client = new QueryClient({
       defaultOptions: {

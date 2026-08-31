@@ -81,6 +81,48 @@ describe('CompliancePanel evidence and identity safety', () => {
     expect(within(card).getByText('$5,000')).toHaveClass('[overflow-wrap:anywhere]');
   });
 
+  it('starts with active records and offers separately scoped complaint history', async () => {
+    const data = response();
+    data.buildings[0].records.push({ ...data.buildings[0].records[0], id: 'closed-complaint', source_system: 'dob_complaints', source_record_key: 'CLOSED-COMPLAINT', record_type: 'complaint', status: 'CLOSED' });
+    fetchComplianceMock.mockResolvedValue(data);
+    renderPanel();
+    expect(await screen.findByText('VIO-3348179')).toBeInTheDocument();
+    expect(screen.queryByText('CLOSED-COMPLAINT')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Complaint history (1)' }));
+    expect(screen.getByText('CLOSED-COMPLAINT')).toBeInTheDocument();
+    expect(screen.queryByText('VIO-3348179')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect 84 Green Street' }));
+    expect(screen.getByRole('button', { name: 'Active at source (1)' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('VIO-3348178')).toBeInTheDocument();
+  });
+
+  it('loads long saved histories in batches and resets the batch on filter change', async () => {
+    const data = response();
+    data.buildings[0].records = Array.from({ length: 12 }, (_, index) => ({ ...data.buildings[0].records[0], id: `record-${index}`, source_record_key: `RECORD-${index}`, status: 'CLOSED' }));
+    fetchComplianceMock.mockResolvedValue(data);
+    renderPanel();
+    fireEvent.click(await screen.findByRole('button', { name: 'All records (12)' }));
+    expect(screen.getByText('RECORD-9')).toBeInTheDocument();
+    expect(screen.queryByText('RECORD-10')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show more records (2 remaining)' }));
+    expect(screen.getByText('RECORD-11')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Active at source (0)' }));
+    expect(screen.getByText(/No saved records in this filter/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'All records (12)' }));
+    expect(screen.queryByText('RECORD-10')).not.toBeInTheDocument();
+  });
+
+  it('distinguishes incomplete portfolio identities from stale source checks', async () => {
+    const data = response();
+    data.stale = true;
+    data.coverage.status = 'partial';
+    data.coverage.unmapped_parcel_count = 93;
+    fetchComplianceMock.mockResolvedValue(data);
+    renderPanel('portfolio', 'lead-1');
+    expect(await screen.findByText('More identities to map')).toBeInTheDocument();
+    expect(screen.queryByText('Source refresh needed')).not.toBeInTheDocument();
+  });
+
   it('keeps missing balances distinct from zero and labels a known subtotal', async () => {
     const data = response();
     data.buildings[1].reported_balance_cents = null;

@@ -532,39 +532,59 @@ async def board_chair_coverage(session: AsyncSession = Depends(get_session)):  #
                OR UPPER(COALESCE(building_class, '')) IN ('C6', 'C8', 'D0', 'D4')
         ), cache AS (
             SELECT
-                REPLACE(cache_key, 'officers:', '') AS bbl,
+                SUBSTRING(cache_key FROM 10) AS bbl,
                 CAST(result AS jsonb) AS payload,
                 cached_at
             FROM dos_cache
             WHERE cache_key LIKE 'officers:%'
               AND result IS NOT NULL
+        ), joined AS (
+            SELECT eligible.bbl, cache.bbl AS cached_bbl, cache.payload, cache.cached_at,
+                JSONB_TYPEOF(cache.payload->'ceo_name') = 'string'
+                    AND NULLIF(TRIM(cache.payload->>'ceo_name'), '') IS NOT NULL AS has_ceo_name
+            FROM eligible
+            LEFT JOIN cache USING (bbl)
+        ), classified AS (
+            SELECT *, CASE
+                WHEN cached_bbl IS NULL THEN 'not_loaded'
+                WHEN payload->>'entity_match_status' IN ('possible', 'ambiguous')
+                    OR payload->>'chair_status' = 'ambiguous_entity'
+                    THEN 'ambiguous_or_possible'
+                WHEN payload->>'entity_match_status' = 'exact'
+                    AND has_ceo_name
+                    AND COALESCE(payload->>'chair_status', 'named_chair') = 'named_chair'
+                    AND cached_at + INTERVAL '30 days' > NOW()
+                    THEN 'current_exact_chair'
+                WHEN payload->>'entity_match_status' = 'exact'
+                    AND has_ceo_name
+                    AND COALESCE(payload->>'chair_status', 'named_chair') = 'named_chair'
+                    AND cached_at + INTERVAL '30 days' <= NOW()
+                    THEN 'stale_exact_chair'
+                WHEN payload->>'chair_status' = 'exact_no_chair'
+                    AND NOT COALESCE(has_ceo_name, false)
+                    THEN 'exact_entity_without_chair'
+                WHEN payload->>'chair_status' IN ('no_named_chair_match', 'no_match')
+                    AND NOT COALESCE(has_ceo_name, false)
+                    THEN 'no_named_chair_match'
+                ELSE 'unclassified_cached'
+            END AS outcome
+            FROM joined
         )
         SELECT
             (SELECT COUNT(*) FROM buildings)::int AS total_buildings,
             COUNT(*)::int AS eligible_buildings,
-            COUNT(*) FILTER (
-                WHERE cache.payload->>'entity_match_status' = 'exact'
-                  AND NULLIF(TRIM(cache.payload->>'ceo_name'), '') IS NOT NULL
-                  AND cache.cached_at + INTERVAL '30 days' > NOW()
-            )::int AS current_exact_chair,
-            COUNT(*) FILTER (
-                WHERE cache.payload->>'entity_match_status' = 'exact'
-                  AND NULLIF(TRIM(cache.payload->>'ceo_name'), '') IS NOT NULL
-                  AND cache.cached_at + INTERVAL '30 days' <= NOW()
-            )::int AS stale_exact_chair,
-            COUNT(*) FILTER (
-                WHERE cache.payload->>'entity_match_status' IN ('possible', 'ambiguous')
-                   OR cache.payload->>'chair_status' = 'ambiguous_entity'
-            )::int AS ambiguous_or_possible,
-            COUNT(*) FILTER (
-                WHERE cache.payload->>'chair_status' = 'exact_no_chair'
-            )::int AS exact_entity_without_chair,
-            COUNT(*) FILTER (
-                WHERE cache.payload->>'chair_status' IN ('no_named_chair_match', 'no_match')
-            )::int AS no_named_chair_match,
-            COUNT(*) FILTER (WHERE cache.bbl IS NULL)::int AS not_loaded
-        FROM eligible
-        LEFT JOIN cache USING (bbl)
+            COUNT(*) FILTER (WHERE outcome = 'current_exact_chair')::int AS current_exact_chair,
+            COUNT(*) FILTER (WHERE outcome = 'stale_exact_chair')::int AS stale_exact_chair,
+            COUNT(*) FILTER (WHERE outcome = 'ambiguous_or_possible')::int AS ambiguous_or_possible,
+            COUNT(*) FILTER (WHERE outcome = 'exact_entity_without_chair')::int AS exact_entity_without_chair,
+            COUNT(*) FILTER (WHERE outcome = 'no_named_chair_match')::int AS no_named_chair_match,
+            COUNT(*) FILTER (WHERE outcome = 'not_loaded')::int AS not_loaded,
+            COUNT(*) FILTER (WHERE outcome = 'unclassified_cached')::int AS unclassified_cached,
+            COUNT(*) FILTER (WHERE cached_bbl IS NOT NULL)::int AS cached_eligible_buildings,
+            COUNT(*) FILTER (WHERE has_ceo_name)::int AS cached_with_ceo_name,
+            COUNT(*) FILTER (WHERE outcome = 'unclassified_cached' AND has_ceo_name)::int
+                AS unclassified_cached_with_ceo_name
+        FROM classified
     """))).first()
     counts = dict(row._mapping) if row else {}
     head_officer_count = int((await session.execute(text("""
@@ -584,8 +604,34 @@ async def board_chair_coverage(session: AsyncSession = Depends(get_session)):  #
     total_buildings = int(counts.get("total_buildings") or 0)
     current = int(counts.get("current_exact_chair") or 0)
     sourced = current + int(counts.get("stale_exact_chair") or 0)
+    outcome_keys = (
+        "current_exact_chair", "stale_exact_chair", "ambiguous_or_possible",
+        "exact_entity_without_chair", "no_named_chair_match", "not_loaded",
+        "unclassified_cached",
+    )
+    outcome_total = sum(int(counts.get(key) or 0) for key in outcome_keys)
+    cached = int(counts.get("cached_eligible_buildings", eligible - int(counts.get("not_loaded") or 0)) or 0)
+    named = int(counts.get("cached_with_ceo_name") or 0)
+    unclassified = int(counts.get("unclassified_cached") or 0)
+    unclassified_named = int(counts.get("unclassified_cached_with_ceo_name") or 0)
+    classified_cached = sum(int(counts.get(key) or 0) for key in outcome_keys[:5])
     return {
         **{key: int(value or 0) for key, value in counts.items()},
+        "unclassified_cached": unclassified,
+        "cached_eligible_buildings": cached,
+        "cached_with_ceo_name": named,
+        "unclassified_cached_with_ceo_name": unclassified_named,
+        "outcome_total": outcome_total,
+        "outcomes_reconcile": outcome_total == eligible,
+        "classified_cached_buildings": classified_cached,
+        "cache_classification_coverage": round(classified_cached / cached, 4) if cached else None,
+        "candidate_availability": {
+            "cached_eligible_buildings": cached,
+            "cached_with_ceo_name": named,
+            "unclassified_cached_with_ceo_name": unclassified_named,
+            "eligible_building_coverage": round(named / eligible, 4) if eligible else 0.0,
+            "basis": "Non-empty string in the cached DOS CEO Name field, across all entity-match classifications and observation ages. Current board title and tenure require separate evidence.",
+        },
         "hpd_head_officer_proxy": head_officer_count,
         "hpd_head_officer_included_in_chair_coverage": False,
         "current_exact_coverage": round(current / eligible, 4) if eligible else 0.0,
@@ -593,10 +639,13 @@ async def board_chair_coverage(session: AsyncSession = Depends(get_session)):  #
         "any_sourced_chair_coverage": round(sourced / eligible, 4) if eligible else 0.0,
         "coverage_basis": "DOS registry candidates; exact current board title requires separate evidence",
         "explicit_current_board_role_coverage": None,
+        "explicit_current_board_role_status": "not_measured",
         "reliability_policy": {
             "current_exact_chair": "Legacy field name: exact-entity DOS person candidate observed within 30 days. The official field is CEO Name; current board-chair title and tenure remain unverified.",
             "stale_exact_chair": "Legacy field name: exact-entity DOS person candidate in an older cache. Refresh the registry observation and verify the actual board role separately.",
             "ambiguous_or_possible": "Review required. Never presented as Board Head.",
+            "unclassified_cached": "Cached registry result has insufficient, conflicting, or legacy classification metadata. Available CEO names are counted separately; exact entity match and current board role remain unverified.",
+            "candidate_availability": "Counts cached CEO Name fields. A zero classified-candidate count leaves actual board-chair coverage unmeasured.",
             "hpd_head_officer_proxy": "Separate HPD registration role. Excluded from board-chair coverage.",
         },
     }

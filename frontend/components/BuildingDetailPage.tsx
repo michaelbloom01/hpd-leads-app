@@ -712,7 +712,7 @@ const BuildingDetailPage: React.FC = () => {
           <dl className="space-y-2 text-sm">
             {[
               ['BBL', building.bbl],
-              ['BIN', building.bin],
+              [/^[1-5]\d{6}$/.test(String(building.bin || '')) ? 'Saved BIN' : 'Legacy identifier (refresh pending)', building.bin],
               ['ZIP', building.zip_code],
               ['Building Class', building.building_class],
               ['Assessed Value', building.assessed_value ? `$${building.assessed_value.toLocaleString()}` : null],

@@ -46,11 +46,29 @@ export interface BoardChairCoverage {
   exact_entity_without_chair: number;
   no_named_chair_match: number;
   not_loaded: number;
+  unclassified_cached: number;
+  cached_eligible_buildings: number;
+  cached_with_ceo_name: number;
+  unclassified_cached_with_ceo_name: number;
+  outcome_total: number;
+  outcomes_reconcile: boolean;
+  classified_cached_buildings: number;
+  cache_classification_coverage: number | null;
+  candidate_availability: {
+    cached_eligible_buildings: number;
+    cached_with_ceo_name: number;
+    unclassified_cached_with_ceo_name: number;
+    eligible_building_coverage: number;
+    basis: string;
+  };
+  explicit_current_board_role_coverage: number | null;
+  explicit_current_board_role_status: 'not_measured';
   hpd_head_officer_proxy: number;
   hpd_head_officer_included_in_chair_coverage: false;
   current_exact_coverage: number;
   current_exact_all_buildings_coverage: number;
   any_sourced_chair_coverage: number;
+  coverage_basis: string;
   reliability_policy: Record<string, string>;
 }
 

@@ -3035,25 +3035,26 @@ const DataHealthSection: React.FC = () => {
             <div>
               <h3 className="text-sm font-medium text-gray-700">Board Chair Coverage</h3>
               <p className="mt-1 text-xs text-gray-500">
-                Exact NY Department of State owner-entity matches for likely co-op and condo buildings.
+                DOS person candidates and separate board-role verification for likely co-op and condo buildings.
               </p>
             </div>
             <div className="text-left sm:text-right">
-              <div className="text-lg font-semibold text-gray-900">{(boardChairCoverage.current_exact_coverage * 100).toFixed(1)}%</div>
-              <div className="text-[10px] uppercase text-gray-500">of relevant buildings</div>
+              <div className="text-lg font-semibold text-gray-900">{boardChairCoverage.cached_with_ceo_name.toLocaleString()} named candidates</div>
+              <div className="text-[10px] uppercase text-gray-500">{(boardChairCoverage.candidate_availability.eligible_building_coverage * 100).toFixed(2)}% of relevant buildings</div>
               <div className="mt-0.5 text-[10px] text-gray-500">
-                {(boardChairCoverage.current_exact_all_buildings_coverage * 100).toFixed(1)}% of all listings
+                Current board-role coverage: unmeasured
               </div>
             </div>
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             {[
               ['Eligible buildings', boardChairCoverage.eligible_buildings],
-              ['DOS chair/CEO candidate', boardChairCoverage.current_exact_chair],
+              ['Exact DOS candidate, fresh', boardChairCoverage.current_exact_chair],
               ['DOS candidate, stale', boardChairCoverage.stale_exact_chair],
               ['Ambiguous or possible', boardChairCoverage.ambiguous_or_possible],
-              ['Exact entity, no chair', boardChairCoverage.exact_entity_without_chair],
-              ['No named-chair match', boardChairCoverage.no_named_chair_match],
+              ['Exact entity, no name', boardChairCoverage.exact_entity_without_chair],
+              ['No named candidate match', boardChairCoverage.no_named_chair_match],
+              ['Needs classification', boardChairCoverage.unclassified_cached],
               ['Not loaded', boardChairCoverage.not_loaded],
             ].map(([label, value]) => (
               <div key={label as string} className="rounded-lg bg-gray-50 px-3 py-2">
@@ -3065,6 +3066,10 @@ const DataHealthSection: React.FC = () => {
           <div className="mt-3 rounded border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
             Exact DOS matches identify useful Board Head candidates. Actual board title and current tenure require separate dated evidence. HPD HeadOfficer coverage is tracked separately ({boardChairCoverage.hpd_head_officer_proxy.toLocaleString()} buildings) and is excluded.
           </div>
+          <p className="mt-2 text-xs text-gray-500">
+            {boardChairCoverage.cached_eligible_buildings.toLocaleString()} cached results; {boardChairCoverage.unclassified_cached_with_ceo_name.toLocaleString()} names still need classification. Candidate availability includes older and uncertain matches.
+          </p>
+          {!boardChairCoverage.outcomes_reconcile && <p role="alert" className="mt-2 text-xs text-amber-800">Coverage counts require reconciliation. Treat this summary as provisional.</p>}
           {boardChairBenchmark && (
             <div className="mt-3 flex flex-col gap-1 border-t border-gray-100 pt-3 text-xs text-gray-600 sm:flex-row sm:items-center sm:justify-between">
               <span>Public benchmark: {boardChairBenchmark.identity_matches} of {boardChairBenchmark.total_cases} names match the current DOS cache.</span>

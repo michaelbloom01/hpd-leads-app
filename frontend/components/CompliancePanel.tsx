@@ -121,8 +121,13 @@ function RecordDetails({ record, evidence }: { record: ComplianceRecord; evidenc
 }
 
 function BuildingDetails({ building, evidence }: { building: ComplianceBuilding; evidence: boolean }) {
+  const [recordFilter, setRecordFilter] = useState<'active' | 'complaint' | 'all'>('active');
+  const [visibleCount, setVisibleCount] = useState(10);
   const hasBalance = building.reported_balance_cents != null;
   const staleBalance = balanceIsStale(building);
+  const active = building.records.filter(record => record.status?.toLowerCase() === 'active');
+  const complaints = building.records.filter(record => record.record_type === 'complaint');
+  const selectedRecords = recordFilter === 'active' ? active : recordFilter === 'complaint' ? complaints : building.records;
   return <div className="space-y-4 p-4">
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
       <h3 className="font-semibold text-gray-900">{building.address || 'Address unavailable'}</h3>
@@ -150,7 +155,18 @@ function BuildingDetails({ building, evidence }: { building: ComplianceBuilding;
       </p>)}
     </section> : null}
     {building.records.length > 0 ? <div className="space-y-4 border-t border-gray-200 pt-4">
-      {building.records.map(record => <RecordDetails key={record.id} record={record} evidence={evidence} />)}
+      <div className="flex flex-wrap gap-2" aria-label="Filter saved compliance records">
+        {([
+          ['active', `Active at source (${active.length})`],
+          ['complaint', `Complaint history (${complaints.length})`],
+          ['all', `All records (${building.records.length})`],
+        ] as const).map(([filter, label]) => <button key={filter} type="button" aria-pressed={recordFilter === filter}
+          onClick={() => { setRecordFilter(filter); setVisibleCount(10); }}
+          className={`min-h-11 rounded-lg border px-3 text-xs ${recordFilter === filter ? 'border-blue-500 bg-blue-50 text-blue-800' : 'border-gray-200 text-gray-600'}`}>{label}</button>)}
+      </div>
+      {selectedRecords.slice(0, visibleCount).map(record => <RecordDetails key={record.id} record={record} evidence={evidence} />)}
+      {selectedRecords.length === 0 ? <p className="text-sm text-gray-500">No saved records in this filter. Check source coverage and the other record views separately.</p> : null}
+      {selectedRecords.length > visibleCount ? <button type="button" onClick={() => setVisibleCount(count => count + 10)} className="min-h-11 text-sm text-blue-700 underline">Show more records ({selectedRecords.length - visibleCount} remaining)</button> : null}
     </div> : <p className="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">
       {building.source_check_status === 'checked'
         ? 'No DOB Safety records in the completed source check. Other compliance sources have separate coverage.'
@@ -200,7 +216,7 @@ function ParcelGroup({ bbl, buildings }: { bbl: string | null; buildings: Compli
         className={`min-h-11 border-b-2 text-sm ${evidence === showEvidence ? 'border-blue-600 font-medium text-blue-700' : 'border-transparent text-gray-600 hover:text-gray-900'}`}
       >{showEvidence ? 'Source evidence' : 'Case details'}</button>)}
     </div>
-    <BuildingDetails building={selected} evidence={evidence} />
+    <BuildingDetails key={selected.bin} building={selected} evidence={evidence} />
   </section>;
 }
 
@@ -247,7 +263,7 @@ const CompliancePanel: React.FC<Props> = ({ scope, scopeId }) => {
     {data ? <>
       <div className="flex flex-wrap gap-2 text-xs">
         <span className={`rounded border px-2 py-1 ${coverageStatus === 'complete' && !data.stale ? 'border-gray-200 bg-gray-50 text-gray-700' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>{COVERAGE_LABELS[coverageStatus] || 'Coverage unverified'}</span>
-        {data.enabled && data.identity_ready && data.stale ? <span className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-900">Source refresh needed</span> : null}
+        {data.enabled && data.identity_ready && data.stale ? <span className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-900">{data.coverage.unmapped_parcel_count ? 'More identities to map' : 'Source refresh needed'}</span> : null}
       </div>
       {unavailableMessage ? <p className="rounded-lg bg-gray-50 p-4 text-sm text-gray-600">{unavailableMessage}</p> : <>
         {data.coverage.scope_parcel_count !== undefined ? <p className={`rounded-lg p-3 text-sm ${data.coverage.unmapped_parcel_count ? 'bg-amber-50 text-amber-900' : 'bg-gray-50 text-gray-600'}`}>
@@ -275,7 +291,7 @@ const CompliancePanel: React.FC<Props> = ({ scope, scopeId }) => {
           {data.source_coverage.map(source => <div key={source.source_system} className="rounded-lg border border-gray-200 p-3 text-xs text-gray-600">
             <p className="font-semibold text-gray-900">{sourceLabel(source.source_system)}</p>
             <p className="mt-1">{source.checked_building_count} of {source.physical_building_count} mapped buildings checked · {source.records_count} records</p>
-            <p className="mt-1">{COVERAGE_LABELS[source.status] || source.status.replace(/_/g, ' ')}{source.stale ? ' · Refresh needed' : ''}</p>
+            <p className="mt-1">{COVERAGE_LABELS[source.status] || source.status.replace(/_/g, ' ')}{source.stale ? data.coverage.unmapped_parcel_count ? ' · Scope incomplete; check source dates' : ' · Refresh needed' : ''}</p>
             <p className="mt-1">Source updated {dateLabel(source.source_updated_at)} · Observed {dateLabel(source.observed_at)}</p>
           </div>)}
         </section> : null}
