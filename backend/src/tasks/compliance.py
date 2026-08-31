@@ -1,9 +1,10 @@
-"""Approval-gated bounded DOB Safety refresh using the existing worker runtime."""
+"""Approval-gated bounded DOB source refreshes using the existing worker runtime."""
 
 from uuid import uuid4
 
 from sqlalchemy import text
 
+from src.ingest import dob_complaints
 from src.ingest.dob_safety import (
     SOURCE_SYSTEM,
     DOBSafetyClient,
@@ -29,20 +30,65 @@ def ingest_dob_safety(
     confirm_execute: bool = False,
 ):
     bins = validate_bins(bins)
+    return _ingest_source(
+        source_system=SOURCE_SYSTEM,
+        client=DOBSafetyClient(),
+        normalizer=normalize_record,
+        job_id=job_id,
+        bins=bins,
+        dry_run=dry_run,
+        confirm_execute=confirm_execute,
+    )
+
+
+@celery_app.task(bind=True, name="src.tasks.compliance.ingest_dob_complaints")
+def ingest_dob_complaints(
+    self,
+    job_id: int | None = None,
+    bins: list[str] | None = None,
+    dry_run: bool = True,
+    confirm_execute: bool = False,
+):
+    bins = dob_complaints.validate_bins(bins)
+    return _ingest_source(
+        source_system=dob_complaints.SOURCE_SYSTEM,
+        client=dob_complaints.DOBComplaintsClient(),
+        normalizer=dob_complaints.normalize_record,
+        job_id=job_id,
+        bins=bins,
+        dry_run=dry_run,
+        confirm_execute=confirm_execute,
+    )
+
+
+def _ingest_source(
+    *, source_system, client, normalizer, job_id, bins, dry_run, confirm_execute
+):
     if not dry_run and not confirm_execute:
         raise ValueError(
-            "Executing DOB Safety publication requires confirm_execute=true."
+            "Executing DOB source publication requires confirm_execute=true."
         )
     session = _get_pg_session()
-    job_type = "dob_safety_preview" if dry_run else SOURCE_SYSTEM
-    run_id = f"dob-safety-{uuid4().hex}"
+    job_type = f"{source_system}_preview" if dry_run else source_system
+    run_id = f"{source_system.replace('_', '-')}-{uuid4().hex}"
     try:
         job_id = _ensure_or_create_job(session, job_id, job_type, job_type)
         session.commit()
-        snapshot = DOBSafetyClient().fetch_snapshot(bins)
+        snapshot = client.fetch_snapshot(bins)
+        if snapshot.get("source_system", source_system) != source_system:
+            raise ValueError("Fetched snapshot belongs to a different source.")
+        snapshot["source_system"] = source_system
+        if (
+            not snapshot.get("complete")
+            or len(snapshot["rows"]) != snapshot["expected_count"]
+            or sorted(snapshot["bins"]) != bins
+        ):
+            raise ValueError(
+                "A complete count-verified snapshot of the requested BIN scope is required."
+            )
         # Normalize every row before publishing or calling the preview successful.
         normalized = [
-            normalize_record(
+            normalizer(
                 row,
                 observed_at=snapshot["observed_at"],
                 source_updated_at=snapshot["source_updated_at"],
@@ -50,8 +96,15 @@ def ingest_dob_safety(
             )
             for row in snapshot["rows"]
         ]
+        if any(row["bin"] not in bins for row in normalized) or len(
+            {row["id"] for row in normalized}
+        ) != len(normalized):
+            raise ValueError(
+                "Snapshot source records must be unique and inside the requested BIN scope."
+            )
         summary = {
             "job_id": job_id,
+            "source_system": source_system,
             "run_id": run_id,
             "dry_run": dry_run,
             "bins": bins,
@@ -69,7 +122,7 @@ def ingest_dob_safety(
             summary.update(publish_snapshot(session, snapshot, run_id=run_id))
             _log_quality(
                 session,
-                SOURCE_SYSTEM,
+                source_system,
                 job_id,
                 len(normalized),
                 len(normalized),

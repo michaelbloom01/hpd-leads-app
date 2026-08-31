@@ -21,6 +21,7 @@ from .compliance import (
     ComplianceSourceCheck,
 )
 from .contacts import BuildingContact, EnrichmentResult
+from .compliance_reviews import ComplianceReview
 from .entity import (
     CanonicalEntity,
     CanonicalEntityAlias,
@@ -85,6 +86,7 @@ __all__ = [
     "ComplianceObservation",
     "ComplianceSourceCheck",
     "ComplianceBalanceObservation",
+    "ComplianceReview",
     "Lead",
     "CanonicalEntity",
     "CanonicalEntityAlias",

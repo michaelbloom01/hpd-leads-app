@@ -30,6 +30,7 @@ VERIFIED_TRUTH_ALEMBIC_DESCENDANTS = frozenset({
     "011_building_identity",
     "012_compliance",
     "013_contact_region_text",
+    "014_compliance_reviews",
 })
 REQUIRED_TRUTH_TABLES = [
     "truth_claims",

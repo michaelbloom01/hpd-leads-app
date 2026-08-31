@@ -34,8 +34,11 @@ SOURCE_REFRESH_JOB_TYPES = {
     "building_coordinates",
     "board_chairs",
     "dob_safety",
+    "dob_complaints",
+    "hpd_identity_pilot",
 }
-READ_ONLY_PREVIEW_JOB_TYPES = {"buildings_preview", "dob_safety_preview"}
+READ_ONLY_PREVIEW_JOB_TYPES = {"buildings_preview", "dob_safety_preview", "dob_complaints_preview", "hpd_identity_pilot_preview"}
+BOUNDED_PILOT_JOB_TYPES = {"dob_safety", "dob_safety_preview", "dob_complaints", "dob_complaints_preview", "hpd_identity_pilot", "hpd_identity_pilot_preview"}
 APPROVAL_REQUIRED_JOB_TYPES = SOURCE_REFRESH_JOB_TYPES | {
     "enrichment",
     "scoring",
@@ -68,8 +71,8 @@ def _normalize_pilot_bins(value: object) -> list[str]:
     """Validate bounded physical-building scope without accepting parcel/HPD IDs."""
     if not isinstance(value, list):
         return []
-    if len(value) > 100:
-        raise HTTPException(422, "Compliance jobs accept at most 100 BIN values")
+    if len(value) > 25:
+        raise HTTPException(422, "Pilot jobs accept at most 25 BIN values")
     normalized = []
     for raw in value:
         candidate = str(raw).strip()
@@ -166,9 +169,9 @@ def _approval_preview_response(
     bin_query = "".join(f"&bin={bin_value}" for bin_value in (bins or []))
     fingerprint_query = f"&expected_source_fingerprint={expected_source_fingerprint}" if expected_source_fingerprint else ""
     required_parameters = []
-    if job_type == "dob_safety" and not bins:
+    if job_type in BOUNDED_PILOT_JOB_TYPES and not bins:
         required_parameters.append("bin")
-    if job_type == "buildings" and not expected_source_fingerprint:
+    if job_type in {"buildings", "hpd_identity_pilot"} and not expected_source_fingerprint:
         required_parameters.append("expected_source_fingerprint")
     return {
         "status": "approval_required",
@@ -194,7 +197,7 @@ def _approval_preview_response(
             "sources": sources or [],
             "bins": bins or [],
             "required_parameters": required_parameters,
-            "source_preview_query": "/api/v1/jobs/buildings_preview/start?dry_run=true" if job_type == "buildings" else None,
+            "source_preview_query": f"/api/v1/jobs/{job_type}_preview/start?dry_run=true{bin_query}" if job_type in {"buildings", "hpd_identity_pilot", "dob_safety", "dob_complaints"} else None,
         },
         "rollback_strategy": "No job was queued. To execute, rerun with dry_run=false and confirm_execute=true after reviewing the preview.",
     }
@@ -257,7 +260,7 @@ async def _find_equivalent_inflight_job(
         config = _parse_config(row[2])
         existing_signature = _extract_signature_from_config(job_type, config)
         overlapping_scope = job_type in {"buildings", "buildings_preview"}
-        if job_type in {"dob_safety", "dob_safety_preview"}:
+        if job_type in BOUNDED_PILOT_JOB_TYPES:
             existing_bins = set(existing_signature["bins"])
             requested_bins = set(signature.get("bins") or [])
             overlapping_scope = not existing_bins or bool(existing_bins & requested_bins)
@@ -576,8 +579,8 @@ async def start_job(
     confirm_execute: bool = Query(default=False),
     cohort_filter: Optional[str] = Query(default=None),
     source: Optional[list[str]] = Query(default=None, description="Optional repeatable truth_materialization source filter."),
-    bins: Annotated[list[str] | None, Query(alias="bin", description="Repeatable exact DOB BINs for bounded compliance jobs, maximum 100.")] = None,
-    expected_source_fingerprint: Annotated[str | None, Query(description="SHA-256 fingerprint from the reviewed full buildings_preview result.")] = None,
+    bins: Annotated[list[str] | None, Query(alias="bin", description="Repeatable exact DOB BINs for bounded pilot jobs, maximum 25.")] = None,
+    expected_source_fingerprint: Annotated[str | None, Query(description="SHA-256 fingerprint from the reviewed buildings or identity-pilot preview.")] = None,
     session: AsyncSession = Depends(get_session),
     user: AuthUser = Depends(get_current_user),
 ):
@@ -591,20 +594,22 @@ async def start_job(
     job_type = JOB_TYPE_ALIASES.get(job_type, job_type)
     selected_bins = _normalize_pilot_bins(bins)
     expected_source_fingerprint = expected_source_fingerprint if isinstance(expected_source_fingerprint, str) else None
-    if expected_source_fingerprint and (job_type != "buildings" or not re.fullmatch(r"[a-f0-9]{64}", expected_source_fingerprint)):
+    if expected_source_fingerprint and (job_type not in {"buildings", "hpd_identity_pilot"} or not re.fullmatch(r"[a-f0-9]{64}", expected_source_fingerprint)):
         raise HTTPException(422, "expected_source_fingerprint must be the SHA-256 from a reviewed buildings preview")
     if job_type == "buildings" and not dry_run and not expected_source_fingerprint:
         raise HTTPException(422, "Building refresh execution requires expected_source_fingerprint from a reviewed full buildings_preview")
-    if selected_bins and job_type not in {"dob_safety", "dob_safety_preview"}:
-        raise HTTPException(400, "bin filters are only supported for compliance jobs")
+    if job_type == "hpd_identity_pilot" and not dry_run and not expected_source_fingerprint:
+        raise HTTPException(422, "Identity pilot execution requires expected_source_fingerprint from its reviewed hpd_identity_pilot_preview")
+    if selected_bins and job_type not in BOUNDED_PILOT_JOB_TYPES:
+        raise HTTPException(400, "bin filters are only supported for bounded pilot jobs")
     if job_type in READ_ONLY_PREVIEW_JOB_TYPES:
         if not dry_run or confirm_execute:
             raise HTTPException(400, "Preview jobs require dry_run=true and confirm_execute=false")
         config_preview_only = True
     else:
         config_preview_only = False
-    if job_type in {"dob_safety", "dob_safety_preview"} and (not dry_run or config_preview_only) and not selected_bins:
-        raise HTTPException(422, "Compliance ingestion requires an explicit pilot list of 1-100 DOB BINs")
+    if job_type in BOUNDED_PILOT_JOB_TYPES and (not dry_run or config_preview_only) and not selected_bins:
+        raise HTTPException(422, "Pilot ingestion requires an explicit pilot list of 1-25 DOB BINs")
     if source_filters and job_type != "truth_materialization":
         raise HTTPException(400, "source filters are only supported for truth_materialization jobs")
     if source_filters and job_type == "truth_materialization":
@@ -623,6 +628,7 @@ async def start_job(
         "lead_generation", "lead_reconciliation", "building_coordinates",
         "board_chairs",
         "buildings_preview", "dob_safety", "dob_safety_preview",
+        "dob_complaints", "dob_complaints_preview", "hpd_identity_pilot", "hpd_identity_pilot_preview",
         "truth_validation", "truth_materialization",
     ]
     if job_type not in valid_types:
@@ -845,8 +851,13 @@ async def start_job(
                 "dry_run": config_preview_only,
             }
 
-        if job_type in {"dob_safety", "dob_safety_preview"}:
-            from src.tasks.compliance import ingest_dob_safety
+        if job_type in BOUNDED_PILOT_JOB_TYPES:
+            if job_type.startswith("hpd_identity_pilot"):
+                from src.tasks.identity_pilot import ingest_hpd_identity_pilot as pilot_task
+            elif job_type.startswith("dob_complaints"):
+                from src.tasks.compliance import ingest_dob_complaints as pilot_task
+            else:
+                from src.tasks.compliance import ingest_dob_safety as pilot_task
 
             task_kwargs = {
                 "job_id": job_id,
@@ -854,11 +865,13 @@ async def start_job(
                 "dry_run": config_preview_only,
                 "confirm_execute": not config_preview_only,
             }
+            if job_type.startswith("hpd_identity_pilot"):
+                task_kwargs["expected_source_fingerprint"] = expected_source_fingerprint
             dispatch_mode, fallback_used = await _dispatch_with_fallback(
                 job_type=job_type,
                 job_id=job_id,
-                primary_dispatch=lambda: ingest_dob_safety.delay(**task_kwargs),
-                fallback_dispatch=lambda: asyncio.create_task(asyncio.to_thread(ingest_dob_safety.run, **task_kwargs)),
+                primary_dispatch=lambda: pilot_task.delay(**task_kwargs),
+                fallback_dispatch=lambda: asyncio.create_task(asyncio.to_thread(pilot_task.run, **task_kwargs)),
             )
             await _record_dispatch_success(dispatch_mode, fallback_used)
             return {

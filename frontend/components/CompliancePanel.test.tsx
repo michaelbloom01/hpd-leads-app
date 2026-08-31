@@ -5,6 +5,7 @@ import CompliancePanel, { formatComplianceMoney, safeComplianceSourceUrl } from 
 import { ComplianceApiError, type ComplianceBuilding, type ComplianceResponse } from '../services/compliance-api';
 
 const fetchComplianceMock = vi.fn();
+vi.mock('../contexts/AuthContext', () => ({ useAuth: () => ({ user: { role: 'viewer' } }) }));
 vi.mock('../services/compliance-api', async importOriginal => ({
   ...await importOriginal<typeof import('../services/compliance-api')>(),
   fetchCompliance: (...args: unknown[]) => fetchComplianceMock(...args),
@@ -66,7 +67,8 @@ describe('CompliancePanel evidence and identity safety', () => {
     expect(screen.getByRole('link', { name: /DOB Safety record/ })).toHaveAttribute('href', expect.stringContaining('bin=3348178'));
     expect(screen.getByText('Source display label: 8/28/2026 10:09')).toBeInTheDocument();
     expect(screen.getByText('Reviewer: Research reviewer')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /review|pay|send/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Internal review' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /pay|send/i })).not.toBeInTheDocument();
   });
 
   it('sizes physical-building cards to their container instead of viewport breakpoints', async () => {

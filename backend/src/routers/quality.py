@@ -591,9 +591,11 @@ async def board_chair_coverage(session: AsyncSession = Depends(get_session)):  #
         "current_exact_coverage": round(current / eligible, 4) if eligible else 0.0,
         "current_exact_all_buildings_coverage": round(current / total_buildings, 4) if total_buildings else 0.0,
         "any_sourced_chair_coverage": round(sourced / eligible, 4) if eligible else 0.0,
+        "coverage_basis": "DOS registry candidates; exact current board title requires separate evidence",
+        "explicit_current_board_role_coverage": None,
         "reliability_policy": {
-            "current_exact_chair": "High entity-identity confidence and medium board-role confidence. DOS reports a Chairman or CEO and the cache is no older than 30 days.",
-            "stale_exact_chair": "High entity-identity confidence and medium board-role confidence at the source date. Currentness requires refresh.",
+            "current_exact_chair": "Legacy field name: exact-entity DOS person candidate observed within 30 days. The official field is CEO Name; current board-chair title and tenure remain unverified.",
+            "stale_exact_chair": "Legacy field name: exact-entity DOS person candidate in an older cache. Refresh the registry observation and verify the actual board role separately.",
             "ambiguous_or_possible": "Review required. Never presented as Board Head.",
             "hpd_head_officer_proxy": "Separate HPD registration role. Excluded from board-chair coverage.",
         },
@@ -633,7 +635,7 @@ async def board_chair_benchmark(session: AsyncSession = Depends(get_session)):  
         "identity_matches": sum(1 for case in cases if case["identity_match"]),
         "status_counts": status_counts,
         "cases": cases,
-        "interpretation": "The source proves the named role at its publication date. Evidence older than one year is historical and does not establish current leadership by itself.",
+        "interpretation": "Dated interviews support the exact role at their publication date. Registry-only cases support a person candidate. Fresh DOS name matches alone do not establish current board title or tenure. Historical and inaccessible evidence retains its stated limits.",
     }
 
 

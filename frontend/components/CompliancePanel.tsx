@@ -4,6 +4,9 @@ import {
   ComplianceApiError, fetchCompliance,
   type ComplianceBuilding, type ComplianceRecord, type ComplianceScope,
 } from '../services/compliance-api';
+import ComplianceReview from './ComplianceReview';
+import ComplianceBalanceCapture from './ComplianceBalanceCapture';
+import { downloadComplianceCsv } from '../services/compliance-export';
 
 interface Props { scope: ComplianceScope; scopeId: string }
 
@@ -34,7 +37,7 @@ function dateLabel(value: string | null | undefined): string {
 }
 
 function sourceLabel(value: string): string {
-  return ({ dob_safety: 'DOB Safety', dob_unpaid_violations: 'DOB unpaid-violation ledger' } as Record<string, string>)[value]
+  return ({ dob_safety: 'DOB Safety', dob_complaints: 'DOB complaints', dob_unpaid_violations: 'DOB unpaid-violation ledger' } as Record<string, string>)[value]
     || value.replace(/_/g, ' ');
 }
 
@@ -80,26 +83,40 @@ function Field({ label, children, wide = false }: { label: string; children: Rea
 }
 
 function RecordDetails({ record, evidence }: { record: ComplianceRecord; evidence: boolean }) {
+  const complaint = record.record_type === 'complaint';
   return <article className="border-t border-gray-200 pt-4 first:border-0 first:pt-0">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <h4 className="text-sm font-semibold text-gray-900">{record.device_type || record.category || 'DOB compliance record'}</h4>
+      <h4 className="text-sm font-semibold text-gray-900">{complaint ? `Complaint: ${record.complaint_category_label || record.complaint_category || 'Category unavailable'}` : record.device_type || record.category || 'DOB compliance record'}</h4>
       <span className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">{record.status || 'Status unavailable'} at source</span>
     </div>
     <p className="mt-2 break-all font-mono text-xs text-gray-700">{record.source_record_key}</p>
     {record.identity_status.includes('conflicting') || record.identity_status === 'unresolved'
       ? <p className="mt-2 rounded bg-amber-50 p-2 text-xs text-amber-900">Building identity requires review: {record.identity_status.replace(/_/g, ' ')}.</p> : null}
     <dl className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <Field label="Issue date">{dateLabel(record.issue_date)}</Field>
-      <Field label="Violation type">{record.violation_type || 'Unavailable'}</Field>
+      {complaint ? <>
+        <Field label="Complaint received">{dateLabel(record.received_date)}</Field>
+        <Field label="Complaint category code">{record.complaint_category || 'Unavailable'}</Field>
+        <Field label="Inspection date">{dateLabel(record.inspection_date)}</Field>
+        <Field label="Disposition date">{dateLabel(record.disposition_date)}</Field>
+        <Field label="Disposition" wide>{record.disposition_code_label || 'Label unavailable'}{record.disposition_code ? ` (code ${record.disposition_code})` : ''}</Field>
+      </> : <>
+        <Field label="Issue date">{dateLabel(record.issue_date)}</Field>
+        <Field label="Violation type">{record.violation_type || 'Unavailable'}</Field>
+      </>}
       {record.description ? <Field label="Source remarks" wide>{record.description}</Field> : null}
       {evidence ? <>
         <Field label="Source updated">{dateLabel(record.source_updated_at)}</Field>
         <Field label="Observed">{dateLabel(record.observed_at)}</Field>
         <Field label="Identity match">{record.identity_status.replace(/_/g, ' ')}</Field>
         <Field label="Evidence"><SourceLink url={record.source_url}>{sourceLabel(record.source_system)} record</SourceLink></Field>
+        {complaint && record.category_codebook_url ? <Field label="Category definitions"><SourceLink url={record.category_codebook_url}>DOB codebook ({record.category_codebook_revision || 'revision unavailable'})</SourceLink></Field> : null}
+        {complaint && record.disposition_codebook_url ? <Field label="Disposition definitions"><SourceLink url={record.disposition_codebook_url}>DOB dispositions ({record.disposition_codebook_revision || 'revision unavailable'})</SourceLink></Field> : null}
       </> : null}
     </dl>
     {record.stale ? <p className="mt-3 text-xs text-amber-800">Historical source snapshot. Refresh needed.</p> : null}
+    {complaint ? <p className="mt-3 text-xs text-gray-500">A complaint is a reported concern. Its presence on the same building does not establish that it caused a violation or remains an active condition.</p> : null}
+    {record.date_parse_warnings?.length ? <p className="mt-2 text-xs text-amber-800">Source date needs review: {record.date_parse_warnings.join('; ')}</p> : null}
+    <ComplianceReview recordId={record.id} />
   </article>;
 }
 
@@ -111,6 +128,12 @@ function BuildingDetails({ building, evidence }: { building: ComplianceBuilding;
       <h3 className="font-semibold text-gray-900">{building.address || 'Address unavailable'}</h3>
       <span className="font-mono text-xs text-gray-500">BIN {building.bin}</span>
     </div>
+    {building.hpd_registration ? <p className={`rounded-lg p-3 text-xs ${building.hpd_registration.status === 'expired' ? 'bg-amber-50 text-amber-900' : 'bg-gray-50 text-gray-600'}`}>
+      HPD registration {building.hpd_registration.registration_id} · Last registered {dateLabel(building.hpd_registration.last_registration_date)} · {building.hpd_registration.status === 'expired' ? 'Expired' : 'Expires'} {dateLabel(building.hpd_registration.registration_end_date)}.
+      {' '}<SourceLink url={building.hpd_registration.source_url}>HPD identity evidence</SourceLink>
+      {building.hpd_registration.status === 'expired' ? ' Registration details require currentness review.' : ''}
+      {building.hpd_registration.status === 'conflicting_current_records' ? ' Multiple current HPD records require identity review.' : ''}
+    </p> : null}
     <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <Field label={staleBalance ? 'Last reported balance' : 'Reported unpaid balance'}>
         {hasBalance ? formatComplianceMoney(building.reported_balance_cents) : 'Balance unavailable'}
@@ -120,6 +143,12 @@ function BuildingDetails({ building, evidence }: { building: ComplianceBuilding;
       <Field label="Lien status">Unverified</Field>
     </dl>
     {hasBalance ? <p className="text-xs text-gray-500">Payment and compliance closure are tracked separately.{staleBalance ? ' Balance refresh needed.' : ''}</p> : null}
+    <ComplianceBalanceCapture key={building.bin} bin={building.bin} />
+    {building.source_checks?.length ? <section aria-label="Building source checks" className="space-y-2 rounded-lg bg-gray-50 p-3">
+      {building.source_checks.map(check => <p key={check.source_system} className="text-xs text-gray-600">
+        <span className="font-medium">{sourceLabel(check.source_system)}</span>: {check.status === 'checked' ? `${check.records_count} records in completed check` : 'Awaiting source check'} · Observed {dateLabel(check.observed_at)}{check.stale ? ' · Refresh needed' : ''}
+      </p>)}
+    </section> : null}
     {building.records.length > 0 ? <div className="space-y-4 border-t border-gray-200 pt-4">
       {building.records.map(record => <RecordDetails key={record.id} record={record} evidence={evidence} />)}
     </div> : <p className="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">
@@ -201,11 +230,14 @@ const CompliancePanel: React.FC<Props> = ({ scope, scopeId }) => {
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <h2 className="text-lg font-semibold text-gray-900">Compliance intelligence</h2>
-        <p className="mt-1 text-sm text-gray-500">DOB Safety pilot · Physical-building records and source evidence</p>
+        <p className="mt-1 text-sm text-gray-500">DOB pilot · Violations, complaints and source evidence</p>
       </div>
+      <div className="flex flex-wrap gap-2">
+      {data?.enabled && data.identity_ready && data.buildings.length > 0 ? <button type="button" disabled={Boolean(query.error) || query.isFetching} onClick={() => downloadComplianceCsv(data)} className="min-h-11 rounded-lg border border-gray-200 px-3 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50">Export evidence CSV</button> : null}
       <button type="button" onClick={() => void query.refetch()} disabled={query.isFetching}
         className="min-h-11 rounded-lg border border-gray-200 px-3 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
       >{query.isFetching ? 'Loading…' : 'Reload saved data'}</button>
+      </div>
     </div>
     {query.isLoading ? <p role="status" className="rounded-lg bg-gray-50 p-4 text-sm text-gray-600">Loading compliance evidence…</p> : null}
     {query.error ? <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
@@ -218,6 +250,10 @@ const CompliancePanel: React.FC<Props> = ({ scope, scopeId }) => {
         {data.enabled && data.identity_ready && data.stale ? <span className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-900">Source refresh needed</span> : null}
       </div>
       {unavailableMessage ? <p className="rounded-lg bg-gray-50 p-4 text-sm text-gray-600">{unavailableMessage}</p> : <>
+        {data.coverage.scope_parcel_count !== undefined ? <p className={`rounded-lg p-3 text-sm ${data.coverage.unmapped_parcel_count ? 'bg-amber-50 text-amber-900' : 'bg-gray-50 text-gray-600'}`}>
+          Physical-building identities mapped for {data.coverage.mapped_parcel_count} of {data.coverage.scope_parcel_count} parcels in this scope.
+          {data.coverage.unmapped_parcel_count ? ` ${data.coverage.unmapped_parcel_count} parcels remain outside the identity pilot. Counts below cover mapped buildings only.` : ''}
+        </p> : null}
         <div className="flex flex-wrap items-start justify-between gap-4 rounded-xl border border-gray-200 bg-white p-4">
           <div>
             <p className="text-sm text-gray-500">{staleBalance ? 'Last reported balance' : 'Reported unpaid balance'}{data.coverage.missing_balance_bin_count > 0 && data.reported_balance_cents != null ? ' · Known subtotal' : ''}</p>
@@ -229,11 +265,20 @@ const CompliancePanel: React.FC<Props> = ({ scope, scopeId }) => {
           </div>
           <div className="text-sm text-gray-700">
             <p>{data.coverage.checked_building_count} of {data.coverage.physical_building_count} physical buildings checked</p>
-            <p className="mt-1">{data.coverage.active_records_count} active source records · {data.coverage.records_count} total records</p>
+            <p className="mt-1">{data.coverage.active_records_count} active violations · {data.coverage.records_count} total source records</p>
+            {data.coverage.complaints_count !== undefined ? <p className="mt-1">{data.coverage.open_complaints_count} open complaints · {data.coverage.complaints_count} complaint records</p> : null}
             <p className="mt-2 text-xs text-gray-500">Source updated: {dateLabel(data.source_updated_at)}</p>
             <p className="mt-1 text-xs text-gray-500">Latest DOB check observed: {dateLabel(data.as_of)}</p>
           </div>
         </div>
+        {data.source_coverage?.length ? <section aria-label="Source-specific coverage" className="grid gap-3 sm:grid-cols-2">
+          {data.source_coverage.map(source => <div key={source.source_system} className="rounded-lg border border-gray-200 p-3 text-xs text-gray-600">
+            <p className="font-semibold text-gray-900">{sourceLabel(source.source_system)}</p>
+            <p className="mt-1">{source.checked_building_count} of {source.physical_building_count} mapped buildings checked · {source.records_count} records</p>
+            <p className="mt-1">{COVERAGE_LABELS[source.status] || source.status.replace(/_/g, ' ')}{source.stale ? ' · Refresh needed' : ''}</p>
+            <p className="mt-1">Source updated {dateLabel(source.source_updated_at)} · Observed {dateLabel(source.observed_at)}</p>
+          </div>)}
+        </section> : null}
         {coverageStatus === 'not_checked' ? <p className="text-sm text-gray-600">{UNAVAILABLE_MESSAGES.not_checked}</p> : null}
         {groups.length > 0 ? groups.map(([key, group]) => <ParcelGroup key={key} {...group} />)
           : <p className="rounded-lg bg-gray-50 p-4 text-sm text-gray-600">No verified physical buildings are available in this scope. A completed identity and source check is required.</p>}

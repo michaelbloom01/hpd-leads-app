@@ -20,6 +20,42 @@ export interface ComplianceRecord {
   observed_at: string;
   identity_status: string;
   stale: boolean;
+  complaint_number?: string | null;
+  complaint_category?: string | null;
+  complaint_category_label?: string | null;
+  received_date?: string | null;
+  inspection_date?: string | null;
+  disposition_date?: string | null;
+  disposition_code?: string | null;
+  disposition_code_label?: string | null;
+  source_run_date?: string | null;
+  date_parse_warnings?: string[];
+  category_codebook_url?: string | null;
+  category_codebook_revision?: string | null;
+  disposition_codebook_url?: string | null;
+  disposition_codebook_revision?: string | null;
+}
+
+export interface ComplianceSourceCoverage {
+  source_system: string;
+  status: string;
+  checked_building_count: number;
+  physical_building_count: number;
+  records_count: number;
+  active_records_count: number;
+  open_complaints_count: number;
+  source_updated_at: string | null;
+  observed_at: string | null;
+  stale: boolean;
+}
+
+export interface ComplianceSourceCheck {
+  source_system: string;
+  status: string;
+  records_count: number | null;
+  source_updated_at: string | null;
+  observed_at: string | null;
+  stale: boolean;
 }
 
 export interface ComplianceBalanceObservation {
@@ -50,6 +86,13 @@ export interface ComplianceBuilding {
   source_check_status: 'not_checked' | 'checked';
   source_updated_at: string | null;
   observed_at: string | null;
+  source_checks?: ComplianceSourceCheck[];
+  hpd_registration?: {
+    registration_id: string; hpd_building_id: string; last_registration_date: string | null;
+    registration_end_date: string | null; status: 'expired' | 'unexpired' | 'unknown' | 'conflicting_current_records';
+    current_record_count?: number;
+    source_url: string; source_updated_at: string | null; observed_at: string | null;
+  } | null;
 }
 
 export interface ComplianceProvenance {
@@ -75,12 +118,19 @@ export interface ComplianceResponse {
     active_records_count: number;
     balance_known_building_count: number;
     missing_balance_bin_count: number;
+    complaints_count?: number;
+    open_complaints_count?: number;
+    scope_parcel_count?: number;
+    mapped_parcel_count?: number;
+    unmapped_parcel_count?: number;
+    identity_coverage_status?: string;
   };
   reported_balance_cents: number | null;
   estimated_penalty_cents: number | null;
   warnings: string[];
   buildings: ComplianceBuilding[];
   provenance: ComplianceProvenance[];
+  source_coverage?: ComplianceSourceCoverage[];
 }
 
 export class ComplianceApiError extends Error {
@@ -110,10 +160,13 @@ function validResponse(value: unknown): value is ComplianceResponse {
   if (!isObject(value) || !isObject(value.coverage) || !isObject(value.scope)) return false;
   const coverage = value.coverage;
   const counts = ['physical_building_count', 'checked_building_count', 'records_count', 'active_records_count', 'balance_known_building_count', 'missing_balance_bin_count'];
+  const optionalCounts = ['complaints_count', 'open_complaints_count', 'scope_parcel_count', 'mapped_parcel_count', 'unmapped_parcel_count'];
   if (typeof value.enabled !== 'boolean' || typeof value.identity_ready !== 'boolean' || typeof value.stale !== 'boolean'
     || !nullableText(value.as_of) || !nullableText(value.source_updated_at)
     || typeof value.scope.type !== 'string' || typeof value.scope.id !== 'string'
     || typeof coverage.status !== 'string' || !counts.every(key => validCount(coverage[key]))
+    || !optionalCounts.every(key => coverage[key] === undefined || validCount(coverage[key]))
+    || !(coverage.identity_coverage_status === undefined || typeof coverage.identity_coverage_status === 'string')
     || !validMoney(value.reported_balance_cents) || !validMoney(value.estimated_penalty_cents)
     || !Array.isArray(value.buildings) || !Array.isArray(value.warnings) || !value.warnings.every(item => typeof item === 'string')
     || !Array.isArray(value.provenance)) return false;
@@ -127,7 +180,17 @@ function validResponse(value: unknown): value is ComplianceResponse {
       && ['id', 'source_system', 'source_record_key', 'source_url', 'identity_status'].every(key => typeof record[key] === 'string')
       && ['category', 'violation_type', 'device_type', 'status', 'issue_date', 'description', 'source_updated_at'].every(key => nullableText(record[key]))
       && typeof record.observed_at === 'string'
+      && typeof record.record_type === 'string'
+      && ['complaint_number', 'complaint_category', 'complaint_category_label', 'received_date', 'inspection_date', 'disposition_date', 'disposition_code', 'disposition_code_label', 'source_run_date', 'category_codebook_url', 'category_codebook_revision', 'disposition_codebook_url', 'disposition_codebook_revision'].every(key => record[key] === undefined || nullableText(record[key]))
+      && (record.date_parse_warnings === undefined || Array.isArray(record.date_parse_warnings) && record.date_parse_warnings.every(item => typeof item === 'string'))
       && typeof record.stale === 'boolean')
+    && (building.source_checks === undefined || Array.isArray(building.source_checks) && building.source_checks.every(check => isObject(check)
+      && typeof check.source_system === 'string' && typeof check.status === 'string'
+      && validMoney(check.records_count) && typeof check.stale === 'boolean'
+      && ['source_updated_at', 'observed_at'].every(key => nullableText(check[key]))))
+    && (building.hpd_registration == null || isObject(building.hpd_registration)
+      && ['registration_id', 'hpd_building_id', 'status', 'source_url'].every(key => typeof building.hpd_registration![key] === 'string')
+      && ['last_registration_date', 'registration_end_date', 'source_updated_at', 'observed_at'].every(key => nullableText(building.hpd_registration![key])))
     && Array.isArray(building.balance_observations) && building.balance_observations.every(observation => isObject(observation)
       && ['id', 'bin', 'category', 'source_url', 'reviewer'].every(key => typeof observation[key] === 'string')
       && ['source_updated_at', 'source_timestamp_raw'].every(key => nullableText(observation[key]))
@@ -136,7 +199,11 @@ function validResponse(value: unknown): value is ComplianceResponse {
   const validProvenance = value.provenance.every(source => isObject(source)
     && ['source_system', 'source_url', 'status'].every(key => typeof source[key] === 'string')
     && ['source_updated_at', 'observed_at'].every(key => nullableText(source[key])));
-  return validBuildings && validProvenance;
+  const validSourceCoverage = value.source_coverage === undefined || Array.isArray(value.source_coverage) && value.source_coverage.every(source => isObject(source)
+    && typeof source.source_system === 'string' && typeof source.status === 'string' && typeof source.stale === 'boolean'
+    && ['checked_building_count', 'physical_building_count', 'records_count', 'active_records_count', 'open_complaints_count'].every(key => validCount(source[key]))
+    && ['source_updated_at', 'observed_at'].every(key => nullableText(source[key])));
+  return validBuildings && validProvenance && validSourceCoverage;
 }
 
 export async function fetchCompliance(

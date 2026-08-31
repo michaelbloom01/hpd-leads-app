@@ -59,13 +59,13 @@ export interface BoardChairBenchmarkCase {
   address: string;
   expected_name: string;
   expected_title: string;
-  source_date: string;
+  source_date: string | null;
   source_name: string;
   source_url: string;
   observed_name: string | null;
   status: 'current_match' | 'stale_match' | 'different_current_name' | 'missing_current_evidence';
   identity_match: boolean;
-  evidence_currentness: 'current' | 'historical';
+  evidence_currentness: 'current' | 'historical' | 'unverified';
 }
 
 export interface BoardChairBenchmark {

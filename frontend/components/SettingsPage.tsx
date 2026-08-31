@@ -3063,12 +3063,12 @@ const DataHealthSection: React.FC = () => {
             ))}
           </div>
           <div className="mt-3 rounded border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-            Exact DOS matches have high entity confidence and medium board-role confidence. HPD HeadOfficer coverage is tracked separately ({boardChairCoverage.hpd_head_officer_proxy.toLocaleString()} buildings) and is excluded.
+            Exact DOS matches identify useful Board Head candidates. Actual board title and current tenure require separate dated evidence. HPD HeadOfficer coverage is tracked separately ({boardChairCoverage.hpd_head_officer_proxy.toLocaleString()} buildings) and is excluded.
           </div>
           {boardChairBenchmark && (
             <div className="mt-3 flex flex-col gap-1 border-t border-gray-100 pt-3 text-xs text-gray-600 sm:flex-row sm:items-center sm:justify-between">
               <span>Public benchmark: {boardChairBenchmark.identity_matches} of {boardChairBenchmark.total_cases} names match the current DOS cache.</span>
-              <span>{boardChairBenchmark.status_counts.current_match ?? 0} current match</span>
+              <span>{boardChairBenchmark.status_counts.current_match ?? 0} recent explicit role + fresh name match</span>
             </div>
           )}
         </div>

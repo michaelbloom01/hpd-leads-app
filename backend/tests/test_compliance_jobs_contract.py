@@ -133,3 +133,32 @@ async def test_building_default_gate_explains_actual_source_preview():
     response = await jobs.start_job(job_type="buildings", limit=25, session=Session(), user=AuthUser(user_id="u1", email="test@example.com"))
     assert response["preview"]["required_parameters"] == ["expected_source_fingerprint"]
     assert "buildings_preview/start" in response["preview"]["source_preview_query"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("job_type", ["dob_complaints_preview", "hpd_identity_pilot_preview"])
+async def test_new_pilot_previews_dispatch_bounded_scope(monkeypatch, job_type):
+    dispatched = []
+    task = SimpleNamespace(delay=lambda **kwargs: dispatched.append(kwargs))
+    if job_type.startswith("hpd_identity"):
+        monkeypatch.setitem(sys.modules, "src.tasks.identity_pilot", SimpleNamespace(ingest_hpd_identity_pilot=task))
+    else:
+        monkeypatch.setitem(sys.modules, "src.tasks.compliance", SimpleNamespace(ingest_dob_complaints=task))
+    response = await jobs.start_job(job_type=job_type, limit=25, bins=["3348179"], session=Session(), user=AuthUser(user_id="u1", email="test@example.com"))
+    assert response["status"] == "queued"
+    assert dispatched[0]["bins"] == ["3348179"]
+    assert dispatched[0]["dry_run"] is True
+    assert dispatched[0]["confirm_execute"] is False
+
+
+@pytest.mark.anyio
+async def test_identity_pilot_requires_its_reviewed_fingerprint_before_writes():
+    session = Session()
+    with pytest.raises(HTTPException, match="hpd_identity_pilot_preview"):
+        await jobs.start_job(job_type="hpd_identity_pilot", limit=25, bins=["3348179"], dry_run=False, confirm_execute=True, session=session, user=AuthUser(user_id="u1", email="test@example.com"))
+    assert not session.calls
+
+
+def test_pilot_scope_never_expands_past_twenty_five_bins():
+    with pytest.raises(HTTPException, match="at most 25"):
+        jobs._normalize_pilot_bins([str(3000000 + number) for number in range(26)])

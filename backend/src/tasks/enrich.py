@@ -186,6 +186,17 @@ def run_enrichment_job(self, job_id: int, limit: int = 500, lead_ids: list[str] 
 def _build_dos_cache_payload(corporate_owner_name: str, dos_entity: Any, officers: list[dict[str, Any]]) -> dict[str, Any]:
     entity_name = getattr(dos_entity, "name", None)
     return {
+        "source_name": "NY Department of State Active Corporations",
+        "source_dataset": "n9v6-gdp6",
+        "source_field": "chairman_name",
+        "source_field_display_name": "CEO Name",
+        "source_role_label": "CEO Name",
+        "source_observed_at": datetime.now(timezone.utc).isoformat(),
+        "source_role_effective_at": None,
+        "board_role_status": "unverified",
+        "board_role_title": None,
+        "board_role_evidence": [],
+        "source_url": f"https://data.ny.gov/resource/n9v6-gdp6.json?dos_id={getattr(dos_entity, 'dos_id', '')}",
         "lookup_name": corporate_owner_name,
         "dos_id": getattr(dos_entity, "dos_id", None),
         "entity_name": entity_name,
@@ -218,7 +229,13 @@ def _build_board_chair_cache_payload(
         "source_name": "NY Department of State Active Corporations",
         "source_dataset": "n9v6-gdp6",
         "source_field": "chairman_name",
-        "source_role_label": "Chairman or CEO",
+        "source_role_label": "CEO Name",
+        "source_field_display_name": "CEO Name",
+        "source_observed_at": datetime.now(timezone.utc).isoformat(),
+        "source_role_effective_at": None,
+        "board_role_status": "unverified",
+        "board_role_title": None,
+        "board_role_evidence": [],
     }
     if not matches:
         return {
