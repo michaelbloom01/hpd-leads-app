@@ -9,13 +9,13 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
+from src.ingest import dob_complaints, dob_ecb, dob_violations
 from src.ingest.dob_safety import (
     DATASET_URL,
     SOURCE_SYSTEM,
     normalize_record,
     validate_bins,
 )
-from src.ingest import dob_complaints
 from src.models.compliance import (
     ComplianceBalanceObservation,
     ComplianceObservation,
@@ -34,6 +34,16 @@ SOURCE_CONFIG = {
         "url": dob_complaints.DATASET_URL,
         "normalize": dob_complaints.normalize_record,
         "validate_bins": dob_complaints.validate_bins,
+    },
+    dob_violations.SOURCE_SYSTEM: {
+        "url": dob_violations.DATASET_URL,
+        "normalize": dob_violations.normalize_record,
+        "validate_bins": dob_violations.validate_bins,
+    },
+    dob_ecb.SOURCE_SYSTEM: {
+        "url": dob_ecb.DATASET_URL,
+        "normalize": dob_ecb.normalize_record,
+        "validate_bins": dob_ecb.validate_bins,
     },
 }
 SCHEMA_TABLES = (
@@ -250,6 +260,10 @@ def build_response(
             raw_payload = value.pop("raw_payload", {})
             if value.get("source_system") == dob_complaints.SOURCE_SYSTEM:
                 value.update(dob_complaints.complaint_details(raw_payload))
+            elif value.get("source_system") == dob_violations.SOURCE_SYSTEM:
+                value.update(dob_violations.violation_details(raw_payload))
+            elif value.get("source_system") == dob_ecb.SOURCE_SYSTEM:
+                value.update(dob_ecb.ecb_details(raw_payload))
             record_check = check_map.get(
                 (value.get("source_system", SOURCE_SYSTEM), bin_value)
             )

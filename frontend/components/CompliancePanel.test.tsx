@@ -96,6 +96,26 @@ describe('CompliancePanel evidence and identity safety', () => {
     expect(screen.getByText('VIO-3348178')).toBeInTheDocument();
   });
 
+  it('shows ECB money on the exact record and excludes it from the portfolio subtotal', async () => {
+    const data = response();
+    data.buildings[0].records.push({
+      ...data.buildings[0].records[0],
+      id: 'ecb-record', source_system: 'dob_ecb', source_record_key: '35299130P',
+      category: 'DOB_ECB_VIOLATION', device_type: 'CLASS - 1', violation_type: 'Plumbing',
+      served_date: '2026-01-09', hearing_date: '2026-02-01', hearing_status: 'IN VIOLATION',
+      certification_status: 'NO COMPLIANCE RECORDED', penalty_imposed_cents: 250000,
+      amount_paid_cents: 50025, balance_due_cents: 199975,
+      monetary_rollup_status: 'record_only_pending_ecb_oath_deduplication',
+    });
+    fetchComplianceMock.mockResolvedValue(data);
+    renderPanel();
+    expect(await screen.findByText('35299130P')).toBeInTheDocument();
+    expect(screen.getByText('ECB balance due')).toBeInTheDocument();
+    expect(screen.getByText('$1,999.75')).toBeInTheDocument();
+    expect(screen.getByText('Excluded pending ECB/OATH duplicate review')).toBeInTheDocument();
+    expect(screen.getByText('$20,000')).toBeInTheDocument();
+  });
+
   it('loads long saved histories in batches and resets the batch on filter change', async () => {
     const data = response();
     data.buildings[0].records = Array.from({ length: 12 }, (_, index) => ({ ...data.buildings[0].records[0], id: `record-${index}`, source_record_key: `RECORD-${index}`, status: 'CLOSED' }));

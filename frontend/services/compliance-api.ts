@@ -34,6 +34,18 @@ export interface ComplianceRecord {
   category_codebook_revision?: string | null;
   disposition_codebook_url?: string | null;
   disposition_codebook_revision?: string | null;
+  ecb_violation_number?: string | null;
+  dob_violation_number?: string | null;
+  served_date?: string | null;
+  hearing_date?: string | null;
+  hearing_status?: string | null;
+  certification_status?: string | null;
+  severity?: string | null;
+  respondent_name?: string | null;
+  penalty_imposed_cents?: number | null;
+  amount_paid_cents?: number | null;
+  balance_due_cents?: number | null;
+  monetary_rollup_status?: string | null;
 }
 
 export interface ComplianceSourceCoverage {

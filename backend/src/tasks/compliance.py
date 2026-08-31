@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from sqlalchemy import text
 
-from src.ingest import dob_complaints
+from src.ingest import dob_complaints, dob_ecb, dob_violations
 from src.ingest.dob_safety import (
     SOURCE_SYSTEM,
     DOBSafetyClient,
@@ -54,6 +54,46 @@ def ingest_dob_complaints(
         source_system=dob_complaints.SOURCE_SYSTEM,
         client=dob_complaints.DOBComplaintsClient(),
         normalizer=dob_complaints.normalize_record,
+        job_id=job_id,
+        bins=bins,
+        dry_run=dry_run,
+        confirm_execute=confirm_execute,
+    )
+
+
+@celery_app.task(bind=True, name="src.tasks.compliance.ingest_dob_violations")
+def ingest_dob_violations(
+    self,
+    job_id: int | None = None,
+    bins: list[str] | None = None,
+    dry_run: bool = True,
+    confirm_execute: bool = False,
+):
+    bins = dob_violations.validate_bins(bins)
+    return _ingest_source(
+        source_system=dob_violations.SOURCE_SYSTEM,
+        client=dob_violations.DOBViolationsClient(),
+        normalizer=dob_violations.normalize_record,
+        job_id=job_id,
+        bins=bins,
+        dry_run=dry_run,
+        confirm_execute=confirm_execute,
+    )
+
+
+@celery_app.task(bind=True, name="src.tasks.compliance.ingest_dob_ecb")
+def ingest_dob_ecb(
+    self,
+    job_id: int | None = None,
+    bins: list[str] | None = None,
+    dry_run: bool = True,
+    confirm_execute: bool = False,
+):
+    bins = dob_ecb.validate_bins(bins)
+    return _ingest_source(
+        source_system=dob_ecb.SOURCE_SYSTEM,
+        client=dob_ecb.DOBECBClient(),
+        normalizer=dob_ecb.normalize_record,
         job_id=job_id,
         bins=bins,
         dry_run=dry_run,

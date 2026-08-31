@@ -11,8 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.db.session import get_session
 from src.auth.auth import AuthUser, get_current_user
+from src.db.session import get_session
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
@@ -35,10 +35,30 @@ SOURCE_REFRESH_JOB_TYPES = {
     "board_chairs",
     "dob_safety",
     "dob_complaints",
+    "dob_violations",
+    "dob_ecb",
     "hpd_identity_pilot",
 }
-READ_ONLY_PREVIEW_JOB_TYPES = {"buildings_preview", "dob_safety_preview", "dob_complaints_preview", "hpd_identity_pilot_preview"}
-BOUNDED_PILOT_JOB_TYPES = {"dob_safety", "dob_safety_preview", "dob_complaints", "dob_complaints_preview", "hpd_identity_pilot", "hpd_identity_pilot_preview"}
+READ_ONLY_PREVIEW_JOB_TYPES = {
+    "buildings_preview",
+    "dob_safety_preview",
+    "dob_complaints_preview",
+    "dob_violations_preview",
+    "dob_ecb_preview",
+    "hpd_identity_pilot_preview",
+}
+BOUNDED_PILOT_JOB_TYPES = {
+    "dob_safety",
+    "dob_safety_preview",
+    "dob_complaints",
+    "dob_complaints_preview",
+    "dob_violations",
+    "dob_violations_preview",
+    "dob_ecb",
+    "dob_ecb_preview",
+    "hpd_identity_pilot",
+    "hpd_identity_pilot_preview",
+}
 APPROVAL_REQUIRED_JOB_TYPES = SOURCE_REFRESH_JOB_TYPES | {
     "enrichment",
     "scoring",
@@ -197,7 +217,19 @@ def _approval_preview_response(
             "sources": sources or [],
             "bins": bins or [],
             "required_parameters": required_parameters,
-            "source_preview_query": f"/api/v1/jobs/{job_type}_preview/start?dry_run=true{bin_query}" if job_type in {"buildings", "hpd_identity_pilot", "dob_safety", "dob_complaints"} else None,
+            "source_preview_query": (
+                f"/api/v1/jobs/{job_type}_preview/start?dry_run=true{bin_query}"
+                if job_type
+                in {
+                    "buildings",
+                    "hpd_identity_pilot",
+                    "dob_safety",
+                    "dob_complaints",
+                    "dob_violations",
+                    "dob_ecb",
+                }
+                else None
+            ),
         },
         "rollback_strategy": "No job was queued. To execute, rerun with dry_run=false and confirm_execute=true after reviewing the preview.",
     }
@@ -628,7 +660,10 @@ async def start_job(
         "lead_generation", "lead_reconciliation", "building_coordinates",
         "board_chairs",
         "buildings_preview", "dob_safety", "dob_safety_preview",
-        "dob_complaints", "dob_complaints_preview", "hpd_identity_pilot", "hpd_identity_pilot_preview",
+        "dob_complaints", "dob_complaints_preview",
+        "dob_violations", "dob_violations_preview",
+        "dob_ecb", "dob_ecb_preview",
+        "hpd_identity_pilot", "hpd_identity_pilot_preview",
         "truth_validation", "truth_materialization",
     ]
     if job_type not in valid_types:
@@ -856,6 +891,12 @@ async def start_job(
                 from src.tasks.identity_pilot import ingest_hpd_identity_pilot as pilot_task
             elif job_type.startswith("dob_complaints"):
                 from src.tasks.compliance import ingest_dob_complaints as pilot_task
+            elif job_type.startswith("dob_violations"):
+                from src.tasks.compliance import (
+                    ingest_dob_violations as pilot_task,
+                )
+            elif job_type.startswith("dob_ecb"):
+                from src.tasks.compliance import ingest_dob_ecb as pilot_task
             else:
                 from src.tasks.compliance import ingest_dob_safety as pilot_task
 

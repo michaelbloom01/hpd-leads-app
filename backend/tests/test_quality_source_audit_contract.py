@@ -16,6 +16,19 @@ def test_source_registry_excludes_deprecated_dof_assessment():
     assert dof is None
 
 
+def test_compliance_sources_are_registered_as_bounded_refreshes():
+    by_name = {source["source_name"]: source for source in SOURCE_REGISTRY}
+    assert {
+        name: (by_name[name]["dataset_id"], by_name[name]["required_parameters"])
+        for name in ("dob_safety", "dob_complaints", "dob_violations", "dob_ecb")
+    } == {
+        "dob_safety": ("855j-jady", ["bin"]),
+        "dob_complaints": ("eabe-havv", ["bin"]),
+        "dob_violations": ("3h2n-5cm9", ["bin"]),
+        "dob_ecb": ("6bgk-3dad", ["bin"]),
+    }
+
+
 def test_source_status_reports_not_wired_before_other_conditions():
     assert _source_row_status(table_exists=True, has_quality_log=True, runnable_job=False) == "not_wired"
 

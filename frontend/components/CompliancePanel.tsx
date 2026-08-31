@@ -37,7 +37,7 @@ function dateLabel(value: string | null | undefined): string {
 }
 
 function sourceLabel(value: string): string {
-  return ({ dob_safety: 'DOB Safety', dob_complaints: 'DOB complaints', dob_unpaid_violations: 'DOB unpaid-violation ledger' } as Record<string, string>)[value]
+  return ({ dob_safety: 'DOB Safety', dob_complaints: 'DOB complaints', dob_violations: 'Legacy DOB violations', dob_ecb: 'DOB ECB', dob_unpaid_violations: 'DOB unpaid-violation ledger' } as Record<string, string>)[value]
     || value.replace(/_/g, ' ');
 }
 
@@ -84,6 +84,7 @@ function Field({ label, children, wide = false }: { label: string; children: Rea
 
 function RecordDetails({ record, evidence }: { record: ComplianceRecord; evidence: boolean }) {
   const complaint = record.record_type === 'complaint';
+  const ecb = record.source_system === 'dob_ecb';
   return <article className="border-t border-gray-200 pt-4 first:border-0 first:pt-0">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h4 className="text-sm font-semibold text-gray-900">{complaint ? `Complaint: ${record.complaint_category_label || record.complaint_category || 'Category unavailable'}` : record.device_type || record.category || 'DOB compliance record'}</h4>
@@ -102,6 +103,16 @@ function RecordDetails({ record, evidence }: { record: ComplianceRecord; evidenc
       </> : <>
         <Field label="Issue date">{dateLabel(record.issue_date)}</Field>
         <Field label="Violation type">{record.violation_type || 'Unavailable'}</Field>
+        {ecb ? <>
+          <Field label="Served date">{dateLabel(record.served_date)}</Field>
+          <Field label="Hearing date">{dateLabel(record.hearing_date)}</Field>
+          <Field label="Hearing status">{record.hearing_status || 'Unavailable'}</Field>
+          <Field label="Certification status">{record.certification_status || 'Unavailable'}</Field>
+          <Field label="Penalty imposed">{record.penalty_imposed_cents == null ? 'Unavailable' : formatComplianceMoney(record.penalty_imposed_cents)}</Field>
+          <Field label="Amount paid">{record.amount_paid_cents == null ? 'Unavailable' : formatComplianceMoney(record.amount_paid_cents)}</Field>
+          <Field label="ECB balance due">{record.balance_due_cents == null ? 'Unavailable' : formatComplianceMoney(record.balance_due_cents)}</Field>
+          <Field label="Portfolio subtotal">Excluded pending ECB/OATH duplicate review</Field>
+        </> : null}
       </>}
       {record.description ? <Field label="Source remarks" wide>{record.description}</Field> : null}
       {evidence ? <>
@@ -290,7 +301,7 @@ const CompliancePanel: React.FC<Props> = ({ scope, scopeId }) => {
           </div>
           <div className="text-sm text-gray-700">
             <p>{data.coverage.checked_building_count} of {data.coverage.physical_building_count} physical buildings checked</p>
-            <p className="mt-1">{data.coverage.active_records_count} active violations · {data.coverage.records_count} total source records</p>
+            <p className="mt-1">{data.coverage.active_records_count} active source records · {data.coverage.records_count} total source records</p>
             {data.coverage.complaints_count !== undefined ? <p className="mt-1">{data.coverage.open_complaints_count} open complaints · {data.coverage.complaints_count} complaint records</p> : null}
             <p className="mt-2 text-xs text-gray-500">Source updated: {dateLabel(data.source_updated_at)}</p>
             <p className="mt-1 text-xs text-gray-500">Latest DOB check observed: {dateLabel(data.as_of)}</p>

@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-
 
 RUNNABLE_JOB_TYPES = {
     "buildings", "hpd_complaints", "acris", "hpd_violations",
     "dob_permits", "hpd_litigation", "emergency_repairs", "aep",
     "evictions", "energy", "facades", "pad", "scoring", "enrichment",
     "building_coordinates", "board_chairs", "truth_validation", "outreach_feedback",
-    "dob_safety",
+    "dob_safety", "dob_complaints", "dob_violations", "dob_ecb",
 }
 
 SOURCE_REGISTRY = [
@@ -27,6 +26,9 @@ SOURCE_REGISTRY = [
     {"source_name": "acris_transactions", "dataset_id": "bnx9-e6tj|8h5j-fqxa|636b-3b5g", "table_name": "acris_transactions", "job_type": "acris", "ui_surface": "building_timeline+churn", "quality_sources": ["acris_transactions", "acris"]},
     {"source_name": "dob_permits", "dataset_id": "ipu4-2vj7|rbx6-tga4", "table_name": "dob_permits", "job_type": "dob_permits", "ui_surface": "building_timeline+churn"},
     {"source_name": "dob_safety", "dataset_id": "855j-jady", "table_name": "compliance_records", "job_type": "dob_safety", "ui_surface": "lead_compliance+building_compliance", "stale_after_days": 3, "coverage_scope": "explicit BIN pilot", "required_parameters": ["bin"]},
+    {"source_name": "dob_complaints", "dataset_id": "eabe-havv", "table_name": "compliance_records", "job_type": "dob_complaints", "ui_surface": "lead_compliance+building_compliance", "stale_after_days": 3, "coverage_scope": "explicit BIN pilot", "required_parameters": ["bin"]},
+    {"source_name": "dob_violations", "dataset_id": "3h2n-5cm9", "table_name": "compliance_records", "job_type": "dob_violations", "ui_surface": "lead_compliance+building_compliance", "stale_after_days": 3, "coverage_scope": "explicit BIN pilot", "required_parameters": ["bin"]},
+    {"source_name": "dob_ecb", "dataset_id": "6bgk-3dad", "table_name": "compliance_records", "job_type": "dob_ecb", "ui_surface": "lead_compliance+building_compliance", "stale_after_days": 3, "coverage_scope": "explicit BIN pilot", "required_parameters": ["bin"]},
     {"source_name": "hpd_litigation", "dataset_id": "59kj-x8nc", "table_name": "hpd_litigation", "job_type": "hpd_litigation", "ui_surface": "building_timeline+churn"},
     {"source_name": "emergency_repairs", "dataset_id": "24cj-meh5", "table_name": "emergency_repairs", "job_type": "emergency_repairs", "ui_surface": "churn_only"},
     {"source_name": "aep_designations", "dataset_id": "hcir-3275", "table_name": "aep_designations", "job_type": "aep", "ui_surface": "churn_only"},
@@ -88,7 +90,9 @@ def _source_row_status(
     return "operational"
 
 
-def _pick_latest_quality_row(source: dict, latest_quality: dict[str, dict]) -> Optional[dict]:
+def _pick_latest_quality_row(
+    source: dict, latest_quality: dict[str, dict]
+) -> dict | None:
     quality_sources = source.get("quality_sources") or [source["source_name"]]
     matches = [latest_quality.get(name) for name in quality_sources if latest_quality.get(name)]
     if not matches:
@@ -169,9 +173,9 @@ def build_source_refresh_plan(source_audit: dict[str, Any]) -> dict[str, Any]:
         item["job_start_endpoint"] = None if item["blocked"] else f"/api/v1/jobs/{item['job_type']}/start"
         item["preview_endpoint"] = None if item["blocked"] else f"/api/v1/jobs/{item['job_type']}/start"
         item["execute_endpoint"] = None if item["blocked"] else f"/api/v1/jobs/{item['job_type']}/start?dry_run=false&confirm_execute=true"
-        if item["job_type"] == "dob_safety" and not item["blocked"]:
-            item["recommended_action"] = "Select 1-100 exact DOB BINs, run dob_safety_preview, then execute the reviewed pilot scope."
-            item["source_preview_endpoint"] = "/api/v1/jobs/dob_safety_preview/start?dry_run=true"
+        if item["job_type"] in {"dob_safety", "dob_complaints", "dob_violations", "dob_ecb"} and not item["blocked"]:
+            item["recommended_action"] = f"Select 1-25 exact DOB BINs, run {item['job_type']}_preview, then execute the reviewed pilot scope."
+            item["source_preview_endpoint"] = f"/api/v1/jobs/{item['job_type']}_preview/start?dry_run=true"
             item["required_parameters"] = ["bin"]
         if item["job_type"] == "buildings" and not item["blocked"]:
             item["recommended_action"] = "Run buildings_preview, review the complete source diff and worker capacity, then execute using its expected_source_fingerprint."

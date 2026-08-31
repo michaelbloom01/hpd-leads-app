@@ -183,7 +183,7 @@ def test_active_complaints_and_active_violations_are_counted_separately():
     assert result["coverage"]["complaints_count"] == 2
     assert result["coverage"]["open_complaints_count"] == 1
     assert result["coverage"]["records_count"] == 6
-    assert len(result["provenance"]) == 2
+    assert len(result["provenance"]) == 4
 
 
 def test_checked_empty_complaints_are_distinguished_from_unchecked():
