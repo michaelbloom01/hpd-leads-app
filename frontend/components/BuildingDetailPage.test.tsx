@@ -64,7 +64,53 @@ describe('BuildingDetailPage truth confidence', () => {
       churn_score: 62.5,
       churn_category: 'warm',
       churn_breakdown: null,
-      all_contacts: [],
+      all_contacts: [
+        {
+          name: 'Example Manager Inc',
+          role: 'Agent',
+          source: 'HPD Registration',
+          source_record_id: 'manager-1',
+          as_of_date: '2026-08-15',
+          address: '10 Manager Street',
+          confidence_hint: null,
+          is_decision_maker: false,
+          source_url: 'https://data.cityofnewyork.us/resource/feu5-w2e2.json?registrationcontactid=manager-1',
+        },
+        {
+          name: 'Tara Manager',
+          role: 'SiteManager',
+          source: 'HPD Registration',
+          source_record_id: 'manager-person-1',
+          as_of_date: '2026-08-15',
+          address: null,
+          confidence_hint: null,
+          is_decision_maker: false,
+          source_url: 'https://data.cityofnewyork.us/resource/feu5-w2e2.json?registrationcontactid=manager-person-1',
+        },
+        {
+          name: 'Alex Boardperson',
+          role: 'Officer',
+          board_role: 'Board Head',
+          source: 'Property Website',
+          source_record_id: 'board-1',
+          as_of_date: '2026-08-20',
+          address: null,
+          confidence_hint: null,
+          is_decision_maker: true,
+          source_url: 'https://example.com/board',
+        },
+        {
+          name: 'Dana Officer',
+          role: 'Officer',
+          source: 'NY DOS Snapshot',
+          source_record_id: 'dos-1',
+          as_of_date: '2026-08-10',
+          address: null,
+          confidence_hint: null,
+          is_decision_maker: true,
+          source_url: 'https://apps.dos.ny.gov/publicInquiry/',
+        },
+      ],
       dos_contacts_status: 'loaded',
       dos_contacts_is_stale: false,
       management_company: 'Example Manager Inc',
@@ -125,6 +171,16 @@ describe('BuildingDetailPage truth confidence', () => {
     );
 
     expect(await screen.findByText('Evidence Check')).toBeInTheDocument();
+    const roleHeading = screen.getByText('Who runs this building?');
+    const evidenceHeading = screen.getByText('Evidence Check');
+    expect(roleHeading.compareDocumentPosition(evidenceHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText('Property manager')).toBeInTheDocument();
+    expect(screen.getByText('People at the manager')).toBeInTheDocument();
+    expect(screen.getByText('Board people')).toBeInTheDocument();
+    expect(screen.getAllByText('Tara Manager').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Alex Boardperson').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Corporate officer candidate. Board role unverified.')).toBeInTheDocument();
+    expect(screen.getByText('All source records (4)')).toBeInTheDocument();
     expect(await screen.findByText('Pilot paused')).toBeInTheDocument();
     expect(fetchComplianceMock).toHaveBeenCalledWith('parcels', '1000000001', expect.any(AbortSignal));
     expect((await screen.findAllByText('82%')).length).toBeGreaterThanOrEqual(1);

@@ -101,6 +101,44 @@ const eventIcons: Record<string, string> = {
   aep: 'A',
 };
 
+const organizationNamePattern = /\b(?:LLC|L\.L\.C|CORP|CORPORATION|INC|LTD|LP|LLP|COMPANY|CO|ASSOCIATES|MANAGEMENT|MGMT|REALTY|TENANTS|CONDOMINIUM|COOPERATIVE|ASSOCIATION|OWNER)\b/i;
+
+const normalizedContactName = (value: string | null | undefined): string =>
+  (value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+const isOrganizationName = (value: string | null | undefined): boolean =>
+  Boolean(value && organizationNamePattern.test(value));
+
+const contactEvidenceDate = (contact: BuildingContactEntry): string | null | undefined =>
+  contact.filing_date || contact.snapshot_as_of || contact.publication_date || contact.as_of_date;
+
+const ContactSourceLine: React.FC<{ contact: BuildingContactEntry }> = ({ contact }) => (
+  <div className="mt-1 text-xs text-gray-500">
+    {contact.source_url ? (
+      <a href={contact.source_url} target="_blank" rel="noopener noreferrer" className="font-medium text-blue-700 hover:underline">
+        {contact.source}
+      </a>
+    ) : (
+      <span className="font-medium text-gray-600">{contact.source}</span>
+    )}
+    {' '}· {formatAbsoluteDate(contactEvidenceDate(contact))}
+  </div>
+);
+
+interface RoleLaneProps {
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}
+
+const RoleLane: React.FC<RoleLaneProps> = ({ title, description, children }) => (
+  <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+    <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500">{title}</h3>
+    <p className="mt-1 text-xs text-gray-500">{description}</p>
+    <div className="mt-3 space-y-3">{children}</div>
+  </section>
+);
+
 const BuildingDetailPage: React.FC = () => {
   const { bbl: rawBbl } = useParams<{ bbl: string }>();
   const navigate = useNavigate();
@@ -215,9 +253,24 @@ const BuildingDetailPage: React.FC = () => {
     const bTime = b.as_of_date ? Date.parse(b.as_of_date) : 0;
     return bTime - aTime;
   });
-  const boardLeaders = sortedContacts.filter((c: BuildingContactEntry) =>
-    c.board_role === 'Board Head')
-    .slice(0, 3);
+  const managerName = normalizedContactName(building.management_company);
+  const managerOrganizationContact = sortedContacts.find((contact: BuildingContactEntry) =>
+    managerName && normalizedContactName(contact.name) === managerName,
+  ) || sortedContacts.find((contact: BuildingContactEntry) =>
+    contact.role.toLowerCase() === 'agent' && isOrganizationName(contact.name),
+  );
+  const managerPeople = sortedContacts.filter((contact: BuildingContactEntry) => {
+    const role = contact.role.toLowerCase().replace(/[^a-z]/g, '');
+    return !contact.board_role
+      && !isOrganizationName(contact.name)
+      && ['agent', 'managingagent', 'sitemanager', 'manager'].includes(role);
+  }).slice(0, 4);
+  const boardPeople = sortedContacts.filter((contact: BuildingContactEntry) => Boolean(contact.board_role)).slice(0, 4);
+  const boardOfficerCandidates = sortedContacts.filter((contact: BuildingContactEntry) =>
+    !contact.board_role
+    && (contact.source === 'NY DOS Filing' || contact.source === 'NY DOS Snapshot')
+    && /officer|chair|president|ceo/i.test(contact.role),
+  ).slice(0, 3);
   const showContactsCard =
     dosStatus !== 'loaded' ||
     Boolean(building.management_company) ||
@@ -322,6 +375,96 @@ const BuildingDetailPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {showContactsCard && (
+        <section className="rounded-lg border border-gray-200 bg-white p-5" aria-labelledby="building-roles-heading">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 id="building-roles-heading" className="text-lg font-semibold text-gray-900">Who runs this building?</h2>
+              <p className="mt-1 text-sm text-gray-500">Management and board roles stay separate. Each name remains tied to its source and date.</p>
+            </div>
+            <span className="text-xs text-gray-400">{contactCount} source records</span>
+          </div>
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            <RoleLane title="Property manager" description="The organization associated with day-to-day management.">
+              {building.management_company ? (
+                <div>
+                  <div className="font-semibold text-gray-900">{building.management_company}</div>
+                  {managerOrganizationContact ? (
+                    <>
+                      <div className="mt-1 text-xs text-gray-600">Listed as {managerOrganizationContact.role}</div>
+                      <ContactSourceLine contact={managerOrganizationContact} />
+                    </>
+                  ) : (
+                    <p className="mt-1 text-xs text-amber-700">Current app relationship. Direct source record still needs confirmation.</p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-amber-700">No management company is currently confirmed.</p>
+              )}
+            </RoleLane>
+
+            <RoleLane title="People at the manager" description="Named manager-side contacts, kept separate from the company.">
+              {managerPeople.length > 0 ? managerPeople.map((contact, index) => (
+                <div key={`${contact.name}-${contact.role}-${index}`}>
+                  <div className="font-semibold text-gray-900">{contact.name}</div>
+                  <div className="mt-1 text-xs text-gray-600">{contact.role}</div>
+                  <ContactSourceLine contact={contact} />
+                </div>
+              )) : (
+                <p className="text-sm text-gray-600">No named manager-side person found in the current source records.</p>
+              )}
+            </RoleLane>
+
+            <RoleLane title="Board people" description="Confirmed board roles and clearly labeled officer candidates.">
+              {boardPeople.length > 0 ? boardPeople.map((contact, index) => (
+                <div key={`${contact.name}-${contact.board_role}-${index}`}>
+                  <div className="font-semibold text-gray-900">{contact.name}</div>
+                  <div className="mt-1 text-xs font-medium text-indigo-700">{contact.board_role}</div>
+                  <ContactSourceLine contact={contact} />
+                </div>
+              )) : (
+                <p className="text-sm text-amber-700">No board leader is currently confirmed.</p>
+              )}
+              {boardOfficerCandidates.map((contact, index) => (
+                <div key={`${contact.name}-candidate-${index}`} className="border-t border-gray-200 pt-3">
+                  <div className="font-semibold text-gray-900">{contact.name}</div>
+                  <div className="mt-1 text-xs text-gray-600">Corporate officer candidate. Board role unverified.</div>
+                  <ContactSourceLine contact={contact} />
+                </div>
+              ))}
+            </RoleLane>
+          </div>
+
+          {building.corporate_owner && (
+            <div className="mt-3 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600">
+              <span className="font-medium text-gray-900">Ownership entity:</span> {building.corporate_owner}
+            </div>
+          )}
+
+          {dosBanner && (
+            <div className={`mt-3 rounded border px-3 py-2 ${dosBanner.tone}`}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs">
+                  {dosBanner.text}
+                  {building.dos_contacts_last_refreshed_at ? ` Last refresh: ${formatRelativeDate(building.dos_contacts_last_refreshed_at)}.` : ''}
+                </div>
+                {(dosStatus === 'stale' || dosStatus === 'not_loaded') && building.corporate_owner && (
+                  <button
+                    type="button"
+                    onClick={handleRefreshDosContacts}
+                    disabled={isRefreshingDos}
+                    className="shrink-0 rounded border border-current px-2 py-1 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isRefreshingDos ? 'Checking...' : 'Check DOS contacts'}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       <div className={`rounded-lg border p-4 ${evidenceClass}`}>
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -434,66 +577,13 @@ const BuildingDetailPage: React.FC = () => {
         </details>
       </div>
 
-      {/* People & Companies — contacts from all sources */}
+      {/* Full source records stay available without dominating the operating view. */}
       {showContactsCard && (
-        <div className="bg-white rounded-lg border border-gray-200 p-5">
-          {boardLeaders.length > 0 && (
-            <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <h3 className="text-sm font-semibold text-slate-900 mb-3">Board Leadership</h3>
-              <div className="space-y-2">
-                {boardLeaders.map((leader: BuildingContactEntry, idx: number) => (
-                  <div key={`${leader.name}-${idx}`} className="rounded border border-slate-200 bg-white px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-slate-900">{leader.name}</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">
-                        {leader.board_role}
-                      </span>
-                    </div>
-                    <div className="text-xs text-slate-600 mt-1">
-                      {leader.source_url ? (
-                        <a href={leader.source_url} target="_blank" rel="noopener noreferrer" className="hover:underline">
-                          {leader.source}
-                        </a>
-                      ) : leader.source}
-                      {' '}• Filed/Published: {formatAbsoluteDate(leader.filing_date || leader.snapshot_as_of || leader.publication_date || leader.as_of_date)}
-                    </div>
-                    {leader.address && <div className="text-xs text-slate-500">{leader.address}</div>}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-gray-900">People & Companies</h2>
-            <span className="text-xs text-gray-400">{contactCount} contacts from {new Set((building.all_contacts || []).map((c: BuildingContactEntry) => c.source)).size} sources</span>
-          </div>
-          {dosBanner && (
-            <div className={`mb-3 rounded border px-2 py-2 ${dosBanner.tone}`}>
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-xs">
-                  {dosBanner.text}
-                  {building.dos_contacts_last_refreshed_at ? ` Last refresh: ${formatRelativeDate(building.dos_contacts_last_refreshed_at)}.` : ''}
-                </div>
-                {(dosStatus === 'stale' || dosStatus === 'not_loaded') && building.corporate_owner && (
-                  <button
-                    type="button"
-                    onClick={handleRefreshDosContacts}
-                    disabled={isRefreshingDos}
-                    className="shrink-0 rounded border border-current px-2 py-1 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {isRefreshingDos ? 'Checking...' : 'Check DOS contacts'}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-          {building.management_company && (
-            <div className="mb-3 text-sm"><span className="text-gray-500">Managing Agent:</span> <span className="font-medium text-gray-900">{building.management_company}</span></div>
-          )}
-          {building.corporate_owner && (
-            <div className="mb-3 text-sm"><span className="text-gray-500">Corporate Owner:</span> <span className="font-medium text-gray-900">{building.corporate_owner}</span></div>
-          )}
-          <div className="overflow-x-auto">
+        <details className="rounded-lg border border-gray-200 bg-white">
+          <summary className="cursor-pointer px-5 py-3 text-sm font-semibold text-gray-700">
+            All source records ({contactCount})
+          </summary>
+          <div className="overflow-x-auto border-t border-gray-200">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
@@ -602,7 +692,7 @@ const BuildingDetailPage: React.FC = () => {
               </tbody>
             </table>
           </div>
-        </div>
+        </details>
       )}
 
       <div className="rounded-xl border border-gray-200 bg-white p-4 sm:p-5">
