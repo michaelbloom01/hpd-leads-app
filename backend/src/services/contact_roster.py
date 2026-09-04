@@ -99,9 +99,11 @@ def _detect_board_role(role: Optional[str], title: Optional[str]) -> Optional[st
     # HPD's HeadOfficer is a registration role, not proof of a co-op or condo board role.
     if "HEADOFFICER" in role_upper:
         return None
+    if re.search(r"\b(VICE[ -]+PRESIDENT|VP)\b", text_value):
+        return "Board Officer"
     if re.search(r"\b(PRESIDENT|CHAIR|CHAIRMAN)\b", text_value):
         return "Board Head"
-    if re.search(r"\b(BOARD|TREASURER|SECRETARY|VICE PRESIDENT|VP)\b", text_value):
+    if re.search(r"\b(BOARD|TREASURER|SECRETARY)\b", text_value):
         return "Board Officer"
     return None
 
@@ -167,30 +169,69 @@ def _extract_street_key(value: Optional[str]) -> str:
     return " ".join(key)
 
 
-def _classify_officer_confidence(
-    officer_address: Optional[str],
-    building_address: Optional[str],
-    pm_address: Optional[str],
-) -> tuple[Optional[str], bool]:
+def _officer_address_hint(
+    officer_address: str | None,
+    building_address: str | None,
+    pm_address: str | None,
+) -> str | None:
     officer_key = _extract_street_key(officer_address)
     building_key = _extract_street_key(building_address)
     pm_key = _extract_street_key(pm_address)
 
     if building_key and officer_key and building_key == officer_key:
-        return "Likely board member (resident)", True
+        return "Approximate street match to building address"
     if pm_key and officer_key and pm_key == officer_key:
-        return "PM company employee", False
-    return None, False
+        return "Approximate street match to registered agent address"
+    return None
+
+
+def _project_hpd_contact(data: dict[str, Any], *, is_condo_coop: bool) -> dict[str, Any] | None:
+    company_name = str(data.get("corporation_name") or "").strip() or None
+    person_name = " ".join(
+        str(data.get(part) or "").strip() for part in ("first_name", "last_name")
+    ).strip() or None
+    name = company_name or person_name
+    if not name:
+        return None
+    role = data.get("contact_type") or "Unknown"
+    source_title = str(data.get("title") or "").strip() or None
+    board_role = _detect_board_role(role, source_title)
+    observed_at = _coerce_iso(data.get("updated_at"))
+    return {
+        "name": name,
+        "company_name": company_name,
+        "person_name": person_name,
+        "source_title": source_title,
+        "role": role,
+        "source": "HPD Registration",
+        "source_record_id": data.get("registration_contact_id"),
+        "as_of_date": observed_at,
+        "source_observed_at": observed_at,
+        "publication_date": None,
+        "address": _format_contact_address([
+            data.get("business_address"), data.get("business_city"),
+            data.get("business_state"), data.get("business_zip"),
+        ]),
+        "confidence_hint": None,
+        "is_decision_maker": (
+            role in {"CorporateOwner", "Owner", "IndividualOwner", "HeadOfficer"}
+            or (bool(board_role) and is_condo_coop)
+        ),
+        "source_url": _hpd_source_url(data.get("registration_contact_id")),
+        "board_role": board_role,
+        "board_role_status": "unverified" if board_role else None,
+    }
 
 
 def _dedupe_contacts(contacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    deduped: dict[tuple[str, str], dict[str, Any]] = {}
+    deduped: dict[tuple[str, str, str], dict[str, Any]] = {}
     for contact in contacts:
         name = str(contact.get("name") or "").strip()
         role = str(contact.get("role") or "").strip()
         if not name or not role:
             continue
-        key = (name.upper(), role.upper())
+        person_name = str(contact.get("person_name") or "").strip()
+        key = (name.upper(), role.upper(), person_name.upper())
         existing = deduped.get(key)
         if not existing:
             deduped[key] = contact
@@ -205,11 +246,11 @@ def _dedupe_contacts(contacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     # Prefer the semantic chairman row over generic DOS officer rows for same person.
     chairman_names = {
-        name for (name, role) in deduped.keys()
+        name for (name, role, _) in deduped
         if "CHAIRMAN" in role
     }
     for key in list(deduped.keys()):
-        name, role = key
+        name, role, _ = key
         if name in chairman_names and "CHAIRMAN" not in role and "DOS" in role:
             deduped.pop(key, None)
 
@@ -338,47 +379,17 @@ async def get_building_contacts(
     )
 
     for row in contact_rows:
-        data = dict(row._mapping)
-        name = data.get("corporation_name") or f"{data.get('first_name', '')} {data.get('last_name', '')}".strip()
-        if not name:
+        contact = _project_hpd_contact(dict(row._mapping), is_condo_coop=is_condo_coop)
+        if not contact:
             continue
-
-        role = data.get("contact_type") or "Unknown"
-        board_role = _detect_board_role(role, data.get("title"))
-        address = _format_contact_address(
-            [
-                data.get("business_address"),
-                data.get("business_city"),
-                data.get("business_state"),
-                data.get("business_zip"),
-            ]
-        )
-        as_of_date = _coerce_iso(data.get("updated_at"))
-        is_decision_maker = role in {"CorporateOwner", "Owner", "IndividualOwner", "HeadOfficer"}
-        if board_role and is_condo_coop:
-            is_decision_maker = True
-
-        contacts.append(
-            {
-                "name": name,
-                "role": role,
-                "source": "HPD Registration",
-                "source_record_id": data.get("registration_contact_id"),
-                "as_of_date": as_of_date,
-                "publication_date": as_of_date,
-                "address": address,
-                "confidence_hint": None,
-                "is_decision_maker": is_decision_maker,
-                "source_url": _hpd_source_url(data.get("registration_contact_id")),
-                "board_role": board_role,
-            }
-        )
-
-        if role == "Agent" and not pm_address:
-            pm_address = address
-            management_company = name
-        if role == "CorporateOwner" and not corporate_owner:
-            corporate_owner = name
+        contacts.append(contact)
+        if contact["role"] == "Agent":
+            if not pm_address:
+                pm_address = contact["address"]
+            if not management_company:
+                management_company = contact["company_name"]
+        if contact["role"] == "CorporateOwner" and not corporate_owner:
+            corporate_owner = contact["name"]
 
     cache_row = (
         await session.execute(
@@ -413,7 +424,7 @@ async def get_building_contacts(
                         officer.get("zip"),
                     ]
                 )
-                confidence_hint, resident_decision_maker = _classify_officer_confidence(
+                confidence_hint = _officer_address_hint(
                     officer_address=officer_address,
                     building_address=building_address,
                     pm_address=pm_address,
@@ -429,11 +440,12 @@ async def get_building_contacts(
                         "filing_date": _coerce_iso(officer.get("filing_date")),
                         "address": officer_address,
                         "confidence_hint": confidence_hint,
-                        "is_decision_maker": resident_decision_maker or (
+                        "is_decision_maker": (
                             bool(_detect_board_role("DOS Officer", officer.get("title"))) and is_condo_coop
                         ),
                         "source_url": _dos_filing_url(officer.get("filing_num"), dos_id),
                         "board_role": _detect_board_role("DOS Officer", officer.get("title")),
+                        "board_role_status": "unverified",
                     }
                 )
 
@@ -547,43 +559,17 @@ def get_building_contacts_sync(
     ).fetchall()
 
     for row in rows:
-        data = dict(row._mapping)
-        name = data.get("corporation_name") or f"{data.get('first_name', '')} {data.get('last_name', '')}".strip()
-        if not name:
+        contact = _project_hpd_contact(dict(row._mapping), is_condo_coop=is_condo_coop)
+        if not contact:
             continue
-        role = data.get("contact_type") or "Unknown"
-        board_role = _detect_board_role(role, data.get("title"))
-        address = _format_contact_address(
-            [
-                data.get("business_address"),
-                data.get("business_city"),
-                data.get("business_state"),
-                data.get("business_zip"),
-            ]
-        )
-        contacts.append(
-            {
-                "name": name,
-                "role": role,
-                "source": "HPD Registration",
-                "source_record_id": data.get("registration_contact_id"),
-                "as_of_date": _coerce_iso(data.get("updated_at")),
-                "publication_date": _coerce_iso(data.get("updated_at")),
-                "address": address,
-                "confidence_hint": None,
-                "is_decision_maker": (
-                    role in {"CorporateOwner", "Owner", "IndividualOwner", "HeadOfficer"}
-                    or (bool(board_role) and is_condo_coop)
-                ),
-                "source_url": _hpd_source_url(data.get("registration_contact_id")),
-                "board_role": board_role,
-            }
-        )
-        if role == "Agent" and not pm_address:
-            pm_address = address
-            management_company = name
-        if role == "CorporateOwner" and not corporate_owner:
-            corporate_owner = name
+        contacts.append(contact)
+        if contact["role"] == "Agent":
+            if not pm_address:
+                pm_address = contact["address"]
+            if not management_company:
+                management_company = contact["company_name"]
+        if contact["role"] == "CorporateOwner" and not corporate_owner:
+            corporate_owner = contact["name"]
 
     cache_row = conn.execute(
         text("""
@@ -613,7 +599,7 @@ def get_building_contacts_sync(
                     officer.get("zip"),
                 ]
             )
-            confidence_hint, resident_decision_maker = _classify_officer_confidence(
+            confidence_hint = _officer_address_hint(
                 officer_address=officer_address,
                 building_address=building_address,
                 pm_address=pm_address,
@@ -629,11 +615,12 @@ def get_building_contacts_sync(
                     "filing_date": _coerce_iso(officer.get("filing_date")),
                     "address": officer_address,
                     "confidence_hint": confidence_hint,
-                    "is_decision_maker": resident_decision_maker or (
+                    "is_decision_maker": (
                         bool(_detect_board_role("DOS Officer", officer.get("title"))) and is_condo_coop
                     ),
                     "source_url": _dos_filing_url(officer.get("filing_num"), dos_id),
                     "board_role": _detect_board_role("DOS Officer", officer.get("title")),
+                    "board_role_status": "unverified",
                 }
             )
 

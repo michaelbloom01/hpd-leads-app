@@ -161,6 +161,11 @@ export interface BuildingContactEntry {
   is_decision_maker: boolean;
   source_url?: string | null;
   board_role?: string | null;
+  board_role_status?: string | null;
+  company_name?: string | null;
+  person_name?: string | null;
+  source_title?: string | null;
+  source_observed_at?: string | null;
   filing_date?: string | null;
   snapshot_as_of?: string | null;
 }

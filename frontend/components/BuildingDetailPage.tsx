@@ -7,19 +7,14 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import {
   fetchBuildingDetail, fetchBuildingTimeline, fetchBuildingScoreHistory,
-  addBuildingToPipeline, fetchBuildingOutreachEvents, logBuildingOutreachEvent, requestBuildingDosContactsRefresh,
+  addBuildingToPipeline, fetchBuildingOutreachEvents, logBuildingOutreachEvent,
   type BuildingContactEntry, type BuildingDetail,
 } from '../services/buildings-api';
-import { fetchSubjectTruthSummary, type SubjectTruthSummary } from '../services/truth-api';
-import { assessContactConfidence } from '../utils/contactConfidence';
+import { fetchSubjectTruthSummary } from '../services/truth-api';
 import {
   formatClaimSubtitle,
   formatClaimTitle,
   formatSourceName,
-  formatTruthAction,
-  formatReviewBucket,
-  truthSummaryHeadline,
-  visibleTruthClaims,
 } from '../utils/truthDisplay';
 import { toast } from 'react-hot-toast';
 import CompliancePanel from './CompliancePanel';
@@ -76,18 +71,6 @@ const getChurnCategoryLabel = (category: string | null | undefined): string => {
   return 'Not scored yet';
 };
 
-const pct = (value: number | null | undefined): string => {
-  if (value == null) return '--';
-  return `${Math.round(value * 100)}%`;
-};
-
-const confidenceClass = (value: number | null | undefined): string => {
-  if (value == null) return 'border-gray-200 bg-gray-50 text-gray-600';
-  if (value >= 0.8) return 'border-emerald-200 bg-emerald-50 text-emerald-700';
-  if (value >= 0.55) return 'border-amber-200 bg-amber-50 text-amber-700';
-  return 'border-rose-200 bg-rose-50 text-rose-700';
-};
-
 const eventIcons: Record<string, string> = {
   complaint: 'C',
   violation: 'V',
@@ -101,16 +84,19 @@ const eventIcons: Record<string, string> = {
   aep: 'A',
 };
 
-const organizationNamePattern = /\b(?:LLC|L\.L\.C|CORP|CORPORATION|INC|LTD|LP|LLP|COMPANY|CO|ASSOCIATES|MANAGEMENT|MGMT|REALTY|TENANTS|CONDOMINIUM|COOPERATIVE|ASSOCIATION|OWNER)\b/i;
-
 const normalizedContactName = (value: string | null | undefined): string =>
   (value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-const isOrganizationName = (value: string | null | undefined): boolean =>
-  Boolean(value && organizationNamePattern.test(value));
-
 const contactEvidenceDate = (contact: BuildingContactEntry): string | null | undefined =>
-  contact.filing_date || contact.snapshot_as_of || contact.publication_date || contact.as_of_date;
+  contact.filing_date || contact.snapshot_as_of || contact.publication_date || contact.source_observed_at || contact.as_of_date;
+
+const contactDateLabel = (contact: BuildingContactEntry): string =>
+  contact.filing_date ? 'Filed' : contact.snapshot_as_of ? 'Snapshot' : contact.publication_date ? 'Published' : 'Stored';
+
+const boardRoleLabel = (contact: BuildingContactEntry): string =>
+  contact.board_role_status === 'verified' && contact.board_role
+    ? contact.board_role
+    : `${contact.board_role || 'Corporate officer'} candidate`;
 
 const ContactSourceLine: React.FC<{ contact: BuildingContactEntry }> = ({ contact }) => (
   <div className="mt-1 text-xs text-gray-500">
@@ -121,7 +107,7 @@ const ContactSourceLine: React.FC<{ contact: BuildingContactEntry }> = ({ contac
     ) : (
       <span className="font-medium text-gray-600">{contact.source}</span>
     )}
-    {' '}· {formatAbsoluteDate(contactEvidenceDate(contact))}
+    {' '}· {contactDateLabel(contact)} {formatAbsoluteDate(contactEvidenceDate(contact))}
   </div>
 );
 
@@ -148,9 +134,7 @@ const BuildingDetailPage: React.FC = () => {
     return decodeURIComponent(rawBbl).trim() || null;
   }, [rawBbl]);
 
-  const [isRefreshingDos, setIsRefreshingDos] = React.useState(false);
-
-  const { data: building, isLoading, error, refetch: refetchBuilding } = useQuery({
+  const { data: building, isLoading, error } = useQuery({
     queryKey: ['building', decodedBbl],
     queryFn: () => fetchBuildingDetail(decodedBbl!),
     enabled: !!decodedBbl,
@@ -210,26 +194,6 @@ const BuildingDetailPage: React.FC = () => {
     }
   };
 
-  const handleRefreshDosContacts = async () => {
-    if (!activeBbl || isRefreshingDos) return;
-    setIsRefreshingDos(true);
-    try {
-      const response = await requestBuildingDosContactsRefresh(activeBbl);
-      if (response.status === 'skipped') {
-        toast.error('No corporate owner found for DOS lookup');
-      } else if (response.status === 'approval_required') {
-        toast.success('DOS contact check ready; no refresh was queued');
-      } else {
-        toast.success(response.status === 'refreshing' ? 'DOS refresh requested' : 'DOS contacts updated');
-      }
-      await refetchBuilding();
-    } catch {
-      toast.error('Failed to request DOS refresh');
-    } finally {
-      setIsRefreshingDos(false);
-    }
-  };
-
   if (isLoading) return <div className="p-8 text-center text-gray-400">Loading...</div>;
   if (!decodedBbl || !building) return <div className="p-8 text-center text-red-500">Building not found{error ? ` — ${(error as Error).message}` : ''}</div>;
 
@@ -248,29 +212,26 @@ const BuildingDetailPage: React.FC = () => {
   const dosStatus = building.dos_contacts_status || (building.dos_contacts_is_stale ? 'stale' : 'loaded');
   const contactCount = building.all_contacts?.length || 0;
   const sortedContacts = [...(building.all_contacts || [])].sort((a, b) => {
-    if (a.is_decision_maker !== b.is_decision_maker) return a.is_decision_maker ? -1 : 1;
-    const aTime = a.as_of_date ? Date.parse(a.as_of_date) : 0;
-    const bTime = b.as_of_date ? Date.parse(b.as_of_date) : 0;
+    const aTime = Date.parse(contactEvidenceDate(a) || '') || 0;
+    const bTime = Date.parse(contactEvidenceDate(b) || '') || 0;
     return bTime - aTime;
   });
-  const managerName = normalizedContactName(building.management_company);
-  const managerOrganizationContact = sortedContacts.find((contact: BuildingContactEntry) =>
-    managerName && normalizedContactName(contact.name) === managerName,
-  ) || sortedContacts.find((contact: BuildingContactEntry) =>
-    contact.role.toLowerCase() === 'agent' && isOrganizationName(contact.name),
-  );
-  const managerPeople = sortedContacts.filter((contact: BuildingContactEntry) => {
+  const managementContacts = sortedContacts.filter(contact => {
     const role = contact.role.toLowerCase().replace(/[^a-z]/g, '');
-    return !contact.board_role
-      && !isOrganizationName(contact.name)
-      && ['agent', 'managingagent', 'sitemanager', 'manager'].includes(role);
-  }).slice(0, 4);
-  const boardPeople = sortedContacts.filter((contact: BuildingContactEntry) => Boolean(contact.board_role)).slice(0, 4);
-  const boardOfficerCandidates = sortedContacts.filter((contact: BuildingContactEntry) =>
-    !contact.board_role
-    && (contact.source === 'NY DOS Filing' || contact.source === 'NY DOS Snapshot')
-    && /officer|chair|president|ceo/i.test(contact.role),
-  ).slice(0, 3);
+    return ['agent', 'managingagent', 'sitemanager', 'manager'].includes(role);
+  });
+  // Use the source's company/person fields, including both on the same HPD Agent row.
+  const managerOrganizations = managementContacts.filter((contact, index, contacts) =>
+    contact.company_name && contacts.findIndex(other =>
+      normalizedContactName(other.company_name) === normalizedContactName(contact.company_name)) === index,
+  );
+  const managerPeople = [...managementContacts].sort((a, b) => Number(Boolean(b.company_name)) - Number(Boolean(a.company_name)))
+    .filter((contact, index, contacts) => contact.person_name && contacts.findIndex(other =>
+      normalizedContactName(other.person_name) === normalizedContactName(contact.person_name)) === index);
+  const boardPeople = sortedContacts.filter(contact => contact.board_role || (
+    (contact.source === 'NY DOS Filing' || contact.source === 'NY DOS Snapshot')
+    && /officer|chair|president|ceo/i.test(contact.role)
+  ));
   const showContactsCard =
     dosStatus !== 'loaded' ||
     Boolean(building.management_company) ||
@@ -284,23 +245,8 @@ const BuildingDetailPage: React.FC = () => {
     val.raw !== null && Number(val.raw || 0) === 0 && Number(val.contribution || 0) === 0
   );
   const unavailableBreakdownEntries = breakdownEntries.filter(([, val]) => val.raw === null);
-  const truthClaims = (truthSummary?.claims || []).slice(0, 6);
-  const truthSourceNames = Array.from(new Set(
-    truthClaims.flatMap((claim) => [
-      ...(claim.supporting_sources || []),
-      ...(claim.contradicting_sources || []).map((source) => `${source} (contradicts)`),
-    ]),
-  ));
-  const truthSchemaReady = (truthSummary as SubjectTruthSummary | undefined)?.schema_status?.ready;
-  const contradictionCount = truthSummary?.belief_summary.contradiction_count || 0;
-  const truthHeadline = truthSummaryHeadline(truthSummary, 'building');
-  const evidenceHeadline = truthSummary?.schema_status && !truthSchemaReady
-    ? 'Verified-confidence review is still being activated. Use the source table below as the operating view for contacts and roles.'
-    : truthHeadline;
-  const evidenceClass = truthSummary?.schema_status && !truthSchemaReady
-    ? 'bg-gray-50 text-gray-700 border-gray-200'
-    : confidenceClass(truthSummary?.overall_confidence_score);
-  const strongestTruthClaims = visibleTruthClaims(truthClaims, 4);
+  const truthClaims = (truthSummary?.claims || []).filter(claim => claim.predicate !== 'exists_in_building_table');
+  const conflictingClaims = truthClaims.filter(claim => claim.contradicting_evidence_count > 0);
   const dosBanner = (() => {
     if (dosStatus === 'refreshing') {
       return {
@@ -311,7 +257,7 @@ const BuildingDetailPage: React.FC = () => {
     if (dosStatus === 'stale') {
       return {
         tone: 'border-amber-200 bg-amber-50 text-amber-700',
-        text: 'DOS contact data is stale. Request a refresh to pull the latest filing snapshot.',
+        text: 'DOS contact data is stale. These names need a current source check.',
       };
     }
     if (dosStatus === 'not_loaded') {
@@ -387,53 +333,46 @@ const BuildingDetailPage: React.FC = () => {
           </div>
 
           <div className="mt-4 grid gap-3 lg:grid-cols-3">
-            <RoleLane title="Property manager" description="The organization associated with day-to-day management.">
-              {building.management_company ? (
-                <div>
-                  <div className="font-semibold text-gray-900">{building.management_company}</div>
-                  {managerOrganizationContact ? (
-                    <>
-                      <div className="mt-1 text-xs text-gray-600">Listed as {managerOrganizationContact.role}</div>
-                      <ContactSourceLine contact={managerOrganizationContact} />
-                    </>
-                  ) : (
-                    <p className="mt-1 text-xs text-amber-700">Current app relationship. Direct source record still needs confirmation.</p>
-                  )}
+            <RoleLane title="Property manager" description="Companies listed in management roles by the source.">
+              {managerOrganizations.length > 0 ? managerOrganizations.map((contact, index) => (
+                <div key={`company-${index}`}>
+                  <div className="font-semibold text-gray-900">{contact.company_name}</div>
+                  <div className="mt-1 text-xs text-gray-600">Listed as {contact.role}</div>
+                  <ContactSourceLine contact={contact} />
                 </div>
-              ) : (
-                <p className="text-sm text-amber-700">No management company is currently confirmed.</p>
+              )) : (
+                <p className="text-sm text-gray-600">No company named in the available management records.</p>
               )}
             </RoleLane>
 
-            <RoleLane title="People at the manager" description="Named manager-side contacts, kept separate from the company.">
+            <RoleLane title="Management contacts" description="Named people, with company associations where the source records them.">
               {managerPeople.length > 0 ? managerPeople.map((contact, index) => (
-                <div key={`${contact.name}-${contact.role}-${index}`}>
-                  <div className="font-semibold text-gray-900">{contact.name}</div>
-                  <div className="mt-1 text-xs text-gray-600">{contact.role}</div>
+                <div key={`person-${index}`}>
+                  <div className="font-semibold text-gray-900">{contact.person_name}</div>
+                  <div className="mt-1 text-xs text-gray-600">
+                    Listed as {contact.role}{contact.company_name ? ` with ${contact.company_name} on the same record.` : '. Company association unrecorded.'}
+                  </div>
                   <ContactSourceLine contact={contact} />
                 </div>
               )) : (
-                <p className="text-sm text-gray-600">No named manager-side person found in the current source records.</p>
+                <p className="text-sm text-gray-600">No person named in the available management records.</p>
               )}
             </RoleLane>
 
-            <RoleLane title="Board people" description="Confirmed board roles and clearly labeled officer candidates.">
+            <RoleLane title="Board people" description="Board names and officer candidates, with the source role shown.">
               {boardPeople.length > 0 ? boardPeople.map((contact, index) => (
-                <div key={`${contact.name}-${contact.board_role}-${index}`}>
-                  <div className="font-semibold text-gray-900">{contact.name}</div>
-                  <div className="mt-1 text-xs font-medium text-indigo-700">{contact.board_role}</div>
+                <div key={`board-${index}`}>
+                  <div className="font-semibold text-gray-900">{contact.person_name || contact.name}</div>
+                  <div className="mt-1 text-xs font-medium text-indigo-700">{boardRoleLabel(contact)}</div>
+                  <div className="mt-1 text-xs text-gray-600">Source role: {contact.source_title || contact.role}</div>
+                  {contact.board_role_status !== 'verified' && (
+                    <p className="mt-1 text-xs text-amber-700">Board role unverified.</p>
+                  )}
                   <ContactSourceLine contact={contact} />
                 </div>
               )) : (
-                <p className="text-sm text-amber-700">No board leader is currently confirmed.</p>
+                <p className="text-sm text-gray-600">No board person found in the available records.</p>
               )}
-              {boardOfficerCandidates.map((contact, index) => (
-                <div key={`${contact.name}-candidate-${index}`} className="border-t border-gray-200 pt-3">
-                  <div className="font-semibold text-gray-900">{contact.name}</div>
-                  <div className="mt-1 text-xs text-gray-600">Corporate officer candidate. Board role unverified.</div>
-                  <ContactSourceLine contact={contact} />
-                </div>
-              ))}
             </RoleLane>
           </div>
 
@@ -450,132 +389,34 @@ const BuildingDetailPage: React.FC = () => {
                   {dosBanner.text}
                   {building.dos_contacts_last_refreshed_at ? ` Last refresh: ${formatRelativeDate(building.dos_contacts_last_refreshed_at)}.` : ''}
                 </div>
-                {(dosStatus === 'stale' || dosStatus === 'not_loaded') && building.corporate_owner && (
-                  <button
-                    type="button"
-                    onClick={handleRefreshDosContacts}
-                    disabled={isRefreshingDos}
-                    className="shrink-0 rounded border border-current px-2 py-1 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {isRefreshingDos ? 'Checking...' : 'Check DOS contacts'}
-                  </button>
-                )}
               </div>
             </div>
           )}
         </section>
       )}
 
-      <div className={`rounded-lg border p-4 ${evidenceClass}`}>
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="font-semibold">Evidence Check</h2>
-              {truthSummary?.schema_status && truthSchemaReady && (
-                <span className="rounded border border-current px-2 py-0.5 text-[11px] font-medium">
-                  review layer online
-                </span>
-              )}
-            </div>
-            <p className="mt-1 max-w-2xl text-sm opacity-85">{evidenceHeadline}</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {(truthSummary?.belief_summary.safe_actions || ['not_evaluated']).map((action) => (
-                <span key={action} className="rounded-full bg-white/70 px-2 py-1 text-[11px] font-medium">
-                  {formatTruthAction(action)}
-                </span>
-              ))}
-            </div>
-          </div>
-          <div className="lg:text-right">
-            <div className="text-3xl font-bold">{pct(truthSummary?.overall_confidence_score)}</div>
-            <div className="text-[11px] uppercase font-bold opacity-70">
-              {formatReviewBucket(truthSummary?.review_bucket)}
-            </div>
-            <div className="mt-1 text-xs opacity-75">
-              {truthSummary?.belief_summary.freshness_days != null
-                ? `${truthSummary.belief_summary.freshness_days}d freshest claim`
-                : 'freshness pending'}
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
-          {[
-            ['Evidence items', truthSummary?.claims.length ?? '--'],
-            ['Conflicts', contradictionCount],
-            ['Supporting sources', truthSummary?.belief_summary.supporting_sources?.length ?? '--'],
-            ['Contradicting sources', truthSummary?.belief_summary.contradicting_sources?.length ?? 0],
-          ].map(([label, value]) => (
-            <div key={label as string} className="rounded border border-white/70 bg-white/70 px-3 py-2">
-              <div className="text-lg font-semibold">{value}</div>
-              <div className="text-[11px] uppercase font-bold opacity-65">{label}</div>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-4 rounded border border-white/70 bg-white/70 p-3">
-          <h3 className="text-xs font-bold uppercase tracking-wider opacity-70">Key Evidence</h3>
-          <div className="mt-2 space-y-2">
-            {(strongestTruthClaims.length ? strongestTruthClaims : truthClaims).slice(0, 4).map((claim) => (
-              <div key={claim.claim_id} className="rounded border border-white bg-white/80 px-3 py-2">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold">{formatClaimTitle(claim)}</div>
-                    <div className="mt-0.5 text-xs opacity-75">{formatClaimSubtitle(claim)}</div>
-                  </div>
-                  <span className="shrink-0 rounded border border-current px-1.5 py-0.5 text-[11px] font-semibold">
-                    {pct(claim.confidence_score)}
-                  </span>
-                </div>
-              </div>
-            ))}
-            {!truthClaims.length && (
-              <p className="text-sm opacity-75">No building-level truth claims are available yet.</p>
+      {truthClaims.length > 0 && (
+        <details className="rounded-lg border border-gray-200 bg-white" aria-label="Relationship evidence">
+          <summary className="cursor-pointer px-5 py-3 text-sm font-semibold text-gray-700">
+            Relationship evidence ({truthClaims.length})
+            {conflictingClaims.length > 0 && (
+              <span className="ml-2 text-amber-700">{conflictingClaims.length} relationship{conflictingClaims.length === 1 ? '' : 's'} with conflicting sources</span>
             )}
-          </div>
-        </div>
-
-        <details
-          aria-label="Evidence Ledger audit trail"
-          className="mt-3 rounded border border-white/70 bg-white/60"
-        >
-          <summary className="cursor-pointer px-3 py-2 text-xs font-bold uppercase tracking-wider opacity-75">
-            Source details ({truthClaims.length} items)
           </summary>
-          <div className="border-t border-white/70 p-3">
-            {!truthClaims.length ? (
-              <p className="mt-2 text-sm opacity-75">
-                No building-level evidence items are available yet. Use the source table below until confidence review is ready.
-              </p>
-            ) : (
-              <div className="mt-2 space-y-2">
-                {truthClaims.map((claim) => (
-                  <div key={claim.claim_id} className="rounded border border-white bg-white/80 px-3 py-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold">{formatClaimTitle(claim)}</div>
-                        <div className="truncate text-xs opacity-70">{formatClaimSubtitle(claim)}</div>
-                      </div>
-                      <span className="shrink-0 rounded border border-current px-1.5 py-0.5 text-[11px] font-semibold">
-                        {pct(claim.confidence_score)}
-                      </span>
-                    </div>
-                    <div className="mt-1 flex flex-wrap gap-1 text-[10px]">
-                      <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-emerald-700">{claim.supporting_evidence_count} supporting</span>
-                      {claim.contradicting_evidence_count > 0 && (
-                        <span className="rounded bg-rose-100 px-1.5 py-0.5 text-rose-700">{claim.contradicting_evidence_count} contradicting</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            {truthSourceNames.length > 0 && (
-              <p className="mt-2 text-xs opacity-75">Sources: {truthSourceNames.map(formatSourceName).join(', ')}</p>
-            )}
+          <div className="space-y-3 border-t border-gray-200 p-5">
+            {truthClaims.map(claim => (
+              <article key={claim.claim_id} className="text-sm">
+                <h3 className="font-semibold text-gray-900">{formatClaimTitle(claim)}</h3>
+                <p className="mt-1 text-xs text-gray-600">{formatClaimSubtitle(claim)}</p>
+                <p className="mt-1 text-xs text-gray-500">Supporting sources: {claim.supporting_sources.map(formatSourceName).join(', ') || 'None recorded'}</p>
+                {claim.contradicting_evidence_count > 0 && (
+                  <p className="mt-1 text-xs text-amber-800">Conflicting sources: {claim.contradicting_sources.map(formatSourceName).join(', ') || 'Source details unavailable'}</p>
+                )}
+              </article>
+            ))}
           </div>
         </details>
-      </div>
+      )}
 
       {/* Full source records stay available without dominating the operating view. */}
       {showContactsCard && (
@@ -585,109 +426,38 @@ const BuildingDetailPage: React.FC = () => {
           </summary>
           <div className="overflow-x-auto border-t border-gray-200">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
+              <thead className="border-b border-gray-200 bg-gray-50">
                 <tr>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Role</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Source</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Updated</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Address</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Safe Action</th>
+                  {['Name', 'Source role', 'Source and date', 'Address', 'Role notes'].map(label => (
+                    <th key={label} className="px-3 py-2 text-left text-xs font-medium text-gray-500">{label}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {sortedContacts.map((contact: BuildingContactEntry, i: number) => {
-                  const contactAssessment = assessContactConfidence(contact);
-                  return (
-                  <tr key={i} className={contact.is_decision_maker ? 'border-l-4 border-l-green-400 bg-green-50/40' : ''}>
-                    <td className="px-3 py-2 font-medium text-gray-900 whitespace-nowrap">
-                      <button
-                        className="hover:underline"
-                        onClick={() => {
-                          if (navigator.clipboard?.writeText) {
-                            navigator.clipboard.writeText(contact.name).catch(() => undefined);
-                            toast.success('Copied name');
-                          }
-                        }}
-                      >
-                        {contact.is_decision_maker ? '★ ' : ''}{contact.name}
-                      </button>
+                {sortedContacts.map((contact, index) => (
+                  <tr key={index}>
+                    <td className="px-3 py-2 font-medium text-gray-900">
+                      {contact.name}
+                      {contact.person_name && contact.person_name !== contact.name && (
+                        <div className="mt-1 text-xs font-normal text-gray-600">{contact.person_name}</div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-gray-600">
+                      {contact.role}
+                      {contact.source_title && <div className="mt-1 text-xs">{contact.source_title}</div>}
+                    </td>
+                    <td className="px-3 py-2"><ContactSourceLine contact={contact} /></td>
+                    <td className="max-w-xs px-3 py-2 text-xs text-gray-500">{contact.address || '--'}</td>
+                    <td className="max-w-xs px-3 py-2 text-xs text-gray-600">
                       {contact.board_role && (
-                        <span className="ml-2 px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 text-[10px]">
-                          {contact.board_role}
-                        </span>
+                        <p>{boardRoleLabel(contact)}{contact.board_role_status !== 'verified' ? '. Board role unverified.' : ''}</p>
                       )}
-                    </td>
-                    <td className="px-3 py-2 text-gray-600">{contact.role}</td>
-                    <td className="px-3 py-2">
-                      {contact.source_url ? (
-                        <a
-                          href={contact.source_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={`text-xs px-2 py-0.5 rounded hover:underline ${
-                            contact.source === 'NY DOS Filing' ? 'bg-blue-50 text-blue-700' :
-                            contact.source === 'NY DOS Snapshot' ? 'bg-indigo-50 text-indigo-700' :
-                            'bg-gray-100 text-gray-600'
-                          }`}
-                        >
-                          {contact.source}
-                        </a>
-                      ) : (
-                        <span className={`text-xs px-2 py-0.5 rounded ${
-                          contact.source === 'NY DOS Filing' ? 'bg-blue-50 text-blue-700' :
-                          contact.source === 'NY DOS Snapshot' ? 'bg-indigo-50 text-indigo-700' :
-                          'bg-gray-100 text-gray-600'
-                        }`}>{contact.source}</span>
-                      )}
-                    </td>
-                    <td
-                      className="px-3 py-2 text-gray-500 text-xs"
-                      title={`Filed/Published: ${formatAbsoluteDate(contact.filing_date || contact.snapshot_as_of || contact.publication_date || contact.as_of_date)}`}
-                    >
-                      {formatRelativeDate(contact.filing_date || contact.snapshot_as_of || contact.publication_date || contact.as_of_date)}
-                    </td>
-                    <td className="px-3 py-2 text-gray-500 text-xs max-w-[200px] truncate">
-                      {contact.address ? (
-                        <button
-                          className="hover:underline"
-                          onClick={() => {
-                            if (navigator.clipboard?.writeText) {
-                              navigator.clipboard.writeText(contact.address || '').catch(() => undefined);
-                              toast.success('Copied address');
-                            }
-                          }}
-                        >
-                          {contact.address}
-                        </button>
-                      ) : '--'}
-                    </td>
-                    <td className="px-3 py-2 text-xs">
-                      <div className="flex flex-col gap-1">
-                        <span
-                          className={`w-fit border px-1.5 py-0.5 rounded ${contactAssessment.toneClass}`}
-                          title={`${contactAssessment.label}: ${contactAssessment.rationale}`}
-                        >
-                          {contactAssessment.safeAction}
-                        </span>
-                        {contact.confidence_hint && (
-                          <span className={`w-fit px-1.5 py-0.5 rounded ${
-                            contact.confidence_hint === 'Likely board member (resident)' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'
-                          }`}>
-                            {contact.confidence_hint}
-                          </span>
-                        )}
-                      </div>
+                      {contact.confidence_hint && <p className="mt-1">App interpretation: {contact.confidence_hint}</p>}
                     </td>
                   </tr>
-                  );
-                })}
+                ))}
                 {sortedContacts.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="px-3 py-4 text-sm text-gray-400">
-                      No contact evidence is currently attached to this building.
-                    </td>
-                  </tr>
+                  <tr><td colSpan={5} className="px-3 py-4 text-sm text-gray-400">No contact evidence is currently attached to this building.</td></tr>
                 )}
               </tbody>
             </table>

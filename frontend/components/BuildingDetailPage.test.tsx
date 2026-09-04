@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import BuildingDetailPage from './BuildingDetailPage';
@@ -16,7 +16,6 @@ const fetchBuildingScoreHistoryMock = vi.fn();
 const addBuildingToPipelineMock = vi.fn();
 const fetchBuildingOutreachEventsMock = vi.fn();
 const logBuildingOutreachEventMock = vi.fn();
-const requestBuildingDosContactsRefreshMock = vi.fn();
 const fetchSubjectTruthSummaryMock = vi.fn();
 const navigateMock = vi.fn();
 
@@ -40,14 +39,18 @@ vi.mock('../services/buildings-api', () => ({
   addBuildingToPipeline: (...args: unknown[]) => addBuildingToPipelineMock(...args),
   fetchBuildingOutreachEvents: (...args: unknown[]) => fetchBuildingOutreachEventsMock(...args),
   logBuildingOutreachEvent: (...args: unknown[]) => logBuildingOutreachEventMock(...args),
-  requestBuildingDosContactsRefresh: (...args: unknown[]) => requestBuildingDosContactsRefreshMock(...args),
 }));
 
 vi.mock('../services/truth-api', () => ({
   fetchSubjectTruthSummary: (...args: unknown[]) => fetchSubjectTruthSummaryMock(...args),
 }));
 
-describe('BuildingDetailPage truth confidence', () => {
+function renderPage() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><BuildingDetailPage /></QueryClientProvider>);
+}
+
+describe('BuildingDetailPage roles and evidence', () => {
   afterEach(() => {
     cleanup();
   });
@@ -67,6 +70,8 @@ describe('BuildingDetailPage truth confidence', () => {
       all_contacts: [
         {
           name: 'Example Manager Inc',
+          company_name: 'Example Manager Inc',
+          person_name: null,
           role: 'Agent',
           source: 'HPD Registration',
           source_record_id: 'manager-1',
@@ -78,6 +83,8 @@ describe('BuildingDetailPage truth confidence', () => {
         },
         {
           name: 'Tara Manager',
+          person_name: 'Tara Manager',
+          company_name: null,
           role: 'SiteManager',
           source: 'HPD Registration',
           source_record_id: 'manager-person-1',
@@ -91,6 +98,8 @@ describe('BuildingDetailPage truth confidence', () => {
           name: 'Alex Boardperson',
           role: 'Officer',
           board_role: 'Board Head',
+          board_role_status: 'verified',
+          source_title: 'Board President',
           source: 'Property Website',
           source_record_id: 'board-1',
           as_of_date: '2026-08-20',
@@ -156,48 +165,105 @@ describe('BuildingDetailPage truth confidence', () => {
     });
   });
 
-  it('summarizes building truth in user-facing language with the raw ledger collapsed', async () => {
-    const client = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false },
-        mutations: { retry: false },
-      },
-    });
-
-    render(
-      <QueryClientProvider client={client}>
-        <BuildingDetailPage />
-      </QueryClientProvider>,
-    );
-
-    expect(await screen.findByText('Evidence Check')).toBeInTheDocument();
+  it('keeps role evidence and individual conflicts while removing duplicate global judgments', async () => {
+    renderPage();
+    await screen.findByText('Relationship evidence (1)');
     const roleHeading = screen.getByText('Who runs this building?');
-    const evidenceHeading = screen.getByText('Evidence Check');
+    const evidenceHeading = screen.getByText('Relationship evidence (1)');
     expect(roleHeading.compareDocumentPosition(evidenceHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByText('Property manager')).toBeInTheDocument();
-    expect(screen.getByText('People at the manager')).toBeInTheDocument();
+    expect(screen.getByText('Management contacts')).toBeInTheDocument();
     expect(screen.getByText('Board people')).toBeInTheDocument();
     expect(screen.getAllByText('Tara Manager').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Alex Boardperson').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('Corporate officer candidate. Board role unverified.')).toBeInTheDocument();
+    expect(screen.getByText('Corporate officer candidate')).toBeInTheDocument();
+    expect(screen.getByText('Board role unverified.')).toBeInTheDocument();
     expect(screen.getByText('All source records (4)')).toBeInTheDocument();
     expect(await screen.findByText('Pilot paused')).toBeInTheDocument();
     expect(fetchComplianceMock).toHaveBeenCalledWith('parcels', '1000000001', expect.any(AbortSignal));
-    expect((await screen.findAllByText('82%')).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('Needs review')).toBeInTheDocument();
-    expect(screen.getByText('Outreach-ready')).toBeInTheDocument();
-    expect(screen.getAllByText('Owner relationship found: Example Owner LLC').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('Ownership sources conflict. Use as diligence context until reviewed.').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('Key Evidence')).toBeInTheDocument();
-    expect(screen.getByText('Source details (1 items)')).toBeInTheDocument();
-    expect(screen.getByText('2 supporting')).toBeInTheDocument();
-    expect(screen.getByText('1 contradicting')).toBeInTheDocument();
-    expect(screen.getByText(/Sources: ACRIS, HPD registration, outreach feedback \(conflicts\)/i)).toBeInTheDocument();
+    expect(screen.queryByText('82%')).not.toBeInTheDocument();
+    expect(screen.queryByText('Outreach-ready')).not.toBeInTheDocument();
+    expect(screen.queryByText('Evidence Check')).not.toBeInTheDocument();
+    expect(screen.queryByText('Key Evidence')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Owner relationship found: Example Owner LLC')).toHaveLength(1);
+    expect(screen.getByText('1 relationship with conflicting sources')).toBeInTheDocument();
+    expect(screen.getByText(/Supporting sources: ACRIS, HPD registration/i)).toBeInTheDocument();
+    expect(screen.getByText(/Conflicting sources: outreach feedback/i)).toBeInTheDocument();
+    expect(screen.getByLabelText('Relationship evidence')).not.toHaveAttribute('open');
     expect(screen.queryByText(/exists in building table/i)).not.toBeInTheDocument();
 
     await waitFor(() => {
       expect(fetchSubjectTruthSummaryMock).toHaveBeenCalledWith('building', '1000000001');
     });
+  });
+
+  it('uses both names on the HPD Agent row and keeps an unverified DOS chairman as a candidate', async () => {
+    const building = await fetchBuildingDetailMock();
+    const agent = {
+      ...building.all_contacts[0], name: 'Livingston', company_name: 'Livingston', person_name: 'Tara Dexter',
+      source_url: 'https://data.cityofnewyork.us/resource/feu5-w2e2.json?registrationcontactid=14050904',
+    };
+    fetchBuildingDetailMock.mockResolvedValue({ ...building, management_company: 'Livingston', all_contacts: [
+      agent,
+      { ...building.all_contacts[1], name: 'Tara Dexter', person_name: 'Tara Dexter' },
+      { ...building.all_contacts[3], name: 'DOS Candidate', role: 'DOS Chairman/CEO (Biennial)', board_role: 'Board Head', board_role_status: 'unverified' },
+      { ...building.all_contacts[1], name: 'Jeff Pisano', person_name: 'Jeff Pisano', role: 'HeadOfficer' },
+    ] });
+    renderPage();
+    await screen.findByText('Who runs this building?');
+    const company = within(screen.getByText('Property manager').closest('section')!);
+    const people = within(screen.getByText('Management contacts').closest('section')!);
+    const board = within(screen.getByText('Board people').closest('section')!);
+    expect(company.getByText('Livingston')).toBeInTheDocument();
+    expect(company.queryByText('Tara Dexter')).not.toBeInTheDocument();
+    expect(people.getAllByText('Tara Dexter')).toHaveLength(1);
+    expect(people.getByText('Listed as Agent with Livingston on the same record.')).toBeInTheDocument();
+    expect(people.getByRole('link', { name: 'HPD Registration' })).toHaveAttribute('href', agent.source_url);
+    expect(board.getByText('DOS Candidate')).toBeInTheDocument();
+    expect(board.getByText('Board Head candidate')).toBeInTheDocument();
+    expect(board.getByText('Board role unverified.')).toBeInTheDocument();
+    expect(board.queryByText('Board Head', { exact: true })).not.toBeInTheDocument();
+    expect(board.queryByText('Jeff Pisano')).not.toBeInTheDocument();
+    expect(screen.getByText('Jeff Pisano')).toBeInTheDocument();
+  });
+
+  it('keeps a person-only Agent out of the company lane and identifies the missing company association', async () => {
+    const building = await fetchBuildingDetailMock();
+    fetchBuildingDetailMock.mockResolvedValue({ ...building, management_company: 'Tara Dexter', all_contacts: [
+      { ...building.all_contacts[0], name: 'Tara Dexter', company_name: null, person_name: 'Tara Dexter' },
+    ] });
+    renderPage();
+    await screen.findByText('Who runs this building?');
+    const company = within(screen.getByText('Property manager').closest('section')!);
+    const people = within(screen.getByText('Management contacts').closest('section')!);
+    expect(company.queryByText('Tara Dexter')).not.toBeInTheDocument();
+    expect(company.queryByRole('link')).not.toBeInTheDocument();
+    expect(people.getByText('Tara Dexter')).toBeInTheDocument();
+    expect(people.getByText('Listed as Agent. Company association unrecorded.')).toBeInTheDocument();
+  });
+
+  it('shows source-record companies independently of a mismatched scalar manager value', async () => {
+    const building = await fetchBuildingDetailMock();
+    fetchBuildingDetailMock.mockResolvedValue({ ...building, management_company: 'Unrelated Company' });
+    renderPage();
+    await screen.findByText('Who runs this building?');
+    const company = within(screen.getByText('Property manager').closest('section')!);
+    expect(company.getByText('Example Manager Inc')).toBeInTheDocument();
+    expect(company.queryByText('Unrelated Company')).not.toBeInTheDocument();
+    expect(company.getByRole('link', { name: 'HPD Registration' })).toHaveAttribute('href', building.all_contacts[0].source_url);
+  });
+
+  it('keeps all board candidates visible and requires explicit verification before dropping the qualifier', async () => {
+    const building = await fetchBuildingDetailMock();
+    fetchBuildingDetailMock.mockResolvedValue({ ...building, all_contacts: Array.from({ length: 6 }, (_, index) => ({
+      ...building.all_contacts[2], name: `Board Candidate ${index + 1}`, board_role_status: undefined,
+    })) });
+    renderPage();
+    await screen.findByText('Who runs this building?');
+    const board = within(screen.getByText('Board people').closest('section')!);
+    expect(board.getByText('Board Candidate 6')).toBeInTheDocument();
+    expect(board.getAllByText('Board Head candidate')).toHaveLength(6);
+    expect(board.queryByText('Board Head', { exact: true })).not.toBeInTheDocument();
   });
 
   it('groups zero-signal and unavailable churn factors away from active drivers', async () => {

@@ -63,6 +63,7 @@ describe('CompliancePanel evidence and identity safety', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Inspect 84 Green Street' }));
     expect(screen.getByText('VIO-3348178')).toBeInTheDocument();
     expect(screen.queryByText('VIO-3348179')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /DOB Safety record/ })).toHaveAttribute('href', expect.stringContaining('bin=3348178'));
     fireEvent.click(screen.getByRole('button', { name: 'Source evidence' }));
     expect(screen.getByRole('link', { name: /DOB Safety record/ })).toHaveAttribute('href', expect.stringContaining('bin=3348178'));
     expect(screen.getByText('Source display label: 8/28/2026 10:09')).toBeInTheDocument();
@@ -81,6 +82,20 @@ describe('CompliancePanel evidence and identity safety', () => {
     expect(within(card).getByText('$5,000')).toHaveClass('[overflow-wrap:anywhere]');
   });
 
+  it('shows a single physical building directly with its source link and evidence view', async () => {
+    const data = response();
+    data.buildings = [data.buildings[0]];
+    fetchComplianceMock.mockResolvedValue(data);
+    renderPanel();
+    expect(await screen.findByText('BIN 3348179')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Select physical building')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Inspect/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /DOB Safety record/ })).toHaveAttribute('href', expect.stringContaining('bin=3348179'));
+    fireEvent.click(screen.getByRole('button', { name: 'Source evidence' }));
+    expect(screen.getAllByRole('link', { name: /DOB Safety record/ })).toHaveLength(1);
+    expect(screen.getByRole('region', { name: 'Balance source evidence' })).toBeInTheDocument();
+  });
+
   it('starts with active records and offers separately scoped complaint history', async () => {
     const data = response();
     data.buildings[0].records.push({ ...data.buildings[0].records[0], id: 'closed-complaint', source_system: 'dob_complaints', source_record_key: 'CLOSED-COMPLAINT', record_type: 'complaint', status: 'CLOSED' });
@@ -94,6 +109,24 @@ describe('CompliancePanel evidence and identity safety', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Inspect 84 Green Street' }));
     expect(screen.getByRole('button', { name: 'Active at source (1)' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByText('VIO-3348178')).toBeInTheDocument();
+  });
+
+  it.each([
+    ['complaint', 'dob_complaints', 'CLOSED', 'Complaint history (1)'],
+    ['case_evidence', 'oath_ecb', 'resolved', 'All records (1)'],
+  ])('shows %s evidence immediately when no active violations are saved', async (recordType, source, status, filter) => {
+    const data = response();
+    data.buildings = [data.buildings[0]];
+    data.buildings[0].records = [{
+      ...data.buildings[0].records[0], record_type: recordType, source_system: source,
+      source_record_key: 'HISTORY-1', status,
+    }];
+    fetchComplianceMock.mockResolvedValue(data);
+    renderPanel();
+    expect(await screen.findByText('HISTORY-1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: filter })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Active at source (0)' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByText(`${status} at source`)).toBeInTheDocument();
   });
 
   it('shows ECB money on the exact record and excludes it from the portfolio subtotal', async () => {
@@ -181,7 +214,10 @@ describe('CompliancePanel evidence and identity safety', () => {
     renderPanel('portfolio', 'lead-1');
     expect(await screen.findByText('More identities to map')).toBeInTheDocument();
     expect(screen.getByText('Source refresh needed')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Source-specific coverage' })).not.toBeVisible();
+    fireEvent.click(screen.getByText('Source coverage and dates'));
     expect(within(screen.getByRole('region', { name: 'Source-specific coverage' })).getByText(/Scope incomplete · Refresh needed/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'DOB Safety ↗' })).toHaveAttribute('href', 'https://data.cityofnewyork.us/d/855j-jady');
   });
 
   it('keeps missing balances distinct from zero and labels a known subtotal', async () => {
@@ -222,7 +258,10 @@ describe('CompliancePanel evidence and identity safety', () => {
     renderPanel();
     expect(await screen.findByText('Source refresh needed')).toBeInTheDocument();
     expect(screen.getAllByText('Last reported balance')).toHaveLength(2);
-    expect(screen.getAllByText('Unverified')).toHaveLength(2);
+    expect(screen.queryByText('Interest')).not.toBeInTheDocument();
+    expect(screen.queryByText('Lien status')).not.toBeInTheDocument();
+    expect(screen.queryByText('Balance scope')).not.toBeInTheDocument();
+    expect(screen.getByText(/Interest and lien status require specific evidence/)).toBeInTheDocument();
     expect(screen.getByText('Historical source snapshot. Refresh needed.')).toBeInTheDocument();
     expect(screen.queryByText(/no interest|no lien|0% interest/i)).not.toBeInTheDocument();
   });
