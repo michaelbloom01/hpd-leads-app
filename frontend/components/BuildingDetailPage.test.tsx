@@ -173,6 +173,8 @@ describe('BuildingDetailPage roles and evidence', () => {
     expect(roleHeading.compareDocumentPosition(evidenceHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByText('Property manager')).toBeInTheDocument();
     expect(screen.getByText('Management contacts')).toBeInTheDocument();
+    const companyLane = within(screen.getByText('Property manager').closest('section')!);
+    expect(companyLane.getByText(`· Stored ${new Date(2026, 7, 15).toLocaleDateString()}`)).toBeInTheDocument();
     expect(screen.getByText('Board people')).toBeInTheDocument();
     expect(screen.getAllByText('Tara Manager').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Alex Boardperson').length).toBeGreaterThanOrEqual(1);
