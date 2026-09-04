@@ -227,6 +227,23 @@ describe('BuildingDetailPage roles and evidence', () => {
     expect(screen.getByText('Jeff Pisano')).toBeInTheDocument();
   });
 
+  it('preserves linked names and roles without treating their count alone as conflicting evidence', async () => {
+    const summary = await fetchSubjectTruthSummaryMock();
+    fetchSubjectTruthSummaryMock.mockResolvedValue({ ...summary, claims: [{
+      ...summary.claims[0], predicate: 'has_current_management_link', normalized_value: 'Example Manager Inc, Example Owner LLC',
+      supporting_sources: ['building_management'], contradicting_sources: ['building_management'],
+      contradicting_evidence_count: 3, rationale: { source: 'synthetic_subject_summary', roles: ['Agent', 'CorporateOwner'] },
+    }] });
+    renderPage();
+    await screen.findByText('Relationship evidence (1)');
+    expect(screen.getByText('Linked company records')).toBeInTheDocument();
+    expect(screen.getByText('Example Manager Inc, Example Owner LLC')).toBeInTheDocument();
+    expect(screen.getByText('Recorded roles: Agent, CorporateOwner')).toBeInTheDocument();
+    expect(screen.queryByText(/relationship.*with conflicting sources/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Conflicting sources:/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Management relationship needs review')).not.toBeInTheDocument();
+  });
+
   it('keeps a person-only Agent out of the company lane and identifies the missing company association', async () => {
     const building = await fetchBuildingDetailMock();
     fetchBuildingDetailMock.mockResolvedValue({ ...building, management_company: 'Tara Dexter', all_contacts: [

@@ -10,7 +10,7 @@ import {
   addBuildingToPipeline, fetchBuildingOutreachEvents, logBuildingOutreachEvent,
   type BuildingContactEntry, type BuildingDetail,
 } from '../services/buildings-api';
-import { fetchSubjectTruthSummary } from '../services/truth-api';
+import { fetchSubjectTruthSummary, type TruthClaim } from '../services/truth-api';
 import {
   formatClaimSubtitle,
   formatClaimTitle,
@@ -97,6 +97,9 @@ const boardRoleLabel = (contact: BuildingContactEntry): string =>
   contact.board_role_status === 'verified' && contact.board_role
     ? contact.board_role
     : `${contact.board_role || 'Corporate officer'} candidate`;
+
+const isAppLinkSummary = (claim: TruthClaim): boolean =>
+  claim.predicate === 'has_current_management_link' && claim.rationale?.source === 'synthetic_subject_summary';
 
 const ContactSourceLine: React.FC<{ contact: BuildingContactEntry }> = ({ contact }) => (
   <div className="mt-1 text-xs text-gray-500">
@@ -246,7 +249,7 @@ const BuildingDetailPage: React.FC = () => {
   );
   const unavailableBreakdownEntries = breakdownEntries.filter(([, val]) => val.raw === null);
   const truthClaims = (truthSummary?.claims || []).filter(claim => claim.predicate !== 'exists_in_building_table');
-  const conflictingClaims = truthClaims.filter(claim => claim.contradicting_evidence_count > 0);
+  const conflictingClaims = truthClaims.filter(claim => !isAppLinkSummary(claim) && claim.contradicting_evidence_count > 0);
   const dosBanner = (() => {
     if (dosStatus === 'refreshing') {
       return {
@@ -406,12 +409,21 @@ const BuildingDetailPage: React.FC = () => {
           <div className="space-y-3 border-t border-gray-200 p-5">
             {truthClaims.map(claim => (
               <article key={claim.claim_id} className="text-sm">
-                <h3 className="font-semibold text-gray-900">{formatClaimTitle(claim)}</h3>
-                <p className="mt-1 text-xs text-gray-600">{formatClaimSubtitle(claim)}</p>
-                <p className="mt-1 text-xs text-gray-500">Supporting sources: {claim.supporting_sources.map(formatSourceName).join(', ') || 'None recorded'}</p>
-                {claim.contradicting_evidence_count > 0 && (
-                  <p className="mt-1 text-xs text-amber-800">Conflicting sources: {claim.contradicting_sources.map(formatSourceName).join(', ') || 'Source details unavailable'}</p>
-                )}
+                {isAppLinkSummary(claim) ? <>
+                  <h3 className="font-semibold text-gray-900">Linked company records</h3>
+                  <p className="mt-1 text-xs text-gray-600">{claim.normalized_value}</p>
+                  {Array.isArray(claim.rationale?.roles) && (
+                    <p className="mt-1 text-xs text-gray-500">Recorded roles: {claim.rationale.roles.join(', ')}</p>
+                  )}
+                  <p className="mt-1 text-xs text-gray-500">These app links may represent different roles. Use each contact's source record above to assess its relationship.</p>
+                </> : <>
+                  <h3 className="font-semibold text-gray-900">{formatClaimTitle(claim)}</h3>
+                  <p className="mt-1 text-xs text-gray-600">{formatClaimSubtitle(claim)}</p>
+                  <p className="mt-1 text-xs text-gray-500">Supporting sources: {claim.supporting_sources.map(formatSourceName).join(', ') || 'None recorded'}</p>
+                  {claim.contradicting_evidence_count > 0 && (
+                    <p className="mt-1 text-xs text-amber-800">Conflicting sources: {claim.contradicting_sources.map(formatSourceName).join(', ') || 'Source details unavailable'}</p>
+                  )}
+                </>}
               </article>
             ))}
           </div>
